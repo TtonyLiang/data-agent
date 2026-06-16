@@ -88,3 +88,11 @@ def test_generated_schema_does_not_include_sensitive_personal_columns():
         for fragment in forbidden_fragments
         for column in column_names
     )
+
+
+def test_seed_script_defaults_to_dry_run(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["seed_loan_indicators.py"])
+
+    args = seed.parse_args()
+
+    assert args.dry_run is True

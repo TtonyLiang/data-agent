@@ -9,7 +9,7 @@ from app.config import get_settings
 class VectorRecord:
     content: str
     vector: list[float]
-    source_type: str  # "semantic_model" | "business_knowledge" | "agent_knowledge"
+    source_type: str  # semantic_concept | semantic_metric | semantic_rule | logic_form_template
     source_id: int
     agent_id: int
     metadata: dict = field(default_factory=dict)

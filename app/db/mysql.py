@@ -36,6 +36,12 @@ class MySQLClient:
             await session.commit()
             return []
 
+    async def execute_insert(self, sql: str, params: dict | None = None) -> int:
+        async with self._session_factory() as session:
+            result = await session.execute(text(sql), params or {})
+            await session.commit()
+            return int(result.lastrowid or 0)
+
     async def execute_scalar(self, sql: str, params: dict | None = None):
         async with self._session_factory() as session:
             result = await session.execute(text(sql), params or {})
@@ -99,3 +105,9 @@ async def get_datasource_db(datasource_id: int) -> MySQLClient:
             )
         )
     return _datasource_dbs[datasource_id]
+
+
+async def invalidate_datasource_db(datasource_id: int):
+    client = _datasource_dbs.pop(datasource_id, None)
+    if client is not None:
+        await client.close()

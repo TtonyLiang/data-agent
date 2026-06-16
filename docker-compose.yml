@@ -10,6 +10,7 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       - ./app/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./app/db/sample_data.sql:/docker-entrypoint-initdb.d/02-sample-data.sql
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
 
   milvus:
@@ -23,6 +24,7 @@ services:
       - "9091:9091"
     volumes:
       - milvus_data:/var/lib/milvus
+    command: ["milvus", "run", "standalone"]
 
 volumes:
   mysql_data:

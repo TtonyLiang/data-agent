@@ -1165,7 +1165,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
+        default=True,
         help="generate and validate without MySQL writes",
+    )
+    parser.add_argument(
+        "--write",
+        dest="dry_run",
+        action="store_false",
+        help="write generated data to MySQL; this drops and recreates loan indicator tables",
+    )
+    parser.add_argument(
+        "--yes-drop-existing",
+        action="store_true",
+        help="confirm destructive table rebuild when used with --write",
     )
     return parser.parse_args()
 
@@ -1213,6 +1225,10 @@ def main() -> int:
         for name, count in counts.items():
             print(f"{name}: {count}")
         return 0
+
+    if not args.yes_drop_existing:
+        print("refusing to write without --yes-drop-existing")
+        return 2
 
     connection = connect_mysql(args)
     try:

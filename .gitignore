@@ -22,6 +22,11 @@ frontend/dist/
 
 # Runtime data
 data/
+!data/
+data/*
+!data/semantic/
+data/semantic/*
+!data/semantic/loan_risk.json
 
 # Logs and temporary files
 *.log

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node src/stores/chatStream.test.mjs && node src/api/index.test.mjs && node src/views/ChatView.test.mjs",
     "build": "vue-tsc && vite build",
     "preview": "vite preview"
   },

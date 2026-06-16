@@ -31,7 +31,8 @@ async def intent_recognition_node(state: dict) -> dict:
         {"role": "user", "content": question},
     ]
 
-    response = await llm.achat(messages)
+    llm_kwargs = await llm.resolve_agent_chat_kwargs(state.get("agent_id"))
+    response = await llm.achat(messages, **llm_kwargs)
 
     import json
 

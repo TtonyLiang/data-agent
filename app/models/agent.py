@@ -6,6 +6,13 @@ class AgentConfig(BaseModel):
     id: int | None = None
     name: str
     description: str = ""
+    chat_model_config_id: int | None = None
+    embedding_model_config_id: int | None = None
+    semantic_domain_id: int | None = None
+    chat_model_config_name: str | None = None
+    embedding_model_config_name: str | None = None
+    semantic_domain_name: str | None = None
+    semantic_domain_key: str | None = None
     llm_provider: str = "ollama"
     llm_model: str = "qwen3:14b"
     api_key: str | None = None
@@ -17,5 +24,9 @@ class AgentConfig(BaseModel):
 class AgentCreate(BaseModel):
     name: str
     description: str = ""
+    chat_model_config_id: int | None = None
+    embedding_model_config_id: int | None = None
+    semantic_domain_id: int | None = None
+    datasource_ids: list[int] = []
     llm_provider: str = "ollama"
     llm_model: str = "qwen3:14b"

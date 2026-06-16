@@ -16,25 +16,70 @@ export interface ChatResponse {
   session_id: string
   intent: string
   sql: string
+  compiled_sql?: string
+  logic_form?: Record<string, unknown>
   answer: string
   sql_result: Record<string, unknown>[]
 }
 
 export interface DatasourceItem {
   id: number
-  agent_id: number
+  agent_id?: number | null
   name: string
   db_type: string
   host: string
   port: number
+  username: string
   database_name: string
   status: string
+}
+
+export interface DatasourceColumnMeta {
+  id: number
+  table_id: number
+  column_name: string
+  data_type: string
+  column_comment?: string | null
+  is_primary_key: boolean | number
+  is_foreign_key: boolean | number
+  foreign_key_ref?: string | null
+}
+
+export interface DatasourceTableMeta {
+  id: number
+  datasource_id: number
+  table_name: string
+  table_comment?: string | null
+  columns: DatasourceColumnMeta[]
+}
+
+export interface DatasourceTableSummary {
+  id: number
+  datasource_id: number
+  table_name: string
+  table_comment?: string | null
+  column_count: number
+}
+
+export interface DatasourceRemoteTable {
+  table_name: string
+  table_comment?: string | null
+  collected: boolean
+  table_id?: number | null
+  column_count: number
 }
 
 export interface AgentItem {
   id: number
   name: string
   description: string
+  chat_model_config_id?: number | null
+  embedding_model_config_id?: number | null
+  semantic_domain_id?: number | null
+  chat_model_config_name?: string | null
+  embedding_model_config_name?: string | null
+  semantic_domain_name?: string | null
+  semantic_domain_key?: string | null
   llm_provider: string
   llm_model: string
   created_at: string
@@ -43,8 +88,29 @@ export interface AgentItem {
 export interface AgentCreateRequest {
   name: string
   description: string
-  llm_provider: string
-  llm_model: string
+  chat_model_config_id?: number | null
+  embedding_model_config_id?: number | null
+  semantic_domain_id?: number | null
+  datasource_ids?: number[]
+  llm_provider?: string
+  llm_model?: string
+}
+
+export interface ModelConfigItem {
+  id: number
+  name: string
+  model_type: 'chat' | 'embedding'
+  provider: string
+  base_url: string
+  model_name: string
+  api_key_enabled: boolean | number
+  embedding_dimension?: number | null
+  status: string
+  created_at?: string
+}
+
+export type ModelConfigRequest = Omit<ModelConfigItem, 'id' | 'created_at'> & {
+  api_key?: string | null
 }
 
 export async function fetchAgents(): Promise<AgentItem[]> {
@@ -57,14 +123,65 @@ export async function createAgent(agent: AgentCreateRequest) {
   return data
 }
 
+export async function updateAgent(agentId: number, agent: AgentCreateRequest) {
+  const { data } = await api.put(`/agent/${agentId}`, agent)
+  return data
+}
+
+export async function deleteAgent(agentId: number) {
+  const { data } = await api.delete(`/agent/${agentId}`)
+  return data
+}
+
+export async function fetchModelConfigs(modelType?: 'chat' | 'embedding'): Promise<ModelConfigItem[]> {
+  const { data } = await api.get<{ configs: ModelConfigItem[] }>('/model-config/list', {
+    params: modelType ? { model_type: modelType } : undefined,
+  })
+  return data.configs || []
+}
+
+export async function createModelConfig(config: ModelConfigRequest) {
+  const { data } = await api.post('/model-config/create', config)
+  return data
+}
+
+export async function updateModelConfig(configId: number, config: ModelConfigRequest) {
+  const { data } = await api.put(`/model-config/${configId}`, config)
+  return data
+}
+
+export async function deleteModelConfig(configId: number) {
+  const { data } = await api.delete(`/model-config/${configId}`)
+  return data
+}
+
 export async function sendMessage(req: ChatRequest): Promise<ChatResponse> {
   const { data } = await api.post<ChatResponse>('/chat', req)
   return data
 }
 
 export interface StreamEvent {
-  event: 'node_start' | 'reasoning' | 'token' | 'node_complete' | 'result' | 'done'
+  event:
+    | 'node_start'
+    | 'reasoning'
+    | 'token'
+    | 'node_complete'
+    | 'answer_start'
+    | 'answer_delta'
+    | 'answer_complete'
+    | 'result'
+    | 'error'
+    | 'done'
   data: Record<string, unknown>
+}
+
+export interface ReasoningTraceStep {
+  node: string
+  label: string
+  status: 'running' | 'done' | 'pending'
+  reasoning: string
+  output: Record<string, unknown> | null
+  summary: string
 }
 
 export function sendMessageStream(
@@ -78,6 +195,10 @@ export function sendMessageStream(
     body: JSON.stringify(req),
     signal: controller.signal,
   }).then(async (resp) => {
+    if (!resp.ok) {
+      onEvent({ event: 'error', data: { message: `请求失败: ${resp.status}` } })
+      return
+    }
     let receivedDone = false
     let currentEvent = 'message'
     let dataLines: string[] = []
@@ -95,7 +216,7 @@ export function sendMessageStream(
     }
 
     if (!resp.body) {
-      onEvent({ event: 'done', data: {} })
+      onEvent({ event: 'error', data: { message: '服务未返回流式内容' } })
       return
     }
     const reader = resp.body.getReader()
@@ -132,8 +253,9 @@ export function sendMessageStream(
     }
     dispatchEvent()
     if (!receivedDone) onEvent({ event: 'done', data: {} })
-  }).catch(() => {
-    onEvent({ event: 'done', data: {} })
+  }).catch((error) => {
+    if (error instanceof DOMException && error.name === 'AbortError') return
+    onEvent({ event: 'error', data: { message: '网络连接失败' } })
   })
   return controller
 }
@@ -143,8 +265,28 @@ export async function fetchDatasources(agentId: number) {
   return data.datasources
 }
 
+export async function fetchAllDatasources() {
+  const { data } = await api.get<{ datasources: DatasourceItem[] }>('/datasource/list')
+  return data.datasources
+}
+
+export async function fetchAgentDatasourceIds(agentId: number): Promise<number[]> {
+  const { data } = await api.get<{ datasource_ids: number[] }>(`/datasource/agent/${agentId}/ids`)
+  return data.datasource_ids || []
+}
+
 export async function createDatasource(ds: Record<string, unknown>) {
   const { data } = await api.post('/datasource/create', ds)
+  return data
+}
+
+export async function updateDatasource(dsId: number, ds: Record<string, unknown>) {
+  const { data } = await api.put(`/datasource/${dsId}`, ds)
+  return data
+}
+
+export async function deleteDatasource(dsId: number) {
+  const { data } = await api.delete(`/datasource/${dsId}`)
   return data
 }
 
@@ -153,28 +295,117 @@ export async function testConnection(dsId: number) {
   return data
 }
 
-export async function collectSchema(dsId: number) {
-  const { data } = await api.post(`/datasource/${dsId}/collect-schema`)
+export async function collectSchema(dsId: number, tableNames?: string[]) {
+  const { data } = await api.post(
+    `/datasource/${dsId}/collect-schema`,
+    tableNames ? { table_names: tableNames } : undefined,
+  )
   return data
 }
 
-export async function fetchSemanticModels(agentId: number) {
-  const { data } = await api.get(`/knowledge/semantic-model/${agentId}`)
-  return data.models
-}
-
-export async function createSemanticModel(sm: Record<string, unknown>) {
-  const { data } = await api.post('/knowledge/semantic-model', sm)
+export async function uncollectSchema(dsId: number, tableNames: string[]) {
+  const { data } = await api.post(`/datasource/${dsId}/uncollect-schema`, {
+    table_names: tableNames,
+  })
   return data
 }
 
-export async function fetchBusinessKnowledge(agentId: number) {
-  const { data } = await api.get(`/knowledge/business-knowledge/${agentId}`)
-  return data.knowledge
+export async function fetchDatasourceSchema(dsId: number): Promise<DatasourceTableMeta[]> {
+  const { data } = await api.get<{ tables: DatasourceTableMeta[] }>(`/datasource/${dsId}/schema`)
+  return data.tables || []
 }
 
-export async function createBusinessKnowledge(bk: Record<string, unknown>) {
-  const { data } = await api.post('/knowledge/business-knowledge', bk)
+export async function fetchDatasourceRemoteTables(dsId: number): Promise<DatasourceRemoteTable[]> {
+  const { data } = await api.get<{ tables: DatasourceRemoteTable[] }>(`/datasource/${dsId}/remote-tables`)
+  return data.tables || []
+}
+
+export async function fetchDatasourceTableSummaries(dsId: number): Promise<DatasourceTableSummary[]> {
+  const { data } = await api.get<{ tables: DatasourceTableSummary[] }>(`/datasource/${dsId}/schema/tables`)
+  return data.tables || []
+}
+
+export async function fetchDatasourceTableDetail(dsId: number, tableId: number): Promise<DatasourceTableMeta> {
+  const { data } = await api.get<{ table: DatasourceTableMeta }>(`/datasource/${dsId}/schema/tables/${tableId}`)
+  return data.table
+}
+
+export interface SemanticDomain {
+  id: number
+  agent_id: number
+  datasource_id?: number | null
+  domain_key: string
+  name: string
+  description?: string
+  status: string
+}
+
+export type SemanticDomainRequest = Omit<SemanticDomain, 'id'> & {
+  id?: number | null
+}
+
+export async function fetchSemanticDomains(agentId: number): Promise<SemanticDomain[]> {
+  const { data } = await api.get<{ domains: SemanticDomain[] }>('/semantic/domains', {
+    params: { agent_id: agentId },
+  })
+  return data.domains || []
+}
+
+export async function fetchAllSemanticDomains(): Promise<SemanticDomain[]> {
+  const { data } = await api.get<{ domains: SemanticDomain[] }>('/semantic/domains/all')
+  return data.domains || []
+}
+
+export async function upsertSemanticDomain(domain: SemanticDomainRequest) {
+  const { data } = await api.post('/semantic/domains', domain)
+  return data
+}
+
+export async function deleteSemanticDomain(domainId: number) {
+  const { data } = await api.delete(`/semantic/domains/${domainId}`)
+  return data
+}
+
+export async function fetchSemanticAssets(domainId: number, assetType?: string) {
+  const { data } = await api.get(`/semantic/assets/${domainId}`, {
+    params: assetType ? { type: assetType } : undefined,
+  })
+  return data.assets || {}
+}
+
+export async function upsertSemanticAsset(
+  domainId: number,
+  assetType: string,
+  asset: Record<string, unknown>,
+) {
+  const { data } = await api.post(`/semantic/assets/${domainId}`, {
+    asset_type: assetType,
+    data: asset,
+  })
+  return data
+}
+
+export async function deleteSemanticAsset(
+  domainId: number,
+  assetType: string,
+  assetId: number,
+) {
+  const { data } = await api.delete(`/semantic/assets/${domainId}/${assetType}/${assetId}`)
+  return data
+}
+
+export async function buildSemanticRuntime(payload: Record<string, unknown>) {
+  const { data } = await api.post('/semantic/runtime/build', payload)
+  return data.runtime
+}
+
+export async function validateLogicForm(payload: Record<string, unknown>) {
+  const { data } = await api.post('/semantic/logic-form/validate', payload)
+  return data
+}
+
+export async function syncSemanticVector(domainId: number) {
+  const { data } = await api.post(`/semantic/sync-vector/${domainId}`)
   return data
 }
 
@@ -190,6 +421,9 @@ export interface HistoryItem {
   role: 'user' | 'assistant'
   content: string
   sql_text?: string
+  compiled_sql?: string
+  reasoning_trace?: ReasoningTraceStep[]
+  logic_form?: Record<string, unknown>
   sql_result?: Record<string, unknown>[]
   created_at: string
 }
