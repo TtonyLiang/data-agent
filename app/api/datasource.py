@@ -103,6 +103,12 @@ async def get_collected_table_summaries(ds_id: int):
     return {"tables": tables}
 
 
+@router.get("/{ds_id}/schema/stats")
+async def get_collected_schema_stats(ds_id: int):
+    meta_svc = get_metadata_service()
+    return {"stats": await meta_svc.get_schema_stats(ds_id)}
+
+
 @router.get("/{ds_id}/schema/tables/{table_id}")
 async def get_collected_table_detail(ds_id: int, table_id: int):
     meta_svc = get_metadata_service()

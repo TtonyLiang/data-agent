@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import asyncio
 
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_openai import ChatOpenAI
@@ -127,7 +128,8 @@ class LLMService:
             streaming=False,
         )
         client = self.get_client(**kwargs, streaming=False)
-        resp = await client.ainvoke(self._to_lc_messages(messages))
+        lc_messages = self._to_lc_messages(messages)
+        resp = await asyncio.to_thread(client.invoke, lc_messages)
         return resp.content
 
     async def achat_stream(self, messages: list[dict[str, str]], **kwargs):
@@ -150,7 +152,8 @@ class LLMService:
             streaming=False,
         )
         client = self.get_client(**kwargs, streaming=False)
-        resp = await client.ainvoke(self._to_lc_messages(messages))
+        lc_messages = self._to_lc_messages(messages)
+        resp = await asyncio.to_thread(client.invoke, lc_messages)
         content = resp.content or ""
         reasoning = ""
         # MiMo 返回 reasoning_content 在 additional_kwargs 中

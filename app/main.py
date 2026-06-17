@@ -1,7 +1,9 @@
+import asyncio
 import json
 import logging
 import uuid
 from collections.abc import Iterator
+from contextlib import suppress
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +21,7 @@ configure_file_logging()
 app = FastAPI(title="WenQu DataQuery Agent", version="0.1.0")
 
 ANSWER_CHUNK_SIZE = 32
+STREAM_PROGRESS_INTERVAL_SECONDS = 0.5
 logger = logging.getLogger(__name__)
 
 app.add_middleware(
@@ -92,6 +95,10 @@ async def chat(request: dict):
         logic_form=result.get("logic_form"),
         compiled_sql=sql,
         execution_trace=result.get("execution_trace"),
+        plan_payload=result.get("plan"),
+        semantic_check=result.get("semantic_check"),
+        python_result=result.get("python_result"),
+        report_payload=result.get("report_payload"),
     )
 
     return {
@@ -102,6 +109,10 @@ async def chat(request: dict):
         "logic_form": result.get("logic_form"),
         "answer": answer,
         "sql_result": sql_result,
+        "plan": result.get("plan"),
+        "semantic_check": result.get("semantic_check"),
+        "python_result": result.get("python_result"),
+        "report_payload": result.get("report_payload"),
     }
 
 
@@ -120,12 +131,19 @@ async def chat_stream(request: dict):
     # 节点中文名映射
     NODE_LABELS = {
         "intent_recognition": "意图识别",
-        "semantic_runtime_recall": "语义运行时",
+        "semantic_runtime_recall": "知识召回",
+        "schema_recall": "数据定位",
         "nl2lf_generate": "LogicForm 生成",
         "lf_validate": "语义校验",
         "lf_to_sql_compile": "SQL 编译",
+        "nl2sql_fallback": "NL2SQL 兜底",
+        "semantic_check": "语义一致性检查",
         "lf_repair": "LF 修复",
         "sql_execute": "SQL 执行",
+        "planner": "分析计划",
+        "python_generate": "Python 生成",
+        "python_analyze": "Python 分析",
+        "report_generator": "报告生成",
     }
 
     async def event_generator():
@@ -141,85 +159,128 @@ async def chat_stream(request: dict):
         final_result = {}
         current_node = ""
         reasoning_buffer = ""
+        node_token_buffers: dict[str, str] = {}
+        progress_counters: dict[str, int] = {}
         reasoning_trace: list[dict] = []
 
         try:
-            async for event in graph.astream_events(state, version="v2"):
-                kind = event.get("event", "")
-                node = event.get("name", "")
+            event_queue: asyncio.Queue[dict] = asyncio.Queue()
+            producer_task = asyncio.create_task(pump_graph_events(graph, state, event_queue))
 
-                # 节点开始
-                if kind == "on_chain_start" and node in NODE_LABELS:
-                    current_node = node
-                    ensure_trace_step(reasoning_trace, node, NODE_LABELS[node])
-                    yield sse_event({
-                        "event": "node_start",
-                        "data": json.dumps({
-                            "node": node,
-                            "label": NODE_LABELS[node],
-                        }, ensure_ascii=False),
-                    })
-
-                # LLM 流式 token (思考过程 + 内容)
-                elif kind == "on_chat_model_stream":
-                    chunk = event.get("data", {}).get("chunk")
-                    if chunk:
-                        content = getattr(chunk, "content", "") or ""
-                        reasoning = ""
-                        if hasattr(chunk, "additional_kwargs"):
-                            reasoning = chunk.additional_kwargs.get("reasoning_content", "")
-                        if reasoning:
-                            reasoning_buffer += reasoning
-                            append_trace_reasoning(reasoning_trace, current_node, NODE_LABELS.get(current_node, ""), reasoning)
+            try:
+                while True:
+                    try:
+                        queued = await asyncio.wait_for(
+                            event_queue.get(),
+                            timeout=STREAM_PROGRESS_INTERVAL_SECONDS,
+                        )
+                    except asyncio.TimeoutError:
+                        if current_node:
+                            index = progress_counters.get(current_node, 0)
+                            progress_counters[current_node] = index + 1
+                            progress = node_progress_message(current_node, index)
                             yield sse_event({
-                                "event": "reasoning",
+                                "event": "node_progress",
                                 "data": json.dumps({
                                     "node": current_node,
-                                    "label": NODE_LABELS.get(current_node, ""),
-                                    "delta": reasoning,
+                                    "label": NODE_LABELS.get(current_node, current_node),
+                                    "message": progress,
                                 }, ensure_ascii=False),
                             })
-                        elif content:
-                            yield sse_event({
-                                "event": "token",
-                                "data": json.dumps({
-                                    "node": current_node,
-                                    "delta": content,
-                                }, ensure_ascii=False),
-                            })
+                        continue
 
-                # LLM 调用结束 — 检查 reasoning_content
-                elif kind == "on_chat_model_end":
-                    msg = event.get("data", {}).get("output")
-                    if msg and hasattr(msg, "additional_kwargs"):
-                        rc = msg.additional_kwargs.get("reasoning_content", "")
-                        if rc and not reasoning_buffer:
-                            append_trace_reasoning(reasoning_trace, current_node, NODE_LABELS.get(current_node, ""), rc)
-                            yield sse_event({
-                                "event": "reasoning",
-                                "data": json.dumps({
-                                    "node": current_node,
-                                    "label": NODE_LABELS.get(current_node, ""),
-                                    "delta": rc,
-                                }, ensure_ascii=False),
-                            })
+                    if queued.get("kind") == "done":
+                        break
+                    if queued.get("kind") == "error":
+                        raise queued["error"]
 
-                # 节点结束
-                elif kind == "on_chain_end" and node in NODE_LABELS:
-                    output = event.get("data", {}).get("output", {})
-                    final_result.update(output)
-                    # 提取节点关键输出
-                    node_output = _extract_node_output(node, output)
-                    complete_trace_step(reasoning_trace, node, NODE_LABELS[node], node_output)
-                    yield sse_event({
-                        "event": "node_complete",
-                        "data": json.dumps({
-                            "node": node,
-                            "label": NODE_LABELS[node],
-                            "output": node_output,
-                        }, ensure_ascii=False),
-                    })
-                    reasoning_buffer = ""
+                    event = queued.get("event", {})
+                    kind = event.get("event", "")
+                    node = event.get("name", "")
+
+                    # 节点开始
+                    if kind == "on_chain_start" and node in NODE_LABELS:
+                        current_node = node
+                        ensure_trace_step(reasoning_trace, node, NODE_LABELS[node])
+                        yield sse_event({
+                            "event": "node_start",
+                            "data": json.dumps({
+                                "node": node,
+                                "label": NODE_LABELS[node],
+                            }, ensure_ascii=False),
+                        })
+
+                    # LLM 流式 token (思考过程 + 内容)
+                    elif kind == "on_chat_model_stream":
+                        chunk = event.get("data", {}).get("chunk")
+                        if chunk:
+                            content = getattr(chunk, "content", "") or ""
+                            reasoning = ""
+                            if hasattr(chunk, "additional_kwargs"):
+                                reasoning = chunk.additional_kwargs.get("reasoning_content", "")
+                            if reasoning:
+                                reasoning_buffer += reasoning
+                                append_trace_reasoning(reasoning_trace, current_node, NODE_LABELS.get(current_node, ""), reasoning)
+                                yield sse_event({
+                                    "event": "reasoning",
+                                    "data": json.dumps({
+                                        "node": current_node,
+                                        "label": NODE_LABELS.get(current_node, ""),
+                                        "delta": reasoning,
+                                    }, ensure_ascii=False),
+                                })
+                            elif content:
+                                if current_node:
+                                    node_token_buffers[current_node] = (
+                                        node_token_buffers.get(current_node, "") + content
+                                    )
+                                    append_trace_stream_text(reasoning_trace, current_node, NODE_LABELS.get(current_node, ""), content)
+                                yield sse_event({
+                                    "event": "token",
+                                    "data": json.dumps({
+                                        "node": current_node,
+                                        "delta": content,
+                                    }, ensure_ascii=False),
+                                })
+
+                    # LLM 调用结束 — 检查 reasoning_content
+                    elif kind == "on_chat_model_end":
+                        msg = event.get("data", {}).get("output")
+                        if msg and hasattr(msg, "additional_kwargs"):
+                            rc = msg.additional_kwargs.get("reasoning_content", "")
+                            if rc and not reasoning_buffer:
+                                append_trace_reasoning(reasoning_trace, current_node, NODE_LABELS.get(current_node, ""), rc)
+                                yield sse_event({
+                                    "event": "reasoning",
+                                    "data": json.dumps({
+                                        "node": current_node,
+                                        "label": NODE_LABELS.get(current_node, ""),
+                                        "delta": rc,
+                                    }, ensure_ascii=False),
+                                })
+
+                    # 节点结束
+                    elif kind == "on_chain_end" and node in NODE_LABELS:
+                        output = event.get("data", {}).get("output", {})
+                        final_result.update(output)
+                        # 提取节点关键输出
+                        node_output = _extract_node_output(node, output)
+                        complete_trace_step(reasoning_trace, node, NODE_LABELS[node], node_output)
+                        yield sse_event({
+                            "event": "node_complete",
+                            "data": json.dumps({
+                                "node": node,
+                                "label": NODE_LABELS[node],
+                                "output": node_output,
+                            }, ensure_ascii=False),
+                        })
+                        current_node = ""
+                        reasoning_buffer = ""
+            finally:
+                if not producer_task.done():
+                    producer_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await producer_task
         except Exception as exc:
             logger.exception("chat stream failed")
             yield sse_event({
@@ -275,6 +336,10 @@ async def chat_stream(request: dict):
             logic_form=final_result.get("logic_form"),
             compiled_sql=sql,
             execution_trace=final_result.get("execution_trace"),
+            plan_payload=final_result.get("plan"),
+            semantic_check=final_result.get("semantic_check"),
+            python_result=final_result.get("python_result"),
+            report_payload=final_result.get("report_payload"),
             reasoning_trace=reasoning_trace,
         )
 
@@ -288,12 +353,26 @@ async def chat_stream(request: dict):
                 "logic_form": final_result.get("logic_form"),
                 "answer": answer,
                 "sql_result": sql_result,
+                "plan": final_result.get("plan"),
+                "semantic_check": final_result.get("semantic_check"),
+                "python_result": final_result.get("python_result"),
+                "report_payload": final_result.get("report_payload"),
                 "reasoning_trace": reasoning_trace,
             }, ensure_ascii=False),
         })
         yield sse_event({"event": "done", "data": "{}"})
 
     return EventSourceResponse(event_generator())
+
+
+async def pump_graph_events(graph, state: AgentState, event_queue: asyncio.Queue[dict]) -> None:
+    try:
+        async for event in graph.astream_events(state, version="v2"):
+            await event_queue.put({"kind": "event", "event": event})
+    except Exception as exc:
+        await event_queue.put({"kind": "error", "error": exc})
+    finally:
+        await event_queue.put({"kind": "done"})
 
 
 def sse_event(event: dict) -> dict:
@@ -327,6 +406,13 @@ def compact_stream_log_payload(payload):
             "metrics": logic_form.get("metrics", []),
             "dimensions": logic_form.get("dimensions", []),
             "filters": len(logic_form.get("filters", [])),
+        }
+    report_payload = compacted.get("report_payload")
+    if isinstance(report_payload, dict):
+        compacted["report_payload"] = {
+            "title": report_payload.get("title"),
+            "row_count": report_payload.get("row_count"),
+            "status": report_payload.get("status"),
         }
     return compacted
 
@@ -377,6 +463,13 @@ def append_trace_reasoning(trace: list[dict], node: str, label: str, delta: str)
     step["reasoning"] = f"{step.get('reasoning', '')}{delta}"
 
 
+def append_trace_stream_text(trace: list[dict], node: str, label: str, delta: str) -> None:
+    if not node:
+        return
+    step = ensure_trace_step(trace, node, label or node)
+    step["streamText"] = f"{step.get('streamText', '')}{delta}"
+
+
 def complete_trace_step(trace: list[dict], node: str, label: str, output: dict) -> None:
     step = ensure_trace_step(trace, node, label)
     step["status"] = "done"
@@ -391,6 +484,13 @@ def summarize_trace_step(node: str, output: dict) -> str:
         domain = output.get("domain") or ""
         count = output.get("count", 0)
         return f"{domain} · 召回 {count} 条语义资产" if domain else f"召回 {count} 条语义资产"
+    if node == "schema_recall":
+        scope = output.get("schema_scope") or {}
+        tables = len(output.get("matched_tables") or output.get("relevant_tables") or [])
+        columns = len(output.get("matched_columns") or output.get("relevant_columns") or [])
+        if scope.get("fallback_used"):
+            return f"使用已采集表结构兜底 · {tables} 张表 {columns} 个字段"
+        return f"定位 {tables} 张候选表 · {columns} 个候选字段"
     if node == "nl2lf_generate":
         logic_form = output.get("logic_form") or {}
         metrics = logic_form.get("metrics", []) if isinstance(logic_form, dict) else []
@@ -398,11 +498,62 @@ def summarize_trace_step(node: str, output: dict) -> str:
     if node == "lf_validate":
         return "校验通过" if output.get("valid") else "校验未通过"
     if node == "lf_to_sql_compile":
-        return "已编译 SQL" if output.get("compiled_sql") else ""
+        if output.get("compiled_sql"):
+            return "已编译 SQL"
+        if output.get("sql_error"):
+            return f"编译失败: {output.get('sql_error')}"
+        return ""
+    if node == "nl2sql_fallback":
+        if output.get("compiled_sql"):
+            return "已生成兜底 SQL"
+        if output.get("sql_error"):
+            return f"兜底失败: {output.get('sql_error')}"
+        return ""
+    if node == "semantic_check":
+        check = output.get("semantic_check") or output
+        return "一致性通过" if check.get("valid") else "一致性未通过"
     if node == "sql_execute":
         error = output.get("error")
         return f"错误: {error}" if error else f"{output.get('row_count', 0)} 条结果"
+    if node == "planner":
+        plan = output.get("plan") or {}
+        mode_label = plan.get("mode_label") or "本地分析计划"
+        return f"{mode_label} · {len(plan.get('analysis_steps') or [])} 个步骤"
+    if node == "python_generate":
+        result = output.get("python_result") or {}
+        scope = result.get("analysis_scope") or "SQL 结果集分析"
+        return f"已生成基础统计脚本 · {scope}" if output.get("python_code") or output.get("code_length") else ""
+    if node == "python_analyze":
+        result = output.get("python_result") or {}
+        if result.get("status") == "success":
+            return "基础统计完成 · " + "、".join(result.get("computed_items") or [])
+        return str(result.get("status") or "")
+    if node == "report_generator":
+        report = output.get("report_payload") or {}
+        mode_label = report.get("mode_label") or "结构化报告"
+        return f"{mode_label} · {report.get('title', '已生成报告')}"
     return ""
+
+
+def node_progress_message(node: str, index: int = 0) -> str:
+    messages = {
+        "intent_recognition": ["正在识别问题意图...", "正在判断是否进入问数链路..."],
+        "semantic_runtime_recall": ["正在检索知识库、匹配语义资产...", "正在整理可用指标、维度和规则..."],
+        "schema_recall": ["正在定位相关数据表、字段和关联关系...", "正在根据业务口径缩小候选 schema..."],
+        "nl2lf_generate": ["正在调用大模型生成 LogicForm...", "正在把自然语言映射为指标、维度和过滤条件...", "正在等待模型流式返回结构化 JSON..."],
+        "lf_validate": ["正在校验指标、维度、过滤和时间口径...", "正在确认语义资产能否编译执行..."],
+        "lf_to_sql_compile": ["正在把 LogicForm 编译成受控 SQL...", "正在解析表字段映射和关联路径..."],
+        "nl2sql_fallback": ["语义层未命中，正在调用大模型生成兜底 SQL...", "正在使用数据定位候选表约束 SQL 生成..."],
+        "semantic_check": ["正在执行 SQL 前语义一致性检查...", "正在检查指标、维度和 SQL 是否一致..."],
+        "lf_repair": ["正在根据错误尝试修复 LogicForm...", "正在调整失败的指标或维度槽位..."],
+        "sql_execute": ["正在执行 SQL 查询并等待数据库返回...", "数据库仍在处理查询结果..."],
+        "planner": ["正在生成后续分析计划...", "正在规划统计、解读和报告结构..."],
+        "python_generate": ["正在生成结果分析代码...", "正在准备只处理 SQL 结果集的统计脚本..."],
+        "python_analyze": ["正在执行统计分析并整理结果...", "正在计算分布、极值、空值和维度样例..."],
+        "report_generator": ["正在生成最终结构化报告...", "正在写入执行摘要、过程、解读和建议...", "正在组装图表和结果明细..."],
+    }
+    options = messages.get(node) or ["当前步骤仍在处理中..."]
+    return options[index % len(options)]
 
 
 async def validate_datasource_access(agent_id: int, datasource_id: int | None):
@@ -428,32 +579,160 @@ def _extract_node_output(node: str, output: dict) -> dict:
         evidence = output.get("runtime_evidence", [])
         runtime = output.get("semantic_runtime") or {}
         domain = runtime.get("domain", {}) if isinstance(runtime, dict) else {}
+        metrics = runtime.get("metrics", []) if isinstance(runtime, dict) else []
+        mappings = runtime.get("mappings", []) if isinstance(runtime, dict) else []
         return {
             "domain": domain.get("name", ""),
             "count": len(evidence),
+            "runtime_counts": {
+                "metrics": len(metrics),
+                "dimensions": len([
+                    item for item in mappings
+                    if item.get("role") in {"dimension", "filter", "time"}
+                ]),
+                "rules": len(runtime.get("rules", [])) if isinstance(runtime, dict) else 0,
+                "templates": len(runtime.get("templates", [])) if isinstance(runtime, dict) else 0,
+            },
+            "matched_assets": [
+                {
+                    "key": e.get("metadata", {}).get("asset_key", e.get("source_type", "")),
+                    "type": e.get("source_type", ""),
+                    "score": e.get("score"),
+                    "content": e.get("content", ""),
+                }
+                for e in evidence[:8]
+            ],
+            "available_metrics": [
+                {
+                    "key": item.get("metric_key"),
+                    "name": item.get("name"),
+                    "dimensions": item.get("dimensions", []),
+                }
+                for item in metrics[:12]
+            ],
             "items": [
                 e.get("metadata", {}).get("asset_key", e.get("source_type", ""))
                 for e in evidence[:5]
             ],
             "error": output.get("semantic_error"),
         }
+    elif node == "schema_recall":
+        tables = output.get("relevant_tables", [])
+        columns = output.get("relevant_columns", [])
+        joins = output.get("likely_joins", [])
+        scope = output.get("schema_scope", {})
+        return {
+            "matched_tables": tables[:8],
+            "matched_columns": columns[:20],
+            "likely_joins": joins[:10],
+            "schema_scope": scope,
+            "fallback_used": scope.get("fallback_used", False),
+        }
     elif node == "nl2lf_generate":
-        return {"logic_form": output.get("logic_form")}
+        logic_form = output.get("logic_form") or {}
+        return {
+            "logic_form": logic_form,
+            "metrics": logic_form.get("metrics", []) if isinstance(logic_form, dict) else [],
+            "dimensions": logic_form.get("dimensions", []) if isinstance(logic_form, dict) else [],
+            "filters": logic_form.get("filters", []) if isinstance(logic_form, dict) else [],
+            "sort": logic_form.get("sort", []) if isinstance(logic_form, dict) else [],
+            "limit": logic_form.get("limit") if isinstance(logic_form, dict) else None,
+        }
     elif node == "lf_validate":
         validation = output.get("lf_validation") or {}
         return {
             "valid": validation.get("valid", False),
             "errors": validation.get("errors", []),
             "warnings": validation.get("warnings", []),
+            "used_assets": validation.get("used_assets", []),
         }
     elif node == "lf_to_sql_compile":
-        return {"compiled_sql": output.get("compiled_sql", "")}
+        trace = output.get("execution_trace") or {}
+        return {
+            "compiled_sql": output.get("compiled_sql", ""),
+            "error": output.get("sql_error"),
+            "strategy": trace.get("compile_strategy"),
+            "used_assets": trace.get("used_assets", []),
+            "warnings": trace.get("warnings", []),
+        }
+    elif node == "nl2sql_fallback":
+        return {
+            "compiled_sql": output.get("compiled_sql", ""),
+            "error": output.get("sql_error"),
+            "strategy": (output.get("execution_trace") or {}).get("compile_strategy"),
+            "reason": (output.get("execution_trace") or {}).get("fallback_reason"),
+        }
+    elif node == "semantic_check":
+        check = output.get("semantic_check") or {}
+        return {
+            "valid": check.get("valid", False),
+            "errors": check.get("errors", []),
+            "warnings": check.get("warnings", []),
+            "checked_items": check.get("checked_items", {}),
+        }
     elif node == "lf_repair":
         return {"execution_trace": output.get("execution_trace", {})}
     elif node == "sql_execute":
         result = output.get("sql_result", [])
         error = output.get("sql_error")
-        return {"row_count": len(result), "error": error}
+        sample = result[:3] if isinstance(result, list) else []
+        columns = list(sample[0].keys()) if sample else []
+        return {
+            "row_count": len(result),
+            "error": error,
+            "columns": columns,
+            "sample_rows": sample,
+        }
+    elif node == "planner":
+        plan = output.get("plan", {})
+        return {
+            "plan": plan,
+            "mode": plan.get("mode"),
+            "mode_label": plan.get("mode_label"),
+            "row_count": plan.get("row_count"),
+            "column_count": plan.get("column_count"),
+            "numeric_columns": plan.get("numeric_columns", []),
+            "dimension_columns": plan.get("dimension_columns", []),
+            "limitations": plan.get("limitations", []),
+        }
+    elif node == "python_generate":
+        py_result = output.get("python_result", {})
+        return {
+            "python_code": output.get("python_code", ""),
+            "code_length": len(output.get("python_code") or ""),
+            "python_result": py_result,
+            "analysis_scope": py_result.get("analysis_scope"),
+            "generated_tasks": py_result.get("generated_tasks", []),
+            "numeric_columns": py_result.get("numeric_columns", []),
+            "dimension_columns": py_result.get("dimension_columns", []),
+        }
+    elif node == "python_analyze":
+        py_result = output.get("python_result", {})
+        return {
+            "python_result": py_result,
+            "status": py_result.get("status"),
+            "computed_items": py_result.get("computed_items", []),
+            "metrics": py_result.get("metrics", []),
+            "dimensions": py_result.get("dimensions", []),
+            "null_counts": py_result.get("null_counts", {}),
+        }
+    elif node == "report_generator":
+        report = output.get("report_payload") or {}
+        return {
+            "title": report.get("title", ""),
+            "mode": report.get("mode"),
+            "mode_label": report.get("mode_label"),
+            "summary": report.get("summary", ""),
+            "row_count": report.get("row_count", 0),
+            "executive_summary": report.get("executive_summary", {}),
+            "analysis_process": report.get("analysis_process", {}),
+            "interpretation": report.get("interpretation", {}),
+            "suggestions": report.get("suggestions", {}),
+            "charts": report.get("charts", []),
+            "tables": report.get("tables", []),
+            "sections": report.get("sections", []),
+            "limitations": report.get("limitations", []),
+        }
     return {}
 
 
@@ -476,7 +755,8 @@ async def get_history(agent_id: int, session_id: str):
     """获取某个会话的完整历史."""
     db = get_management_db()
     rows = await db.execute_query(
-        "SELECT role, content, reasoning_trace, logic_form, compiled_sql, sql_text, sql_result, created_at "
+        "SELECT role, content, reasoning_trace, logic_form, compiled_sql, sql_text, sql_result, "
+        "plan_payload, semantic_check, python_result, report_payload, created_at "
         "FROM chat_history WHERE agent_id = :aid AND session_id = :sid ORDER BY id",
         {"aid": agent_id, "sid": session_id},
     )
@@ -499,6 +779,12 @@ async def get_history(agent_id: int, session_id: str):
                     row["reasoning_trace"] = json.loads(row["reasoning_trace"])
                 except json.JSONDecodeError:
                     row["reasoning_trace"] = []
+        for field in ("plan_payload", "semantic_check", "python_result", "report_payload"):
+            if row.get(field) and isinstance(row[field], str):
+                try:
+                    row[field] = json.loads(row[field])
+                except json.JSONDecodeError:
+                    row[field] = None
         if row.get("compiled_sql"):
             row["sql_text"] = row["compiled_sql"]
     return {"history": rows}
@@ -549,6 +835,10 @@ async def save_turn(
     logic_form: dict | None = None,
     compiled_sql: str | None = None,
     execution_trace: dict | None = None,
+    plan_payload: dict | None = None,
+    semantic_check: dict | None = None,
+    python_result: dict | None = None,
+    report_payload: dict | None = None,
     reasoning_trace: list[dict] | None = None,
 ):
     """保存一轮对话到 chat_history."""
@@ -562,8 +852,10 @@ async def save_turn(
     # 保存助手消息
     await db.execute_query(
         "INSERT INTO chat_history "
-        "(agent_id, session_id, role, content, reasoning_trace, logic_form, compiled_sql, execution_trace, sql_text, sql_result) "
-        "VALUES (:aid, :sid, 'assistant', :content, :reasoning_trace, :logic_form, :compiled_sql, :trace, :sql, :result)",
+        "(agent_id, session_id, role, content, reasoning_trace, logic_form, compiled_sql, execution_trace, "
+        "sql_text, sql_result, plan_payload, semantic_check, python_result, report_payload) "
+        "VALUES (:aid, :sid, 'assistant', :content, :reasoning_trace, :logic_form, :compiled_sql, :trace, "
+        ":sql, :result, :plan_payload, :semantic_check, :python_result, :report_payload)",
         {
             "aid": agent_id, "sid": session_id,
             "content": answer,
@@ -573,6 +865,10 @@ async def save_turn(
             "trace": json.dumps(execution_trace, ensure_ascii=False) if execution_trace else None,
             "sql": sql or compiled_sql or None,
             "result": json.dumps(sql_result, ensure_ascii=False) if sql_result else None,
+            "plan_payload": json.dumps(plan_payload, ensure_ascii=False) if plan_payload else None,
+            "semantic_check": json.dumps(semantic_check, ensure_ascii=False) if semantic_check else None,
+            "python_result": json.dumps(python_result, ensure_ascii=False) if python_result else None,
+            "report_payload": json.dumps(report_payload, ensure_ascii=False) if report_payload else None,
         },
     )
 
@@ -586,7 +882,7 @@ from app.api.semantic import router as semantic_router
 app.include_router(agent_router, prefix="/api/agent", tags=["智能体"])
 app.include_router(ds_router, prefix="/api/datasource", tags=["数据源"])
 app.include_router(model_config_router, prefix="/api/model-config", tags=["模型配置"])
-app.include_router(semantic_router, prefix="/api/semantic", tags=["语义运行时"])
+app.include_router(semantic_router, prefix="/api/semantic", tags=["知识召回"])
 
 
 if __name__ == "__main__":

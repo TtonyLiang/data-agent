@@ -37,6 +37,18 @@ async def run_management_migrations() -> None:
             INDEX idx_datasource_id (datasource_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体数据源关联'
         """,
+        """
+        CREATE TABLE IF NOT EXISTS semantic_domain_snapshot (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            domain_id BIGINT NOT NULL COMMENT '语义层ID',
+            name VARCHAR(256) NOT NULL COMMENT '快照名称',
+            description TEXT COMMENT '快照说明',
+            snapshot_json JSON NOT NULL COMMENT '语义层快照',
+            asset_counts JSON DEFAULT NULL COMMENT '资产数量',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_domain_id (domain_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='语义层版本快照'
+        """,
     ]
     for statement in statements:
         await db.execute_query(statement)
@@ -65,6 +77,26 @@ async def run_management_migrations() -> None:
         "chat_history",
         "reasoning_trace",
         "ALTER TABLE chat_history ADD COLUMN reasoning_trace JSON DEFAULT NULL COMMENT '流式思考与节点轨迹' AFTER content",
+    )
+    await add_column_if_missing(
+        "chat_history",
+        "plan_payload",
+        "ALTER TABLE chat_history ADD COLUMN plan_payload JSON DEFAULT NULL COMMENT 'Phase3分析计划' AFTER execution_trace",
+    )
+    await add_column_if_missing(
+        "chat_history",
+        "semantic_check",
+        "ALTER TABLE chat_history ADD COLUMN semantic_check JSON DEFAULT NULL COMMENT 'SQL前语义一致性校验结果' AFTER plan_payload",
+    )
+    await add_column_if_missing(
+        "chat_history",
+        "python_result",
+        "ALTER TABLE chat_history ADD COLUMN python_result JSON DEFAULT NULL COMMENT 'Python分析结果' AFTER semantic_check",
+    )
+    await add_column_if_missing(
+        "chat_history",
+        "report_payload",
+        "ALTER TABLE chat_history ADD COLUMN report_payload JSON DEFAULT NULL COMMENT '结构化分析报告' AFTER python_result",
     )
     await seed_default_model_configs()
     await backfill_agent_model_configs()

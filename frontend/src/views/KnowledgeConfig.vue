@@ -29,6 +29,24 @@
         <el-button :icon="Delete" type="danger" plain :disabled="!selectedDomain" @click="handleDeleteDomain">
           删除
         </el-button>
+        <el-button :disabled="!selectedDomain" @click="handleCopyDomain">
+          复制
+        </el-button>
+        <el-button @click="handleImportDomain">
+          导入
+        </el-button>
+        <el-button :disabled="!selectedDomain" @click="handleExportDomain">
+          导出
+        </el-button>
+        <el-button :disabled="!selectedDomain" @click="handleValidateDomain">
+          保存前校验
+        </el-button>
+        <el-button :disabled="!selectedDomain" @click="handleCreateSnapshot">
+          创建快照
+        </el-button>
+        <el-button :disabled="!selectedDomain" @click="openSnapshots">
+          快照
+        </el-button>
         <el-button :loading="runtimeLoading" :disabled="!selectedDomain" @click="handleBuildRuntime">
           构建语义层
         </el-button>
@@ -563,6 +581,27 @@
         </section>
       </div>
     </el-drawer>
+
+    <el-drawer
+      v-model="showSnapshotDrawer"
+      title="语义层快照"
+      size="620px"
+      append-to-body
+    >
+      <el-empty v-if="snapshots.length === 0" description="暂无快照" />
+      <div v-else class="snapshot-list">
+        <article v-for="item in snapshots" :key="String(item.id)" class="snapshot-card">
+          <div>
+            <strong>{{ item.name }}</strong>
+            <p>{{ item.description || '无说明' }}</p>
+          </div>
+          <div class="snapshot-meta">
+            <span>{{ formatSnapshotCounts(item.asset_counts) }}</span>
+            <small>{{ item.created_at }}</small>
+          </div>
+        </article>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -572,15 +611,21 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, EditPen, Plus, QuestionFilled } from '@element-plus/icons-vue'
 import {
   buildSemanticRuntime,
+  copySemanticDomain,
+  createSemanticSnapshot,
   deleteSemanticDomain,
   deleteSemanticAsset,
+  exportSemanticDomain,
   fetchAgents,
   fetchAllDatasources,
   fetchAllSemanticDomains,
   fetchSemanticAssets,
+  fetchSemanticSnapshots,
+  importSemanticDomain,
   syncSemanticVector,
   upsertSemanticDomain,
   upsertSemanticAsset,
+  validateSemanticDomain,
   type AgentItem,
   type DatasourceItem,
   type SemanticDomain,
@@ -1072,6 +1117,8 @@ const showDomainDialog = ref(false)
 const showAssetDialog = ref(false)
 const showAssetGuide = ref(false)
 const showAssetDetail = ref(false)
+const showSnapshotDrawer = ref(false)
+const snapshots = ref<Record<string, unknown>[]>([])
 const domainDialogMode = ref<'create' | 'edit'>('create')
 const editingAssetType = ref('concept')
 const assetDialogMode = ref<'create' | 'edit'>('create')
@@ -1283,6 +1330,127 @@ async function handleDeleteDomain() {
     if (error === 'cancel' || error === 'close') return
     ElMessage.error(error instanceof Error ? error.message : '语义层删除失败')
   }
+}
+
+async function handleCopyDomain() {
+  if (!selectedDomain.value) return
+  const source = selectedDomain.value
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '请输入新语义层标识，复制后会包含当前语义层的全部资产。',
+      '复制语义层',
+      {
+        inputValue: `${source.domain_key}_copy`,
+        inputPattern: /^[A-Za-z_][A-Za-z0-9_]*$/,
+        inputErrorMessage: '只能使用英文、数字和下划线，且不能以数字开头',
+      },
+    )
+    const result = await copySemanticDomain(source.id, {
+      domain_key: value,
+      name: `${source.name} 副本`,
+    })
+    ElMessage.success(result.message || '语义层已复制')
+    await loadDomains()
+    if (result.id) domainId.value = Number(result.id)
+    await loadAssets()
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(error instanceof Error ? error.message : '复制失败')
+  }
+}
+
+async function handleExportDomain() {
+  if (!selectedDomain.value) return
+  try {
+    const bundle = await exportSemanticDomain(selectedDomain.value.id)
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${selectedDomain.value.domain_key}.semantic.json`
+    link.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('语义层已导出')
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '导出失败')
+  }
+}
+
+function handleImportDomain() {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'application/json,.json'
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file) return
+    try {
+      const text = await file.text()
+      const result = await importSemanticDomain(JSON.parse(text))
+      ElMessage.success(result.message || '语义层已导入')
+      await loadDomains()
+      if (result.id) domainId.value = Number(result.id)
+      await loadAssets()
+    } catch (error) {
+      ElMessage.error(error instanceof Error ? error.message : '导入失败')
+    }
+  }
+  input.click()
+}
+
+async function handleValidateDomain() {
+  if (!selectedDomain.value) return
+  try {
+    const result = await validateSemanticDomain(selectedDomain.value.id)
+    const errors = Array.isArray(result.errors) ? result.errors : []
+    const warnings = Array.isArray(result.warnings) ? result.warnings : []
+    if (errors.length) {
+      await ElMessageBox.alert(errors.join('\n'), '语义层校验未通过', { type: 'error' })
+      return
+    }
+    const message = warnings.length ? warnings.join('\n') : '未发现阻断问题。'
+    await ElMessageBox.alert(message, result.valid ? '语义层校验通过' : '语义层校验结果', { type: warnings.length ? 'warning' : 'success' })
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '校验失败')
+  }
+}
+
+async function handleCreateSnapshot() {
+  if (!selectedDomain.value) return
+  try {
+    const { value } = await ElMessageBox.prompt('请输入快照说明，便于之后识别本次配置状态。', '创建语义层快照', {
+      inputValue: '配置调整前快照',
+    })
+    const result = await createSemanticSnapshot(selectedDomain.value.id, {
+      name: `${selectedDomain.value.name} 快照`,
+      description: value,
+    })
+    ElMessage.success(result.message || '快照已创建')
+    await openSnapshots()
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(error instanceof Error ? error.message : '创建快照失败')
+  }
+}
+
+async function openSnapshots() {
+  if (!selectedDomain.value) return
+  try {
+    snapshots.value = await fetchSemanticSnapshots(selectedDomain.value.id)
+    showSnapshotDrawer.value = true
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '快照加载失败')
+  }
+}
+
+function formatSnapshotCounts(value: unknown) {
+  if (!value || typeof value !== 'object') return '无资产统计'
+  const record = value as Record<string, unknown>
+  return [
+    `对象 ${record.concept ?? 0}`,
+    `关系 ${record.relation ?? 0}`,
+    `指标 ${record.metric ?? 0}`,
+    `映射 ${record.mapping ?? 0}`,
+  ].join(' · ')
 }
 
 function defaultDomainAgentId() {
@@ -1753,6 +1921,8 @@ const _labelMap: Record<string, string> = {
   m1_plus_rate: 'M1+逾期率', mob: '账龄', dpd: '逾期天数', vintage: '放款批次',
   pd: '预测违约概率', dti: '负债收入比', writeoff_amount: '核销金额',
   collection_recovery_rate: '催收回收率', product_type: '产品类型', region: '地区',
+  application_count: '申请笔数', application_product_type: '申请产品类型',
+  application_region: '申请地区', application_risk_grade: '申请风险等级',
   channel: '渠道', risk_grade: '风险等级', overdue_bucket: '逾期阶段',
   assigned_team: '催收团队', collection_strategy: '催收策略',
   overdue_bucket_at_entry: '入催逾期阶段', customer_segment: '客户分层',
@@ -1824,6 +1994,7 @@ function assetTypeLabel(type: string) {
 
 function tableNameLabel(tableName: string) {
   const map: Record<string, string> = {
+    loan_application_indicator: '贷款申请指标表',
     loan_account_indicator: '贷款账户指标表',
     loan_repayment_period_indicator: '分期还款表现指标表',
     collection_case_indicator: '贷后催收处置指标表',
@@ -1835,6 +2006,9 @@ function tableNameLabel(tableName: string) {
 function columnNameLabel(assetKey: string, columnName: string) {
   const map: Record<string, string> = {
     product_type: '产品类型',
+    application_product_type: '申请产品类型',
+    application_region: '申请地区',
+    application_risk_grade: '申请风险等级',
     vintage: '放款月份',
     mob: '账龄月数',
     region: '区域',
@@ -2359,6 +2533,41 @@ function columnNameLabel(assetKey: string, columnName: string) {
   line-height: 1.65;
   font-family: "SFMono-Regular", Consolas, monospace;
   word-break: break-word;
+}
+
+.snapshot-list {
+  display: grid;
+  gap: 12px;
+}
+
+.snapshot-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--wq-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.snapshot-card strong {
+  color: var(--wq-text);
+  font-size: 14px;
+}
+
+.snapshot-card p {
+  margin: 6px 0 0;
+  color: var(--wq-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.snapshot-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--wq-subtle);
+  font-size: 12px;
 }
 
 @media (max-width: 1100px) {

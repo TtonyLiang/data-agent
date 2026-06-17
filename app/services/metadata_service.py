@@ -88,6 +88,25 @@ class MetadataService:
             for row in rows
         ]
 
+    async def get_schema_stats(self, datasource_id: int) -> dict:
+        db = get_management_db()
+        rows = await db.execute_query(
+            "SELECT COUNT(DISTINCT mt.id) AS table_count, COUNT(mc.id) AS column_count "
+            "FROM meta_table mt "
+            "LEFT JOIN meta_column mc ON mc.table_id = mt.id "
+            "WHERE mt.datasource_id = :did",
+            {"did": datasource_id},
+        )
+        row = rows[0] if rows else {}
+        table_count = int(row.get("table_count") or 0)
+        column_count = int(row.get("column_count") or 0)
+        return {
+            "table_count": table_count,
+            "column_count": column_count,
+            "noise_level": "high" if table_count > 12 or column_count > 600 else "normal",
+            "recommendation": "建议只采集当前智能体会用到的核心事实表和维表，避免过多表结构干扰大模型。" if table_count > 12 or column_count > 600 else "采集规模正常。",
+        }
+
     async def get_table_detail(self, datasource_id: int, table_id: int) -> dict | None:
         db = get_management_db()
         rows = await db.execute_query(

@@ -69,6 +69,13 @@ export interface DatasourceRemoteTable {
   column_count: number
 }
 
+export interface DatasourceSchemaStats {
+  table_count: number
+  column_count: number
+  noise_level: 'normal' | 'high'
+  recommendation: string
+}
+
 export interface AgentItem {
   id: number
   name: string
@@ -104,6 +111,7 @@ export interface ModelConfigItem {
   base_url: string
   model_name: string
   api_key_enabled: boolean | number
+  api_key_configured?: boolean | number
   embedding_dimension?: number | null
   status: string
   created_at?: string
@@ -163,6 +171,7 @@ export async function sendMessage(req: ChatRequest): Promise<ChatResponse> {
 export interface StreamEvent {
   event:
     | 'node_start'
+    | 'node_progress'
     | 'reasoning'
     | 'token'
     | 'node_complete'
@@ -330,6 +339,11 @@ export async function fetchDatasourceTableDetail(dsId: number, tableId: number):
   return data.table
 }
 
+export async function fetchDatasourceSchemaStats(dsId: number): Promise<DatasourceSchemaStats> {
+  const { data } = await api.get<{ stats: DatasourceSchemaStats }>(`/datasource/${dsId}/schema/stats`)
+  return data.stats
+}
+
 export interface SemanticDomain {
   id: number
   agent_id: number
@@ -364,6 +378,36 @@ export async function upsertSemanticDomain(domain: SemanticDomainRequest) {
 export async function deleteSemanticDomain(domainId: number) {
   const { data } = await api.delete(`/semantic/domains/${domainId}`)
   return data
+}
+
+export async function copySemanticDomain(domainId: number, payload: Record<string, unknown>) {
+  const { data } = await api.post(`/semantic/domains/${domainId}/copy`, payload)
+  return data
+}
+
+export async function exportSemanticDomain(domainId: number) {
+  const { data } = await api.get(`/semantic/domains/${domainId}/export`)
+  return data
+}
+
+export async function importSemanticDomain(payload: Record<string, unknown>) {
+  const { data } = await api.post('/semantic/domains/import', payload)
+  return data
+}
+
+export async function validateSemanticDomain(domainId: number) {
+  const { data } = await api.post(`/semantic/domains/${domainId}/validate`)
+  return data
+}
+
+export async function createSemanticSnapshot(domainId: number, payload: Record<string, unknown>) {
+  const { data } = await api.post(`/semantic/domains/${domainId}/snapshot`, payload)
+  return data
+}
+
+export async function fetchSemanticSnapshots(domainId: number) {
+  const { data } = await api.get(`/semantic/domains/${domainId}/snapshots`)
+  return data.snapshots || []
 }
 
 export async function fetchSemanticAssets(domainId: number, assetType?: string) {
@@ -425,6 +469,10 @@ export interface HistoryItem {
   reasoning_trace?: ReasoningTraceStep[]
   logic_form?: Record<string, unknown>
   sql_result?: Record<string, unknown>[]
+  plan_payload?: Record<string, unknown>
+  semantic_check?: Record<string, unknown>
+  python_result?: Record<string, unknown>
+  report_payload?: Record<string, unknown>
   created_at: string
 }
 

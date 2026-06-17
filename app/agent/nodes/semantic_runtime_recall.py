@@ -9,19 +9,21 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
     datasource_id = state.get("datasource_id")
     question = state.get("question", "")
     svc = get_semantic_runtime_service()
+    domain_id = await resolve_runtime_domain_id(agent_id, datasource_id)
 
     try:
         runtime = await svc.build_runtime(
             agent_id=agent_id,
             datasource_id=datasource_id,
             domain_key="loan_risk",
+            domain_id=domain_id,
         )
     except Exception as exc:
         return {
             "semantic_runtime": None,
             "runtime_evidence": [],
             "semantic_error": str(exc),
-            "final_answer": f"语义运行时不可用: {exc}",
+            "final_answer": f"知识召回不可用: {exc}",
         }
 
     evidence: list[dict] = []
@@ -48,6 +50,16 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
         "runtime_evidence": evidence[:8],
         "semantic_error": None,
     }
+
+
+async def resolve_runtime_domain_id(agent_id: int, datasource_id: int | None) -> int | None:
+    """Prefer the semantic layer explicitly selected on the agent."""
+    domain = await get_semantic_runtime_service().get_agent_bound_domain(agent_id)
+    if domain is None:
+        return None
+    if datasource_id and domain.datasource_id and domain.datasource_id != datasource_id:
+        return None
+    return domain.id
 
 
 def keyword_runtime_evidence(question: str, runtime: dict, limit: int = 8) -> list[dict]:

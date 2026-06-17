@@ -26,6 +26,8 @@ const {
   createChatStreamState,
   startChatRun,
   reduceChatStreamEvent,
+  toggleAssistantChain,
+  toggleAssistantErrorDetail,
   toggleAssistantReasoning,
 } = reducer
 
@@ -69,6 +71,52 @@ function assistantMessage(state) {
 
 {
   let state = createChatStreamState()
+  state = startChatRun(state, { runId: 8, question: '生成 LogicForm' })
+  state = reduceChatStreamEvent(state, {
+    runId: 8,
+    event: 'node_start',
+    data: { node: 'nl2lf_generate', label: 'LogicForm 生成' },
+  })
+  state = reduceChatStreamEvent(state, {
+    runId: 8,
+    event: 'token',
+    data: { node: 'nl2lf_generate', delta: '{"metrics":' },
+  })
+  state = reduceChatStreamEvent(state, {
+    runId: 8,
+    event: 'token',
+    data: { node: 'nl2lf_generate', delta: '["application_count"]}' },
+  })
+
+  const step = assistantMessage(state).steps[0]
+  assert.equal(step.streamText, '{"metrics":["application_count"]}')
+  assert.match(step.summary, /application_count/)
+}
+
+{
+  let state = createChatStreamState()
+  state = startChatRun(state, { runId: 7, question: '申请笔数最多的前三种贷款是多少' })
+  state = reduceChatStreamEvent(state, {
+    runId: 7,
+    event: 'node_start',
+    data: { node: 'semantic_runtime_recall', label: '知识召回' },
+  })
+  state = reduceChatStreamEvent(state, {
+    runId: 7,
+    event: 'node_progress',
+    data: {
+      node: 'semantic_runtime_recall',
+      message: '正在检索知识库、匹配语义资产...',
+    },
+  })
+
+  const message = assistantMessage(state)
+  assert.equal(message.steps[0].status, 'running')
+  assert.equal(message.steps[0].summary, '正在检索知识库、匹配语义资产...')
+}
+
+{
+  let state = createChatStreamState()
   state = startChatRun(state, { runId: 3, question: '生成 SQL' })
   state = reduceChatStreamEvent(state, {
     runId: 3,
@@ -99,12 +147,16 @@ function assistantMessage(state) {
 
   const message = assistantMessage(state)
   assert.equal(message.status, 'complete')
+  assert.equal(message.chainCollapsed, true)
   assert.equal(message.steps[0].showReasoning, false)
   assert.equal(message.sql, 'select * from sales')
   assert.deepEqual(message.sql_result, [{ amount: 42 }])
 
   state = toggleAssistantReasoning(state, message.id, 'lf_to_sql_compile')
   assert.equal(assistantMessage(state).steps[0].showReasoning, true)
+
+  state = toggleAssistantChain(state, message.id)
+  assert.equal(assistantMessage(state).chainCollapsed, false)
 }
 
 {
@@ -142,6 +194,7 @@ function assistantMessage(state) {
 
   const message = assistantMessage(state)
   assert.equal(message.status, 'error')
+  assert.equal(message.chainCollapsed, true)
   assert.equal(message.content, 'SQL 编译节点失败：服务暂不可用（RuntimeError）')
   assert.deepEqual(message.error, {
     message: 'SQL 编译节点失败：服务暂不可用（RuntimeError）',
@@ -150,4 +203,7 @@ function assistantMessage(state) {
     label: 'SQL 编译',
     type: 'RuntimeError',
   })
+
+  state = toggleAssistantErrorDetail(state, message.id)
+  assert.equal(assistantMessage(state).showErrorDetail, true)
 }

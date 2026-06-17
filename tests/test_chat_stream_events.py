@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 
@@ -57,6 +58,44 @@ class FailingStreamGraph:
     async def astream_events(self, state, version):
         yield {"event": "on_chain_start", "name": "lf_to_sql_compile", "data": {}}
         raise RuntimeError("model connection dropped")
+
+
+class SlowSemanticRuntimeGraph:
+    async def astream_events(self, state, version):
+        yield {"event": "on_chain_start", "name": "semantic_runtime_recall", "data": {}}
+        await asyncio.sleep(0.03)
+        yield {
+            "event": "on_chain_end",
+            "name": "semantic_runtime_recall",
+            "data": {
+                "output": {
+                    "semantic_runtime": {"domain": {"name": "贷款风控"}},
+                    "runtime_evidence": [],
+                    "semantic_error": None,
+                    "final_answer": "语义召回完成。",
+                }
+            },
+        }
+
+
+class TokenStreamGraph:
+    async def astream_events(self, state, version):
+        class Chunk:
+            content = '{"metrics":["application_count"]}'
+            additional_kwargs = {}
+
+        yield {"event": "on_chain_start", "name": "nl2lf_generate", "data": {}}
+        yield {"event": "on_chat_model_stream", "name": "ChatOpenAI", "data": {"chunk": Chunk()}}
+        yield {
+            "event": "on_chain_end",
+            "name": "nl2lf_generate",
+            "data": {
+                "output": {
+                    "logic_form": {"metrics": ["application_count"], "dimensions": []},
+                    "final_answer": "完成。",
+                }
+            },
+        }
 
 
 @pytest.mark.asyncio
@@ -139,7 +178,12 @@ async def test_chat_stream_emits_final_answer_deltas_and_saves_only_final(monkey
                     "label": "SQL 执行",
                     "status": "done",
                     "reasoning": "",
-                    "output": {"row_count": 1, "error": None},
+                    "output": {
+                        "row_count": 1,
+                        "error": None,
+                        "columns": ["m1_plus_rate"],
+                        "sample_rows": [{"m1_plus_rate": 0.1234}],
+                    },
                     "summary": "1 条结果",
                 }
             ],
@@ -219,6 +263,78 @@ async def test_chat_stream_logs_sse_events(monkeypatch, caplog):
     assert "SSE event=answer_delta" in caplog.text
     assert "SSE event=result" in caplog.text
     assert '"sql": "SELECT 1 AS value"' in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_emits_progress_while_node_is_waiting(monkeypatch):
+    async def fake_load_history(agent_id, session_id, limit=5):
+        return []
+
+    async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
+        return None
+
+    async def fake_validate_datasource_access(agent_id, datasource_id):
+        return None
+
+    monkeypatch.setattr(main, "get_graph", lambda: SlowSemanticRuntimeGraph())
+    monkeypatch.setattr(main, "load_history", fake_load_history)
+    monkeypatch.setattr(main, "save_turn", fake_save_turn)
+    monkeypatch.setattr(main, "validate_datasource_access", fake_validate_datasource_access)
+    monkeypatch.setattr(main, "STREAM_PROGRESS_INTERVAL_SECONDS", 0.01)
+
+    response = await main.chat_stream(
+        {
+            "question": "申请笔数最多的前三种贷款是多少",
+            "agent_id": 1,
+            "datasource_id": 1,
+            "session_id": "session-progress",
+        }
+    )
+
+    events = [item async for item in response.body_iterator]
+    event_names = [event["event"] for event in events]
+    progress_event = next(event for event in events if event["event"] == "node_progress")
+    progress_payload = json.loads(progress_event["data"])
+
+    assert event_names.index("node_start") < event_names.index("node_progress")
+    assert event_names.index("node_progress") < event_names.index("node_complete")
+    assert progress_payload["node"] == "semantic_runtime_recall"
+    assert "匹配语义资产" in progress_payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_emits_model_tokens_inside_node(monkeypatch):
+    async def fake_load_history(agent_id, session_id, limit=5):
+        return []
+
+    async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
+        return None
+
+    async def fake_validate_datasource_access(agent_id, datasource_id):
+        return None
+
+    monkeypatch.setattr(main, "get_graph", lambda: TokenStreamGraph())
+    monkeypatch.setattr(main, "load_history", fake_load_history)
+    monkeypatch.setattr(main, "save_turn", fake_save_turn)
+    monkeypatch.setattr(main, "validate_datasource_access", fake_validate_datasource_access)
+
+    response = await main.chat_stream(
+        {
+            "question": "申请笔数",
+            "agent_id": 1,
+            "datasource_id": 1,
+            "session_id": "session-token",
+        }
+    )
+
+    events = [item async for item in response.body_iterator]
+    token_event = next(event for event in events if event["event"] == "token")
+    token_payload = json.loads(token_event["data"])
+    result = json.loads(next(event for event in events if event["event"] == "result")["data"])
+
+    assert token_payload["node"] == "nl2lf_generate"
+    assert token_payload["delta"] == '{"metrics":["application_count"]}'
+    assert result["reasoning_trace"][0]["streamText"] == '{"metrics":["application_count"]}'
 
 
 @pytest.mark.asyncio

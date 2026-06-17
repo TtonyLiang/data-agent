@@ -1,4 +1,6 @@
 import logging
+import asyncio
+import time
 
 from app.services.llm_service import LLMService
 
@@ -40,3 +42,29 @@ def test_llm_service_uses_placeholder_api_key_for_keyless_compatible_models(monk
 
     assert isinstance(client, FakeChatOpenAI)
     assert captured["api_key"] == service.API_KEY_PLACEHOLDER
+
+
+async def _run_blocking_achat(service: LLMService):
+    task = asyncio.create_task(service.achat([{"role": "user", "content": "hi"}]))
+    await asyncio.sleep(0.01)
+    still_tickable = not task.done()
+    response = await task
+    return still_tickable, response
+
+
+def test_llm_service_achat_does_not_block_event_loop(monkeypatch):
+    class FakeResponse:
+        content = "ok"
+
+    class FakeClient:
+        def invoke(self, messages):
+            time.sleep(0.03)
+            return FakeResponse()
+
+    service = LLMService()
+    monkeypatch.setattr(service, "get_client", lambda **kwargs: FakeClient())
+
+    still_tickable, response = asyncio.run(_run_blocking_achat(service))
+
+    assert still_tickable is True
+    assert response == "ok"

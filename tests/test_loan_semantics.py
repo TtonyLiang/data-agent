@@ -1,4 +1,5 @@
-from app.agent.nodes.nl2lf_generate import fallback_logic_form
+from app.agent.nodes.nl2lf_generate import fallback_logic_form, normalize_logic_form
+from app.agent.nodes import semantic_runtime_recall
 from app.models.knowledge import (
     LogicForm,
     LogicFormTemplate,
@@ -42,6 +43,7 @@ def test_loan_risk_semantic_file_contains_core_assets():
     }
     assert {item.metric_key for item in runtime.metrics} >= {
         "approval_rate",
+        "application_count",
         "disbursement_amount",
         "outstanding_balance",
         "m1_plus_rate",
@@ -98,6 +100,52 @@ def test_seed_loan_semantic_runtime_uses_file_assets(monkeypatch):
         "mapping",
         "template",
     }
+
+
+def test_semantic_runtime_recall_prefers_agent_bound_domain(monkeypatch):
+    calls = []
+
+    class FakeService:
+        async def get_agent_bound_domain(self, agent_id):
+            return SemanticDomain(
+                id=77,
+                agent_id=agent_id,
+                datasource_id=42,
+                domain_key="custom_loan",
+                name="自定义贷款语义层",
+            )
+
+        async def build_runtime(self, **kwargs):
+            calls.append(kwargs)
+            return build_runtime()
+
+    class FakeEmbedding:
+        async def embed_query(self, question, agent_id=None):
+            return [0.1] * 4
+
+    class FakeVectorStore:
+        def search(self, agent_id, query_vector):
+            return []
+
+    monkeypatch.setattr(semantic_runtime_recall, "get_semantic_runtime_service", lambda: FakeService())
+    monkeypatch.setattr(semantic_runtime_recall, "get_embedding_service", lambda: FakeEmbedding())
+    monkeypatch.setattr(semantic_runtime_recall, "get_vector_store", lambda: FakeVectorStore())
+
+    import asyncio
+
+    result = asyncio.run(
+        semantic_runtime_recall.semantic_runtime_recall_node(
+            {
+                "agent_id": 7,
+                "datasource_id": 42,
+                "question": "贷款排名前三的申请区域是什么，分别申请了多少笔",
+            }
+        )
+    )
+
+    assert calls[0]["domain_id"] == 77
+    assert result["semantic_error"] is None
+    assert result["semantic_runtime"]["domain"]["name"] == "贷款风控"
 
 
 def test_m1_plus_cash_loan_logic_form_compiles_to_joined_sql():
@@ -163,6 +211,89 @@ def test_collection_recovery_rate_logic_form_compiles_with_sort():
     assert "collection_case_indicator" in compiled.sql
     assert "`assigned_team` AS `assigned_team`" in compiled.sql
     assert "ORDER BY `collection_recovery_rate` DESC" in compiled.sql
+
+
+def test_application_count_by_region_top3_logic_form_compiles_to_count():
+    runtime = build_runtime()
+    svc = SemanticRuntimeService()
+    logic_form = fallback_logic_form("贷款排名前三的申请区域是什么，分别申请了多少笔")
+
+    validation = svc.validate_logic_form(logic_form, runtime)
+    compiled = svc.compile_logic_form(logic_form, runtime)
+
+    assert validation.valid
+    assert logic_form.metrics == ["application_count"]
+    assert logic_form.dimensions == ["application_region"]
+    assert logic_form.sort[0].field == "application_count"
+    assert logic_form.limit == 3
+    assert "FROM `loan_application_indicator` t0" in compiled.sql
+    assert "t0.`region` AS `application_region`" in compiled.sql
+    assert "COUNT(*) AS `application_count`" in compiled.sql
+    assert "ORDER BY `application_count` DESC" in compiled.sql
+    assert "LIMIT 3" in compiled.sql
+    assert "loan_amount" not in compiled.sql
+
+
+def test_application_count_followup_corrects_amount_metric_with_history():
+    logic_form = LogicForm(
+        metrics=["disbursement_amount"],
+        dimensions=["region"],
+        sort=[{"field": "disbursement_amount", "direction": "desc"}],
+        limit=3,
+    )
+    history = [
+        {"role": "user", "content": "贷款排名前三的申请区域是什么，分别申请了多少笔"},
+        {"role": "assistant", "content": "按地区返回了放款金额前三。"},
+    ]
+
+    normalized = normalize_logic_form("我问的是笔数，为什么查出来的是金额", logic_form, history)
+
+    assert normalized.metrics == ["application_count"]
+    assert normalized.dimensions == ["application_region"]
+    assert normalized.sort[0].field == "application_count"
+    assert normalized.limit == 3
+
+
+def test_high_pd_balance_and_overdue_query_compiles_cross_table_metrics():
+    runtime = build_runtime()
+    svc = SemanticRuntimeService()
+    logic_form = LogicForm(
+        metrics=["pd", "outstanding_balance", "m1_plus_rate"],
+        filters=[{"field": "risk_grade", "operator": "=", "value": "D"}],
+        sort=[{"field": "pd", "direction": "desc"}],
+    )
+
+    validation = svc.validate_logic_form(logic_form, runtime)
+    compiled = svc.compile_logic_form(logic_form, runtime)
+
+    assert validation.valid
+    assert "CROSS JOIN" in compiled.sql
+    assert "loan_application_indicator" in compiled.sql
+    assert "loan_account_indicator" in compiled.sql
+    assert "loan_repayment_period_indicator" in compiled.sql
+    assert "`risk_grade_at_origination` = 'D'" in compiled.sql
+    assert "AS `pd`" in compiled.sql
+    assert "AS `outstanding_balance`" in compiled.sql
+    assert "AS `m1_plus_rate`" in compiled.sql
+    assert any("已忽略 sort" in warning for warning in compiled.warnings)
+
+
+def test_high_pd_balance_and_overdue_logic_form_is_normalized():
+    logic_form = LogicForm(
+        metrics=["pd"],
+        dimensions=["risk_grade"],
+        filters=[],
+        time_range={"type": "relative", "period": "this_month"},
+        sort=[{"field": "pd", "direction": "desc"}],
+    )
+
+    normalized = normalize_logic_form("高 PD 客户的余额和逾期情况", logic_form)
+
+    assert normalized.metrics == ["outstanding_balance", "m1_plus_rate"]
+    assert normalized.dimensions == []
+    assert any(item.field == "risk_grade" and item.value == "D" for item in normalized.filters)
+    assert normalized.time_range is None
+    assert normalized.sort == []
 
 
 def test_unknown_metric_is_rejected_before_sql_compilation():

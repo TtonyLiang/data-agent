@@ -82,6 +82,32 @@
                   <span>本次选择</span>
                   <strong>{{ selectedTablesByDatasource[row.id]?.length || 0 }}</strong>
                 </div>
+                <div>
+                  <span>已采集字段</span>
+                  <strong>{{ schemaStatsByDatasource[row.id]?.column_count || 0 }}</strong>
+                </div>
+              </div>
+
+              <el-alert
+                v-if="schemaStatsByDatasource[row.id]?.noise_level === 'high'"
+                type="warning"
+                show-icon
+                :closable="false"
+                class="schema-noise-alert"
+                :title="schemaStatsByDatasource[row.id]?.recommendation"
+              />
+
+              <div class="schema-filters">
+                <el-input
+                  v-model="tableSearchByDatasource[row.id]"
+                  clearable
+                  placeholder="搜索表名或中文注释"
+                />
+                <el-select v-model="tableStatusFilterByDatasource[row.id]" placeholder="采集状态">
+                  <el-option label="全部表" value="all" />
+                  <el-option label="已采集" value="collected" />
+                  <el-option label="未采集" value="uncollected" />
+                </el-select>
               </div>
 
               <el-skeleton v-if="tableCatalogLoading[row.id] && !tableCatalogByDatasource[row.id]" :rows="5" animated />
@@ -98,7 +124,7 @@
 
               <el-table
                 v-else
-                :data="tableCatalogByDatasource[row.id]"
+                :data="filteredTableCatalog(row.id)"
                 row-key="table_name"
                 border
                 size="small"
@@ -177,8 +203,9 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="330" fixed="right">
+        <el-table-column label="操作" width="390" fixed="right">
           <template #default="{ row }">
+            <el-button size="small" @click="openDatasourceDetail(row)">详情</el-button>
             <el-button size="small" @click="openEdit(row)">编辑</el-button>
             <el-button size="small" @click="handleTest(row.id)">测试连接</el-button>
             <el-button size="small" type="primary" plain @click="openSchemaPanel(row)">表结构</el-button>
@@ -187,6 +214,25 @@
         </el-table-column>
       </el-table>
     </div>
+
+    <el-drawer
+      v-model="showDatasourceDetail"
+      title="数据源详情"
+      size="560px"
+      append-to-body
+    >
+      <dl v-if="selectedDatasourceDetail" class="datasource-detail-grid">
+        <dt>名称</dt><dd>{{ selectedDatasourceDetail.name }}</dd>
+        <dt>类型</dt><dd>{{ selectedDatasourceDetail.db_type }}</dd>
+        <dt>主机</dt><dd>{{ selectedDatasourceDetail.host }}</dd>
+        <dt>端口</dt><dd>{{ selectedDatasourceDetail.port }}</dd>
+        <dt>数据库</dt><dd>{{ selectedDatasourceDetail.database_name }}</dd>
+        <dt>用户名</dt><dd>{{ selectedDatasourceDetail.username || '-' }}</dd>
+        <dt>状态</dt><dd>{{ selectedDatasourceDetail.status || 'active' }}</dd>
+        <dt>已采集表</dt><dd>{{ schemaStatsByDatasource[selectedDatasourceDetail.id]?.table_count || 0 }}</dd>
+        <dt>已采集字段</dt><dd>{{ schemaStatsByDatasource[selectedDatasourceDetail.id]?.column_count || 0 }}</dd>
+      </dl>
+    </el-drawer>
 
     <el-drawer
       v-model="showTableDetail"
@@ -203,7 +249,14 @@
           <code>{{ selectedTableDetail.table_name }}</code>
         </div>
 
-        <el-table :data="selectedTableDetail.columns" border stripe size="small" class="column-table">
+        <el-input
+          v-model="columnSearch"
+          clearable
+          placeholder="搜索字段名或字段中文名"
+          class="column-search"
+        />
+
+        <el-table :data="filteredSelectedColumns" border stripe size="small" class="column-table">
           <el-table-column label="字段中文名" min-width="160">
             <template #default="{ row: column }">
               {{ column.column_comment || '-' }}
@@ -283,10 +336,12 @@ import {
   collectSchema,
   uncollectSchema,
   fetchDatasourceRemoteTables,
+  fetchDatasourceSchemaStats,
   fetchDatasourceTableDetail,
   type AgentItem,
   type DatasourceItem,
   type DatasourceRemoteTable,
+  type DatasourceSchemaStats,
   type DatasourceTableMeta,
 } from '../api'
 
@@ -295,13 +350,19 @@ const agents = ref<AgentItem[]>([])
 const datasources = ref<DatasourceItem[]>([])
 const datasourceTableRef = ref()
 const tableCatalogByDatasource = ref<Record<number, DatasourceRemoteTable[]>>({})
+const schemaStatsByDatasource = ref<Record<number, DatasourceSchemaStats>>({})
 const selectedTablesByDatasource = ref<Record<number, DatasourceRemoteTable[]>>({})
+const tableSearchByDatasource = ref<Record<number, string>>({})
+const tableStatusFilterByDatasource = ref<Record<number, string>>({})
 const tableCatalogLoading = ref<Record<number, boolean>>({})
 const schemaCollecting = ref<Record<number, boolean>>({})
 const schemaUncollecting = ref<Record<number, boolean>>({})
 const showTableDetail = ref(false)
+const showDatasourceDetail = ref(false)
 const selectedDatasourceId = ref<number | null>(null)
+const selectedDatasourceDetail = ref<DatasourceItem | null>(null)
 const selectedTableDetail = ref<DatasourceTableMeta | null>(null)
+const columnSearch = ref('')
 const tableDetailLoading = ref(false)
 const showDialog = ref(false)
 const editingDatasourceId = ref<number | null>(null)
@@ -320,6 +381,16 @@ const form = ref({
 const selectedDatasourceName = computed(() => {
   const datasource = datasources.value.find(item => item.id === selectedDatasourceId.value)
   return datasource ? `${datasource.name} / ${datasource.database_name}` : '数据源'
+})
+
+const filteredSelectedColumns = computed(() => {
+  const columns = selectedTableDetail.value?.columns || []
+  const keyword = columnSearch.value.trim().toLowerCase()
+  if (!keyword) return columns
+  return columns.filter(column => (
+    column.column_name.toLowerCase().includes(keyword)
+    || String(column.column_comment || '').toLowerCase().includes(keyword)
+  ))
 })
 
 onMounted(async () => {
@@ -363,6 +434,17 @@ function openEdit(ds: DatasourceItem) {
   showDialog.value = true
 }
 
+async function openDatasourceDetail(ds: DatasourceItem) {
+  selectedDatasourceDetail.value = ds
+  showDatasourceDetail.value = true
+  if (!schemaStatsByDatasource.value[ds.id]) {
+    try {
+      const stats = await fetchDatasourceSchemaStats(ds.id)
+      schemaStatsByDatasource.value = { ...schemaStatsByDatasource.value, [ds.id]: stats }
+    } catch { /* keep drawer available */ }
+  }
+}
+
 watch(agentId, async (id) => {
   if (id) localStorage.setItem('wenqu_agent_id', String(id))
   form.value.agent_id = id
@@ -402,6 +484,20 @@ function tableCatalogStats(datasourceId: number) {
   }
 }
 
+function filteredTableCatalog(datasourceId: number) {
+  const keyword = (tableSearchByDatasource.value[datasourceId] || '').trim().toLowerCase()
+  const status = tableStatusFilterByDatasource.value[datasourceId] || 'all'
+  return (tableCatalogByDatasource.value[datasourceId] || []).filter((table) => {
+    const matchesKeyword = !keyword
+      || table.table_name.toLowerCase().includes(keyword)
+      || String(table.table_comment || '').toLowerCase().includes(keyword)
+    const matchesStatus = status === 'all'
+      || (status === 'collected' && table.collected)
+      || (status === 'uncollected' && !table.collected)
+    return matchesKeyword && matchesStatus
+  })
+}
+
 function selectedCollectedTableNames(datasourceId: number) {
   return (selectedTablesByDatasource.value[datasourceId] || [])
     .filter(table => table.collected)
@@ -412,8 +508,15 @@ async function loadTableCatalog(datasourceId: number, force = false) {
   if (!force && tableCatalogByDatasource.value[datasourceId]) return
   tableCatalogLoading.value = { ...tableCatalogLoading.value, [datasourceId]: true }
   try {
-    const tables = await fetchDatasourceRemoteTables(datasourceId)
+    const [tables, stats] = await Promise.all([
+      fetchDatasourceRemoteTables(datasourceId),
+      fetchDatasourceSchemaStats(datasourceId),
+    ])
     tableCatalogByDatasource.value = { ...tableCatalogByDatasource.value, [datasourceId]: tables }
+    schemaStatsByDatasource.value = { ...schemaStatsByDatasource.value, [datasourceId]: stats }
+    if (!tableStatusFilterByDatasource.value[datasourceId]) {
+      tableStatusFilterByDatasource.value = { ...tableStatusFilterByDatasource.value, [datasourceId]: 'all' }
+    }
   } catch {
     ElMessage.error('表清单读取失败，请确认连接配置和数据库权限')
     tableCatalogByDatasource.value = { ...tableCatalogByDatasource.value, [datasourceId]: [] }
@@ -447,6 +550,7 @@ async function openTableDetail(datasourceId: number, table: DatasourceRemoteTabl
   }
   selectedDatasourceId.value = datasourceId
   selectedTableDetail.value = null
+  columnSearch.value = ''
   showTableDetail.value = true
   tableDetailLoading.value = true
   try {
@@ -657,7 +761,7 @@ async function handleDelete(ds: DatasourceItem) {
 
 .schema-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -687,6 +791,17 @@ async function handleDelete(ds: DatasourceItem) {
 
 .schema-catalog-table {
   background: #fff;
+}
+
+.schema-noise-alert {
+  margin-bottom: 12px;
+}
+
+.schema-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 160px;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 .table-name-cell {
@@ -768,6 +883,29 @@ code {
   border: 0;
 }
 
+.column-search {
+  margin-bottom: 12px;
+}
+
+.datasource-detail-grid {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 12px;
+  margin: 0;
+}
+
+.datasource-detail-grid dt {
+  color: var(--wq-subtle);
+  font-size: 13px;
+}
+
+.datasource-detail-grid dd {
+  margin: 0;
+  color: var(--wq-text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
 .key-tags {
   display: flex;
   gap: 6px;
@@ -779,5 +917,7 @@ code {
   .page-shell { padding: 18px; }
   .page-header { align-items: flex-start; flex-direction: column; }
   .header-actions { justify-content: flex-start; }
+  .schema-summary,
+  .schema-filters { grid-template-columns: 1fr; }
 }
 </style>

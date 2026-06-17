@@ -34,6 +34,7 @@
   ],
   "metrics": [
     {"metric_key": "approval_rate", "name": "审批通过率", "description": "approved 申请数 / 全部申请数。", "synonyms": ["通过率", "审批率", "申请通过率"], "metric_type": "ratio", "formula_sql": "SUM(CASE WHEN {base}.`approval_status` = 'approved' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0)", "base_table": "loan_application_indicator", "time_field": "loan_application_indicator.apply_date", "dimensions": ["channel", "region", "risk_grade"]},
+    {"metric_key": "application_count", "name": "申请笔数", "description": "贷款申请提交的笔数，按申请表 application_id 计数。", "synonyms": ["申请数", "申请量", "申请笔数", "进件量", "进件笔数", "贷款申请笔数", "贷款申请数"], "metric_type": "count", "formula_sql": "COUNT(*)", "base_table": "loan_application_indicator", "time_field": "loan_application_indicator.apply_date", "dimensions": ["application_region", "channel", "application_product_type", "application_risk_grade"]},
     {"metric_key": "disbursement_amount", "name": "放款金额", "description": "实际发放给客户的贷款本金金额。", "synonyms": ["放款本金", "贷款金额", "发放金额"], "metric_type": "measure", "formula_sql": "SUM({base}.`loan_amount`)", "base_table": "loan_account_indicator", "time_field": "loan_account_indicator.disburse_date", "dimensions": ["product_type", "vintage", "mob", "region", "channel", "risk_grade"]},
     {"metric_key": "outstanding_balance", "name": "余额", "description": "当前仍未偿还的贷款本金余额。", "synonyms": ["贷款余额", "剩余本金", "未还本金"], "metric_type": "measure", "formula_sql": "SUM({base}.`remaining_principal`)", "base_table": "loan_account_indicator", "time_field": "loan_account_indicator.snapshot_date", "dimensions": ["product_type", "vintage", "mob", "region", "channel", "risk_grade"]},
     {"metric_key": "m1_plus_rate", "name": "M1+逾期率", "description": "M1+贷款余额 / 对应贷款余额，M1+ 表示逾期阶段为 M1、M2、M3、M4+。", "synonyms": ["M1+", "M1以上", "30+逾期", "逾期率"], "metric_type": "ratio", "formula_sql": "SUM(CASE WHEN {base}.`overdue_bucket` IN ('M1', 'M2', 'M3', 'M4+') THEN {base}.`remaining_principal_after` ELSE 0 END) / NULLIF(SUM({base}.`remaining_principal_after`), 0)", "base_table": "loan_repayment_period_indicator", "time_field": "loan_repayment_period_indicator.due_date", "dimensions": ["product_type", "vintage", "mob", "region", "overdue_bucket"]},
@@ -55,6 +56,9 @@
   ],
   "mappings": [
     {"asset_type": "dimension", "asset_key": "product_type", "table_name": "loan_account_indicator", "column_name": "product_type", "data_type": "varchar", "role": "filter"},
+    {"asset_type": "dimension", "asset_key": "application_product_type", "table_name": "loan_application_indicator", "column_name": "product_type", "data_type": "varchar", "role": "filter"},
+    {"asset_type": "dimension", "asset_key": "application_region", "table_name": "loan_application_indicator", "column_name": "region", "data_type": "varchar", "role": "dimension"},
+    {"asset_type": "dimension", "asset_key": "application_risk_grade", "table_name": "loan_application_indicator", "column_name": "risk_grade", "data_type": "varchar", "role": "dimension"},
     {"asset_type": "dimension", "asset_key": "vintage", "table_name": "loan_account_indicator", "column_name": "disburse_month", "data_type": "char", "role": "dimension"},
     {"asset_type": "dimension", "asset_key": "mob", "table_name": "loan_account_indicator", "column_name": "mob", "data_type": "int", "role": "dimension"},
     {"asset_type": "dimension", "asset_key": "region", "table_name": "loan_account_indicator", "column_name": "region", "data_type": "varchar", "role": "dimension"},

@@ -18,11 +18,13 @@ class AgentState(TypedDict, total=False):
     runtime_evidence: list[dict[str, Any]]
     semantic_runtime: dict[str, Any]
     semantic_error: str | None
+    schema_scope: dict[str, Any]
     logic_form: dict[str, Any]
     lf_validation: dict[str, Any]
     compiled_query: dict[str, Any]
     compiled_sql: str
     execution_trace: dict[str, Any]
+    nl2sql_fallback_error: str | None
 
     # 多轮对话历史
     chat_history: list[dict[str, Any]]
@@ -34,6 +36,7 @@ class AgentState(TypedDict, total=False):
 
     # 计划 (Phase 3)
     plan: dict[str, Any]
+    semantic_check: dict[str, Any]
 
     # SQL 生成与执行
     sql_text: str
@@ -43,10 +46,11 @@ class AgentState(TypedDict, total=False):
 
     # Python 分析 (Phase 3)
     python_code: str
-    python_result: str
+    python_result: dict[str, Any]
 
     # 报告 (Phase 3)
     report: str
+    report_payload: dict[str, Any]
 
     # 输出
     final_answer: str
@@ -59,7 +63,9 @@ MAX_SQL_RETRIES = 2
 def build_mvp_graph() -> StateGraph:
     """构建 LangGraph 工作流.
 
-    流程: Intent → SemanticRuntimeRecall → NL2LF → LFValidate → LFToSQL → SQLExecute → End
+    流程: Intent → SemanticRuntimeRecall → NL2LF → LFValidate → LFToSQL
+    → SemanticCheck → SQLExecute → Planner → PythonGenerate → PythonAnalyze
+    → ReportGenerator → End
     SQL 执行失败时自动重试 (最多2次).
     """
     from app.agent.nodes.intent import intent_recognition_node
@@ -67,6 +73,15 @@ def build_mvp_graph() -> StateGraph:
     from app.agent.nodes.lf_to_sql_compile import lf_to_sql_compile_node
     from app.agent.nodes.lf_validate import lf_validate_node
     from app.agent.nodes.nl2lf_generate import nl2lf_generate_node
+    from app.agent.nodes.nl2sql_fallback import nl2sql_fallback_node
+    from app.agent.nodes.phase3 import (
+        planner_node,
+        python_analyze_node,
+        python_generate_node,
+        report_generator_node,
+        semantic_check_node,
+    )
+    from app.agent.nodes.schema_recall import schema_recall_node
     from app.agent.nodes.semantic_runtime_recall import semantic_runtime_recall_node
     from app.agent.nodes.sql_execute import sql_execute_node
 
@@ -74,11 +89,18 @@ def build_mvp_graph() -> StateGraph:
 
     graph.add_node("intent_recognition", intent_recognition_node)
     graph.add_node("semantic_runtime_recall", semantic_runtime_recall_node)
+    graph.add_node("schema_recall", schema_recall_node)
     graph.add_node("nl2lf_generate", nl2lf_generate_node)
     graph.add_node("lf_validate", lf_validate_node)
     graph.add_node("lf_to_sql_compile", lf_to_sql_compile_node)
+    graph.add_node("nl2sql_fallback", nl2sql_fallback_node)
+    graph.add_node("semantic_check", semantic_check_node)
     graph.add_node("lf_repair", lf_repair_node)
     graph.add_node("sql_execute", sql_execute_node)
+    graph.add_node("planner", planner_node)
+    graph.add_node("python_generate", python_generate_node)
+    graph.add_node("python_analyze", python_analyze_node)
+    graph.add_node("report_generator", report_generator_node)
 
     graph.add_edge(START, "intent_recognition")
     graph.add_conditional_edges(
@@ -90,26 +112,54 @@ def build_mvp_graph() -> StateGraph:
             "metadata_query": END,
         },
     )
-    graph.add_edge("semantic_runtime_recall", "nl2lf_generate")
+    graph.add_edge("semantic_runtime_recall", "schema_recall")
+    graph.add_edge("schema_recall", "nl2lf_generate")
     graph.add_edge("nl2lf_generate", "lf_validate")
     graph.add_conditional_edges(
         "lf_validate",
         route_after_lf_validate,
         {
             "valid": "lf_to_sql_compile",
+            "invalid": "nl2sql_fallback",
+        },
+    )
+    graph.add_conditional_edges(
+        "lf_to_sql_compile",
+        route_after_sql_compile,
+        {
+            "compiled": "semantic_check",
+            "failed": "nl2sql_fallback",
+        },
+    )
+    graph.add_conditional_edges(
+        "nl2sql_fallback",
+        route_after_sql_compile,
+        {
+            "compiled": "sql_execute",
+            "failed": END,
+        },
+    )
+    graph.add_conditional_edges(
+        "semantic_check",
+        route_after_semantic_check,
+        {
+            "valid": "sql_execute",
             "invalid": END,
         },
     )
-    graph.add_edge("lf_to_sql_compile", "sql_execute")
     graph.add_conditional_edges(
         "sql_execute",
         route_after_sql_execute,
         {
-            "success": END,
+            "success": "planner",
             "retry": "lf_repair",
         },
     )
     graph.add_edge("lf_repair", "lf_validate")
+    graph.add_edge("planner", "python_generate")
+    graph.add_edge("python_generate", "python_analyze")
+    graph.add_edge("python_analyze", "report_generator")
+    graph.add_edge("report_generator", END)
 
     return graph
 
@@ -124,6 +174,15 @@ def route_after_intent(state: AgentState) -> str:
 def route_after_lf_validate(state: AgentState) -> str:
     validation = state.get("lf_validation") or {}
     return "valid" if validation.get("valid") else "invalid"
+
+
+def route_after_sql_compile(state: AgentState) -> str:
+    return "compiled" if state.get("compiled_sql") else "failed"
+
+
+def route_after_semantic_check(state: AgentState) -> str:
+    check = state.get("semantic_check") or {}
+    return "valid" if check.get("valid") else "invalid"
 
 
 def route_after_sql_execute(state: AgentState) -> str:

@@ -5,8 +5,9 @@ from app.api import datasource as datasource_api
 from app.api import model_config as model_config_api
 from app.models.agent import AgentCreate
 from app.models import datasource as datasource_model
-from app.models.model_config import ModelConfigCreate
+from app.models.model_config import ModelConfigCreate, ModelConfigUpdate
 from app.services.datasource_service import DatasourceService
+from app.services.model_config_service import ModelConfigService, _public_model_config
 
 
 class RecordingDB:
@@ -218,3 +219,137 @@ async def test_model_config_api_does_not_return_api_key(monkeypatch):
     assert created["id"] == 8
     assert listed["configs"][0]["model_type"] == "embedding"
     assert "api_key" not in listed["configs"][0]
+
+
+@pytest.mark.asyncio
+async def test_model_config_update_preserves_api_key_when_form_leaves_it_blank(monkeypatch):
+    class FakeModelConfigDB:
+        def __init__(self):
+            self.row = {
+                "id": 8,
+                "name": "小米mimo",
+                "model_type": "chat",
+                "provider": "xiaomi",
+                "base_url": "https://api.xiaomimimo.com/v1",
+                "model_name": "mimo-v2.5",
+                "api_key": "existing-secret",
+                "api_key_enabled": 1,
+                "embedding_dimension": None,
+                "status": "active",
+            }
+            self.queries: list[tuple[str, dict | None]] = []
+
+        async def execute_query(self, sql: str, params: dict | None = None):
+            self.queries.append((sql, params))
+            if sql.startswith("SELECT * FROM model_config WHERE id"):
+                return [self.row]
+            if sql.startswith("UPDATE model_config"):
+                self.row = {
+                    **self.row,
+                    "name": params["name"],
+                    "model_type": params["model_type"],
+                    "provider": params["provider"],
+                    "base_url": params["base_url"],
+                    "model_name": params["model_name"],
+                    "api_key": params["api_key"],
+                    "api_key_enabled": params["api_key_enabled"],
+                    "embedding_dimension": params["dimension"],
+                    "status": params["status"],
+                }
+            return []
+
+    db = FakeModelConfigDB()
+    monkeypatch.setattr("app.services.model_config_service.get_management_db", lambda: db)
+
+    updated = await ModelConfigService().update(
+        8,
+        ModelConfigUpdate(
+            name="小米mimo",
+            model_type="chat",
+            provider="xiaomi",
+            base_url="https://api.xiaomimimo.com/v1",
+            model_name="mimo-v2.5",
+            api_key="",
+            api_key_enabled=True,
+            status="active",
+        ),
+    )
+
+    update_sql, update_params = next((sql, params) for sql, params in db.queries if sql.startswith("UPDATE model_config"))
+    assert "api_key = :api_key" in update_sql
+    assert update_params["api_key"] == "existing-secret"
+    assert updated.api_key == "existing-secret"
+
+
+@pytest.mark.asyncio
+async def test_model_config_update_replaces_api_key_when_new_value_is_entered(monkeypatch):
+    class FakeModelConfigDB:
+        def __init__(self):
+            self.row = {
+                "id": 8,
+                "name": "小米mimo",
+                "model_type": "chat",
+                "provider": "xiaomi",
+                "base_url": "https://api.xiaomimimo.com/v1",
+                "model_name": "mimo-v2.5",
+                "api_key": "existing-secret",
+                "api_key_enabled": 1,
+                "embedding_dimension": None,
+                "status": "active",
+            }
+            self.queries: list[tuple[str, dict | None]] = []
+
+        async def execute_query(self, sql: str, params: dict | None = None):
+            self.queries.append((sql, params))
+            if sql.startswith("SELECT * FROM model_config WHERE id"):
+                return [self.row]
+            if sql.startswith("UPDATE model_config"):
+                self.row = {**self.row, "api_key": params["api_key"]}
+            return []
+
+    db = FakeModelConfigDB()
+    monkeypatch.setattr("app.services.model_config_service.get_management_db", lambda: db)
+
+    await ModelConfigService().update(
+        8,
+        ModelConfigUpdate(
+            name="小米mimo",
+            model_type="chat",
+            provider="xiaomi",
+            base_url="https://api.xiaomimimo.com/v1",
+            model_name="mimo-v2.5",
+            api_key="new-secret",
+            api_key_enabled=True,
+            status="active",
+        ),
+    )
+
+    update_params = next(params for sql, params in db.queries if sql.startswith("UPDATE model_config"))
+    assert update_params["api_key"] == "new-secret"
+
+
+def test_public_model_config_exposes_configured_flag_without_api_key():
+    public = _public_model_config({"id": 8, "name": "小米mimo", "api_key": "secret"})
+
+    assert "api_key" not in public
+    assert public["api_key_configured"] is True
+
+
+@pytest.mark.asyncio
+async def test_model_config_list_orders_by_id_asc(monkeypatch):
+    class FakeModelConfigDB:
+        def __init__(self):
+            self.queries: list[tuple[str, dict | None]] = []
+
+        async def execute_query(self, sql: str, params: dict | None = None):
+            self.queries.append((sql, params))
+            return []
+
+    db = FakeModelConfigDB()
+    monkeypatch.setattr("app.services.model_config_service.get_management_db", lambda: db)
+
+    await ModelConfigService().list("chat")
+    await ModelConfigService().list()
+
+    assert "ORDER BY id ASC" in db.queries[0][0]
+    assert "ORDER BY model_type, id ASC" in db.queries[1][0]

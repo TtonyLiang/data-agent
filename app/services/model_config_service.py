@@ -5,10 +5,24 @@ from app.db.mysql import get_management_db
 from app.models.model_config import ModelConfig, ModelConfigCreate, ModelConfigType, ModelConfigUpdate
 
 
+MASKED_API_KEY_CHARS = {"*", "•"}
+
+
 def _public_model_config(row: dict) -> dict:
     data = dict(row)
+    data["api_key_configured"] = bool((data.get("api_key") or "").strip())
     data.pop("api_key", None)
     return data
+
+
+def _clean_api_key(api_key: str | None) -> str | None:
+    value = (api_key or "").strip()
+    return value or None
+
+
+def _should_keep_existing_api_key(api_key: str | None) -> bool:
+    value = (api_key or "").strip()
+    return not value or set(value).issubset(MASKED_API_KEY_CHARS)
 
 
 class ModelConfigService:
@@ -24,7 +38,7 @@ class ModelConfigService:
                 "provider": config.provider,
                 "base_url": config.base_url,
                 "model_name": config.model_name,
-                "api_key": config.api_key,
+                "api_key": _clean_api_key(config.api_key),
                 "api_key_enabled": int(config.api_key_enabled),
                 "dimension": config.embedding_dimension,
                 "status": config.status,
@@ -35,11 +49,11 @@ class ModelConfigService:
         db = get_management_db()
         if model_type:
             rows = await db.execute_query(
-                "SELECT * FROM model_config WHERE model_type = :model_type ORDER BY id DESC",
+                "SELECT * FROM model_config WHERE model_type = :model_type ORDER BY id ASC",
                 {"model_type": model_type},
             )
         else:
-            rows = await db.execute_query("SELECT * FROM model_config ORDER BY model_type, id DESC")
+            rows = await db.execute_query("SELECT * FROM model_config ORDER BY model_type, id ASC")
         return [_public_model_config(row) for row in rows]
 
     async def get(self, config_id: int) -> ModelConfig | None:
@@ -52,6 +66,10 @@ class ModelConfigService:
 
     async def update(self, config_id: int, config: ModelConfigUpdate) -> ModelConfig | None:
         db = get_management_db()
+        existing = await self.get(config_id)
+        if existing is None:
+            return None
+        api_key = existing.api_key if _should_keep_existing_api_key(config.api_key) else _clean_api_key(config.api_key)
         await db.execute_query(
             "UPDATE model_config SET name = :name, model_type = :model_type, provider = :provider, "
             "base_url = :base_url, model_name = :model_name, api_key = :api_key, "
@@ -64,7 +82,7 @@ class ModelConfigService:
                 "provider": config.provider,
                 "base_url": config.base_url,
                 "model_name": config.model_name,
-                "api_key": config.api_key,
+                "api_key": api_key,
                 "api_key_enabled": int(config.api_key_enabled),
                 "dimension": config.embedding_dimension,
                 "status": config.status,

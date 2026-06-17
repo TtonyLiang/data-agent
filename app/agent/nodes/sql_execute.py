@@ -42,6 +42,7 @@ async def sql_execute_node(state: dict) -> dict:
 
 FIELD_LABELS = {
     "approval_rate": "审批通过率",
+    "application_count": "申请笔数",
     "disbursement_amount": "放款金额",
     "outstanding_balance": "贷款余额",
     "m1_plus_rate": "M1+逾期率",
@@ -53,6 +54,9 @@ FIELD_LABELS = {
     "writeoff_amount": "核销金额",
     "collection_recovery_rate": "催收回收率",
     "product_type": "产品类型",
+    "application_product_type": "申请产品类型",
+    "application_region": "申请地区",
+    "application_risk_grade": "申请风险等级",
     "region": "地区",
     "channel": "渠道",
     "risk_grade": "风险等级",

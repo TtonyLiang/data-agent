@@ -17,6 +17,26 @@ assert.ok(
 )
 
 assert.ok(
+  source.includes('shouldShowAnswerCard(msg)'),
+  'ChatView should hide the final answer card while an assistant message is still streaming',
+)
+
+assert.ok(
+  !source.includes('正在整理结论...'),
+  'ChatView should not show a final-answer placeholder during the analysis process',
+)
+
+assert.ok(
   source.includes('cleanAnswerContent'),
   'ChatView should strip legacy SQL/markdown table text from final answers',
+)
+
+assert.ok(
+  source.includes('el-pagination'),
+  'ChatView should provide pagination for result browsing',
+)
+
+assert.ok(
+  source.includes('toggleErrorDetail'),
+  'ChatView should allow expanding technical error detail',
 )

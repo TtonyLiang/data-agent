@@ -30,21 +30,35 @@
         <el-table-column prop="base_url" label="Base URL" min-width="240" show-overflow-tooltip />
         <el-table-column label="API Key" width="110">
           <template #default="{ row }">
-            <el-tag :type="row.api_key_enabled ? 'success' : 'info'" size="small" round>
-              {{ row.api_key_enabled ? '启用' : '未启用' }}
+            <el-tag :type="apiKeyTagType(row)" size="small" round>
+              {{ apiKeyTagText(row) }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="embedding_dimension" label="维度" width="100" />
         <el-table-column prop="status" label="状态" width="100" />
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
+            <el-button size="small" @click="openDetail(row)">详情</el-button>
             <el-button size="small" @click="openEdit(row)">编辑</el-button>
             <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
     </div>
+
+    <el-drawer v-model="showDetail" title="模型配置详情" size="560px" append-to-body>
+      <dl v-if="detailConfig" class="detail-grid">
+        <dt>名称</dt><dd>{{ detailConfig.name }}</dd>
+        <dt>类型</dt><dd>{{ detailConfig.model_type === 'chat' ? '大语言模型' : '向量模型' }}</dd>
+        <dt>提供商</dt><dd>{{ detailConfig.provider }}</dd>
+        <dt>Base URL</dt><dd>{{ detailConfig.base_url }}</dd>
+        <dt>模型</dt><dd>{{ detailConfig.model_name }}</dd>
+        <dt>API Key</dt><dd>{{ apiKeyTagText(detailConfig) }}</dd>
+        <dt>向量维度</dt><dd>{{ detailConfig.embedding_dimension || '-' }}</dd>
+        <dt>状态</dt><dd>{{ detailConfig.status }}</dd>
+      </dl>
+    </el-drawer>
 
     <el-dialog v-model="showDialog" :title="editingId ? '编辑模型配置' : '新增模型配置'" width="620">
       <el-form :model="form" label-width="120px">
@@ -70,7 +84,16 @@
           <el-switch v-model="form.api_key_enabled" />
         </el-form-item>
         <el-form-item label="API Key">
-          <el-input v-model="form.api_key" type="password" show-password :placeholder="editingId ? '不修改请重新填写或留空' : ''" />
+          <el-input
+            v-model="form.api_key"
+            type="password"
+            show-password
+            :placeholder="apiKeyPlaceholder"
+            @focus="handleApiKeyFocus"
+          />
+          <p v-if="editingId" class="form-hint">
+            {{ editingApiKeyConfigured ? '已配置 Key；直接保存会保留原 Key，输入新 Key 会覆盖。' : '当前未配置 Key，可在这里输入后保存。' }}
+          </p>
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="form.status">
@@ -107,10 +130,19 @@ const typeOptions = [
 const activeType = ref<'chat' | 'embedding'>('chat')
 const configs = ref<ModelConfigItem[]>([])
 const showDialog = ref(false)
+const showDetail = ref(false)
+const detailConfig = ref<ModelConfigItem | null>(null)
 const editingId = ref<number | null>(null)
+const editingApiKeyConfigured = ref(false)
 const form = ref<ModelConfigRequest>(defaultForm('chat'))
+const MASKED_API_KEY = '********'
 
 const filteredConfigs = computed(() => configs.value.filter(item => item.model_type === activeType.value))
+const apiKeyPlaceholder = computed(() => {
+  if (!editingId.value) return '请输入 API Key，可留空'
+  if (editingApiKeyConfigured.value) return '已配置 Key，留空不修改；输入新 Key 覆盖'
+  return '未配置，可输入 API Key'
+})
 
 onMounted(loadConfigs)
 
@@ -139,24 +171,62 @@ async function loadConfigs() {
 
 function openCreate() {
   editingId.value = null
+  editingApiKeyConfigured.value = false
   form.value = defaultForm(activeType.value)
   showDialog.value = true
 }
 
+function openDetail(config: ModelConfigItem) {
+  detailConfig.value = config
+  showDetail.value = true
+}
+
 function openEdit(config: ModelConfigItem) {
   editingId.value = config.id
+  editingApiKeyConfigured.value = hasConfiguredApiKey(config)
   form.value = {
     name: config.name,
     model_type: config.model_type,
     provider: config.provider,
     base_url: config.base_url,
     model_name: config.model_name,
-    api_key: '',
+    api_key: editingApiKeyConfigured.value ? MASKED_API_KEY : '',
     api_key_enabled: Boolean(config.api_key_enabled),
     embedding_dimension: config.embedding_dimension || null,
     status: config.status || 'active',
   }
   showDialog.value = true
+}
+
+function hasConfiguredApiKey(config: ModelConfigItem) {
+  return 'api_key_configured' in config ? Boolean(config.api_key_configured) : Boolean(config.api_key_enabled)
+}
+
+function apiKeyTagType(config: ModelConfigItem) {
+  if (hasConfiguredApiKey(config) && config.api_key_enabled) return 'success'
+  if (config.api_key_enabled && !hasConfiguredApiKey(config)) return 'warning'
+  return 'info'
+}
+
+function apiKeyTagText(config: ModelConfigItem) {
+  if (hasConfiguredApiKey(config) && config.api_key_enabled) return '已配置'
+  if (config.api_key_enabled && !hasConfiguredApiKey(config)) return 'Key 缺失'
+  if (hasConfiguredApiKey(config)) return '未启用'
+  return '未配置'
+}
+
+function handleApiKeyFocus() {
+  if (form.value.api_key === MASKED_API_KEY) {
+    form.value.api_key = ''
+  }
+}
+
+function modelConfigPayload() {
+  const payload = { ...form.value }
+  if (editingId.value && payload.api_key === MASKED_API_KEY) {
+    payload.api_key = null
+  }
+  return payload
 }
 
 async function handleSubmit() {
@@ -165,16 +235,18 @@ async function handleSubmit() {
     return
   }
   try {
+    const payload = modelConfigPayload()
     if (editingId.value) {
-      await updateModelConfig(editingId.value, form.value)
+      await updateModelConfig(editingId.value, payload)
       ElMessage.success('更新成功')
     } else {
-      await createModelConfig(form.value)
+      await createModelConfig(payload)
       ElMessage.success('创建成功')
     }
     activeType.value = form.value.model_type
     showDialog.value = false
     editingId.value = null
+    editingApiKeyConfigured.value = false
     await loadConfigs()
   } catch {
     ElMessage.error(editingId.value ? '更新失败' : '创建失败')
@@ -243,6 +315,32 @@ async function handleDelete(config: ModelConfigItem) {
   border-radius: 8px;
   overflow: hidden;
   box-shadow: var(--wq-shadow);
+}
+
+.form-hint {
+  margin: 6px 0 0;
+  color: var(--wq-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 12px;
+  margin: 0;
+}
+
+.detail-grid dt {
+  color: var(--wq-subtle);
+  font-size: 13px;
+}
+
+.detail-grid dd {
+  margin: 0;
+  color: var(--wq-text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 760px) {

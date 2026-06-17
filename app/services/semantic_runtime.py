@@ -184,6 +184,141 @@ class SemanticRuntimeService:
         )
         return True
 
+    async def export_domain_bundle(self, domain_id: int) -> dict[str, Any]:
+        domain = await self.get_domain(domain_id)
+        if domain is None:
+            raise ValueError("语义领域不存在")
+        assets = await self.list_assets(domain_id)
+        return {
+            "version": 1,
+            "domain": domain.model_dump(),
+            "assets": assets,
+            "asset_counts": {key: len(value) for key, value in assets.items()},
+        }
+
+    async def copy_domain(self, domain_id: int, payload: dict[str, Any]) -> int:
+        bundle = await self.export_domain_bundle(domain_id)
+        source = bundle["domain"]
+        new_domain = {
+            "agent_id": payload.get("agent_id") or source["agent_id"],
+            "datasource_id": payload.get("datasource_id", source.get("datasource_id")),
+            "domain_key": payload.get("domain_key") or f"{source['domain_key']}_copy",
+            "name": payload.get("name") or f"{source['name']} 副本",
+            "description": payload.get("description", source.get("description") or ""),
+            "status": payload.get("status") or source.get("status") or "active",
+        }
+        new_id = await self.upsert_domain(new_domain)
+        await self._import_assets(new_id, bundle.get("assets") or {})
+        return int(new_id)
+
+    async def import_domain_bundle(self, bundle: dict[str, Any]) -> int:
+        domain = dict(bundle.get("domain") or {})
+        if not domain:
+            raise ValueError("导入文件缺少 domain")
+        for field in ("id", "created_at", "updated_at"):
+            domain.pop(field, None)
+        db = get_management_db()
+        duplicate = await db.execute_query(
+            "SELECT id FROM semantic_domain WHERE agent_id = :agent_id AND domain_key = :domain_key",
+            {"agent_id": domain.get("agent_id"), "domain_key": domain.get("domain_key")},
+        )
+        if duplicate:
+            raise ValueError(f"语义层标识已存在: {domain.get('domain_key')}")
+        new_id = await self.upsert_domain(domain)
+        await self._import_assets(new_id, bundle.get("assets") or {})
+        return int(new_id)
+
+    async def validate_domain_assets(self, domain_id: int) -> dict[str, Any]:
+        domain = await self.get_domain(domain_id)
+        if domain is None:
+            raise ValueError("语义领域不存在")
+        assets = await self.list_assets(domain_id)
+        errors: list[str] = []
+        warnings: list[str] = []
+        mapping_keys = {item.get("asset_key") for item in assets.get("mapping", [])}
+        schema_tables: dict[str, set[str]] = {}
+        if domain.datasource_id:
+            from app.services.metadata_service import get_metadata_service
+
+            schema = await get_metadata_service().get_schema(domain.datasource_id)
+            schema_tables = {
+                str(table.get("table_name")): {
+                    str(column.get("column_name"))
+                    for column in table.get("columns", []) or []
+                }
+                for table in schema
+            }
+            if not schema_tables:
+                warnings.append("当前语义层绑定的数据源没有已采集 schema，无法校验物理表字段。")
+        else:
+            warnings.append("当前语义层没有绑定默认数据源，无法校验物理表字段。")
+
+        for mapping in assets.get("mapping", []):
+            table_name = str(mapping.get("table_name") or "")
+            column_name = str(mapping.get("column_name") or "")
+            if schema_tables and table_name not in schema_tables:
+                errors.append(f"映射 {mapping.get('asset_key')} 的表不存在或未采集: {table_name}")
+            if schema_tables and column_name and column_name not in schema_tables.get(table_name, set()):
+                errors.append(f"映射 {mapping.get('asset_key')} 的字段不存在或未采集: {table_name}.{column_name}")
+            if not column_name and not mapping.get("expression_sql"):
+                errors.append(f"映射 {mapping.get('asset_key')} 缺少字段名或表达式")
+
+        for metric in assets.get("metric", []):
+            base_table = str(metric.get("base_table") or "")
+            if schema_tables and base_table not in schema_tables:
+                errors.append(f"指标 {metric.get('metric_key')} 的基础表不存在或未采集: {base_table}")
+            time_field = str(metric.get("time_field") or "")
+            if time_field:
+                table_name, column_name = self._safe_split_qualified(time_field)
+                if schema_tables and table_name and column_name and column_name not in schema_tables.get(table_name, set()):
+                    errors.append(f"指标 {metric.get('metric_key')} 的时间字段不存在或未采集: {time_field}")
+            for dimension in metric.get("dimensions") or []:
+                if dimension not in mapping_keys:
+                    errors.append(f"指标 {metric.get('metric_key')} 的可用维度未配置映射: {dimension}")
+
+        for relation in assets.get("relation", []):
+            for join in relation.get("join_path") or []:
+                for side in ("left", "right"):
+                    table_name, column_name = self._safe_split_qualified(str(join.get(side) or ""))
+                    if not table_name or not column_name:
+                        errors.append(f"关系 {relation.get('relation_key')} 的 JOIN 字段格式错误: {join.get(side)}")
+                    elif schema_tables and column_name not in schema_tables.get(table_name, set()):
+                        errors.append(f"关系 {relation.get('relation_key')} 的 JOIN 字段不存在或未采集: {table_name}.{column_name}")
+
+        return {
+            "valid": not errors,
+            "errors": errors,
+            "warnings": warnings,
+            "asset_counts": {key: len(value) for key, value in assets.items()},
+        }
+
+    async def create_snapshot(self, domain_id: int, name: str | None = None, description: str | None = "") -> int:
+        bundle = await self.export_domain_bundle(domain_id)
+        db = get_management_db()
+        return await db.execute_insert(
+            "INSERT INTO semantic_domain_snapshot "
+            "(domain_id, name, description, snapshot_json, asset_counts) "
+            "VALUES (:domain_id, :name, :description, :snapshot_json, :asset_counts)",
+            {
+                "domain_id": domain_id,
+                "name": name or f"{bundle['domain']['name']} 快照",
+                "description": description or "",
+                "snapshot_json": json.dumps(bundle, ensure_ascii=False, default=str),
+                "asset_counts": json.dumps(bundle.get("asset_counts") or {}, ensure_ascii=False),
+            },
+        )
+
+    async def list_snapshots(self, domain_id: int) -> list[dict[str, Any]]:
+        db = get_management_db()
+        rows = await db.execute_query(
+            "SELECT id, domain_id, name, description, asset_counts, created_at "
+            "FROM semantic_domain_snapshot WHERE domain_id = :domain_id ORDER BY id DESC",
+            {"domain_id": domain_id},
+        )
+        for row in rows:
+            row["asset_counts"] = self._json_load(row.get("asset_counts"))
+        return rows
+
     async def list_assets(self, domain_id: int, asset_type: str | None = None) -> dict[str, list[dict]]:
         if asset_type:
             return {asset_type: await self._list_asset_type(domain_id, asset_type)}
@@ -242,6 +377,14 @@ class SemanticRuntimeService:
             f"INSERT INTO {table} ({fields}) VALUES ({values})",
             payload,
         )
+
+    async def _import_assets(self, domain_id: int, assets: dict[str, list[dict]]) -> None:
+        for asset_type in ASSET_TABLES:
+            for item in assets.get(asset_type, []) or []:
+                payload = dict(item)
+                for field in ("id", "domain_id", "created_at", "updated_at"):
+                    payload.pop(field, None)
+                await self.upsert_asset(domain_id, asset_type, payload)
 
     async def delete_asset(self, domain_id: int, asset_type: str, asset_id: int) -> bool:
         if asset_type not in ASSET_TABLES:
@@ -354,6 +497,19 @@ class SemanticRuntimeService:
         mapping_map = {mapping.asset_key: mapping for mapping in runtime.mappings}
         metrics = [metric_map[key] for key in logic_form.metrics]
         base_table = metrics[0].base_table
+        metric_base_tables = {metric.base_table for metric in metrics}
+        if len(metric_base_tables) > 1:
+            if logic_form.dimensions:
+                raise ValueError("暂不支持跨事实表指标按维度分组，请减少指标或去掉分组维度")
+            return self._compile_scalar_multi_metric_query(
+                logic_form=logic_form,
+                metrics=metrics,
+                runtime=runtime,
+                mapping_map=mapping_map,
+                used_assets=list(validation.used_assets),
+                warnings=validation.warnings,
+            )
+
         table_aliases = {base_table: "t0"}
         joins: list[str] = []
         used_assets = list(validation.used_assets)
@@ -424,6 +580,84 @@ class SemanticRuntimeService:
             warnings=validation.warnings,
         )
 
+    def _compile_scalar_multi_metric_query(
+        self,
+        logic_form: LogicForm,
+        metrics: list[SemanticMetric],
+        runtime: SemanticRuntime,
+        mapping_map: dict[str, SemanticMapping],
+        used_assets: list[str],
+        warnings: list[str],
+    ) -> CompiledQuery:
+        """Compile cross-table metrics into one scalar row.
+
+        This covers questions like "高 PD 客户的余额和逾期情况", where the
+        requested metrics live on different fact tables and there is no group
+        dimension. Each metric gets its own semantically filtered subquery.
+        """
+        select_parts: list[str] = []
+        subqueries: list[str] = []
+        for index, metric in enumerate(metrics):
+            alias_prefix = f"m{index}_"
+            table_aliases = {metric.base_table: f"{alias_prefix}0"}
+            joins: list[str] = []
+
+            def ensure_table(table_name: str) -> str:
+                if table_name in table_aliases:
+                    return table_aliases[table_name]
+                alias = f"{alias_prefix}{len(table_aliases)}"
+                join_condition = self._find_join_condition(
+                    metric.base_table,
+                    table_name,
+                    runtime,
+                    table_aliases,
+                )
+                table_aliases[table_name] = alias
+                joins.append(f"JOIN `{table_name}` {alias} ON {join_condition.format(target=alias)}")
+                return alias
+
+            where_parts = [
+                self._compile_filter(item, mapping_map, ensure_table)
+                for item in metric.default_filters
+            ]
+            where_parts.extend(
+                self._compile_filter(item.model_dump(), mapping_map, ensure_table)
+                for item in logic_form.filters
+            )
+            if logic_form.time_range and metric.time_field:
+                time_table, _ = self._split_qualified(metric.time_field)
+                ensure_table(time_table)
+                where_parts.extend(
+                    self._compile_time_range(metric.time_field, logic_form.time_range, table_aliases)
+                )
+
+            metric_expr = self._format_sql_expr(metric.formula_sql, table_aliases[metric.base_table])
+            query_parts = [
+                f"SELECT {metric_expr} AS `{metric.metric_key}`",
+                f"FROM `{metric.base_table}` {table_aliases[metric.base_table]}",
+                *joins,
+            ]
+            if where_parts:
+                query_parts.append("WHERE " + " AND ".join(part for part in where_parts if part))
+
+            subquery_alias = f"q{index}"
+            subqueries.append(f"(\n" + "\n".join(query_parts) + f"\n) {subquery_alias}")
+            select_parts.append(f"{subquery_alias}.`{metric.metric_key}` AS `{metric.metric_key}`")
+            used_assets.append(f"metric:{metric.metric_key}")
+
+        scalar_warnings = list(warnings)
+        if logic_form.sort:
+            scalar_warnings.append("跨事实表标量指标查询不应用排序，已忽略 sort")
+        if logic_form.limit:
+            scalar_warnings.append("跨事实表标量指标查询只返回一行，已忽略 limit")
+
+        return CompiledQuery(
+            logic_form=logic_form,
+            sql="SELECT " + ", ".join(select_parts) + "\nFROM " + "\nCROSS JOIN ".join(subqueries),
+            used_assets=sorted(set(used_assets)),
+            warnings=scalar_warnings,
+        )
+
     async def _list_asset_type(self, domain_id: int | None, asset_type: str) -> list[dict]:
         if domain_id is None:
             return []
@@ -483,6 +717,14 @@ class SemanticRuntimeService:
         table, column = value.split(".", 1)
         self._assert_identifier(table)
         self._assert_identifier(column)
+        return table, column
+
+    def _safe_split_qualified(self, value: str) -> tuple[str, str]:
+        if "." not in value:
+            return "", ""
+        table, column = value.split(".", 1)
+        if not SAFE_IDENTIFIER.match(table) or not SAFE_IDENTIFIER.match(column):
+            return "", ""
         return table, column
 
     def _mapping_expr(self, mapping: SemanticMapping, alias: str) -> str:

@@ -8,7 +8,7 @@ async def lf_validate_node(state: dict) -> dict:
     runtime_data = state.get("semantic_runtime")
     if not logic_form_data or not runtime_data:
         return {
-            "lf_validation": {"valid": False, "errors": ["缺少 LogicForm 或语义运行时"], "warnings": []},
+            "lf_validation": {"valid": False, "errors": ["缺少 LogicForm 或知识库"], "warnings": []},
             "final_answer": state.get("final_answer") or "未能构建可执行的语义查询。",
         }
 

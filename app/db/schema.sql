@@ -101,6 +101,18 @@ CREATE TABLE IF NOT EXISTS semantic_domain (
     INDEX idx_datasource_id (datasource_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='语义领域';
 
+-- 语义层版本快照
+CREATE TABLE IF NOT EXISTS semantic_domain_snapshot (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    domain_id BIGINT NOT NULL COMMENT '语义层ID',
+    name VARCHAR(256) NOT NULL COMMENT '快照名称',
+    description TEXT COMMENT '快照说明',
+    snapshot_json JSON NOT NULL COMMENT '语义层快照',
+    asset_counts JSON DEFAULT NULL COMMENT '资产数量',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_domain_id (domain_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='语义层版本快照';
+
 -- 语义概念: 对象、事件、状态、维度、动作
 CREATE TABLE IF NOT EXISTS semantic_concept (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -234,6 +246,10 @@ CREATE TABLE IF NOT EXISTS chat_history (
     logic_form JSON DEFAULT NULL COMMENT '语义中间表达',
     compiled_sql TEXT DEFAULT NULL COMMENT '确定性编译SQL',
     execution_trace JSON DEFAULT NULL COMMENT '执行轨迹',
+    plan_payload JSON DEFAULT NULL COMMENT 'Phase3分析计划',
+    semantic_check JSON DEFAULT NULL COMMENT 'SQL前语义一致性校验结果',
+    python_result JSON DEFAULT NULL COMMENT 'Python分析结果',
+    report_payload JSON DEFAULT NULL COMMENT '结构化分析报告',
     sql_text TEXT DEFAULT NULL COMMENT '兼容字段: 生成的SQL',
     sql_result TEXT DEFAULT NULL COMMENT 'SQL执行结果(JSON)',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

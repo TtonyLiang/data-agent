@@ -52,6 +52,77 @@ async def delete_domain(domain_id: int):
     return {"deleted": True, "id": domain_id, "message": "语义层已删除"}
 
 
+@router.post("/domains/{domain_id}/copy")
+async def copy_domain(domain_id: int, request: dict):
+    svc = get_semantic_runtime_service()
+    try:
+        new_id = await svc.copy_domain(domain_id, request or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    domain = await svc.get_domain(new_id)
+    return {
+        "id": new_id,
+        "domain": domain.model_dump() if domain else None,
+        "message": "语义层已复制",
+    }
+
+
+@router.get("/domains/{domain_id}/export")
+async def export_domain(domain_id: int):
+    svc = get_semantic_runtime_service()
+    try:
+        return await svc.export_domain_bundle(domain_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/domains/import")
+async def import_domain(request: dict):
+    svc = get_semantic_runtime_service()
+    try:
+        domain_id = await svc.import_domain_bundle(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    domain = await svc.get_domain(domain_id)
+    return {
+        "id": domain_id,
+        "domain": domain.model_dump() if domain else None,
+        "message": "语义层已导入",
+    }
+
+
+@router.post("/domains/{domain_id}/validate")
+async def validate_domain(domain_id: int):
+    svc = get_semantic_runtime_service()
+    try:
+        return await svc.validate_domain_assets(domain_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/domains/{domain_id}/snapshot")
+async def create_domain_snapshot(domain_id: int, request: dict | None = None):
+    svc = get_semantic_runtime_service()
+    payload = request or {}
+    try:
+        snapshot_id = await svc.create_snapshot(
+            domain_id,
+            name=payload.get("name"),
+            description=payload.get("description"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"id": snapshot_id, "message": "语义层快照已创建"}
+
+
+@router.get("/domains/{domain_id}/snapshots")
+async def list_domain_snapshots(domain_id: int):
+    svc = get_semantic_runtime_service()
+    if await svc.get_domain(domain_id) is None:
+        raise HTTPException(status_code=404, detail="语义领域不存在")
+    return {"snapshots": await svc.list_snapshots(domain_id)}
+
+
 @router.get("/assets/{domain_id}")
 async def list_assets(domain_id: int, asset_type: str | None = Query(default=None, alias="type")):
     svc = get_semantic_runtime_service()

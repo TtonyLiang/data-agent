@@ -21,10 +21,82 @@ INTENT_PROMPT = """你是一个意图识别助手。根据用户的输入，判�
 """
 
 
+DATA_QUERY_KEYWORDS = (
+    "查询",
+    "统计",
+    "多少",
+    "排名",
+    "分析",
+    "趋势",
+    "分布",
+    "对比",
+    "同比",
+    "环比",
+    "占比",
+    "指标",
+    "报表",
+    "金额",
+    "余额",
+    "本金",
+    "放款",
+    "审批",
+    "逾期",
+    "回收",
+    "催收",
+    "核销",
+    "风险",
+    "客户",
+    "团队",
+    "vintage",
+    "mob",
+    "pd",
+    "dpd",
+    "dti",
+    "m1",
+    "m1+",
+    "m2",
+    "m3",
+)
+
+METADATA_QUERY_KEYWORDS = (
+    "有哪些表",
+    "所有表",
+    "表清单",
+    "表列表",
+    "表结构",
+    "字段",
+    "schema",
+    "数据库结构",
+)
+
+
+def rule_based_intent(question: str) -> str | None:
+    """Return an obvious intent before trusting model classification."""
+    normalized = (question or "").strip().lower()
+    if not normalized:
+        return "chat"
+
+    has_data_signal = any(keyword in normalized for keyword in DATA_QUERY_KEYWORDS)
+    has_metadata_signal = any(keyword in normalized for keyword in METADATA_QUERY_KEYWORDS)
+
+    if has_metadata_signal and not has_data_signal:
+        return "metadata_query"
+    if has_data_signal:
+        return "data_query"
+    return None
+
+
 async def intent_recognition_node(state: dict) -> dict:
     """意图识别节点."""
     llm = get_llm_service()
     question = state.get("question", "")
+
+    deterministic_intent = rule_based_intent(question)
+    if deterministic_intent:
+        return {
+            "intent": deterministic_intent,
+            "need_analysis": deterministic_intent == "data_query",
+        }
 
     messages = [
         {"role": "system", "content": INTENT_PROMPT},
@@ -40,11 +112,9 @@ async def intent_recognition_node(state: dict) -> dict:
         result = json.loads(response.strip())
         intent = result.get("intent", "chat")
     except (json.JSONDecodeError, AttributeError):
-        if any(kw in question for kw in ["查询", "统计", "多少", "排名", "分析", "趋势"]):
-            intent = "data_query"
-        elif any(kw in question for kw in ["表", "字段", "结构", "有哪些"]):
-            intent = "metadata_query"
-        else:
-            intent = "chat"
+        intent = rule_based_intent(question) or "chat"
+
+    if intent == "chat":
+        intent = rule_based_intent(question) or intent
 
     return {"intent": intent, "need_analysis": intent == "data_query"}
