@@ -8,6 +8,7 @@ export interface ChatReasoningStep {
   status: StepStatus
   reasoning: string
   streamText?: string
+  events?: string[]
   showReasoning: boolean
   showPythonCode?: boolean
   output: Record<string, unknown> | null
@@ -77,7 +78,7 @@ export function startChatRun(
         role: 'assistant',
         content: '',
         status: 'running',
-        chainCollapsed: false,
+        chainCollapsed: true,
         showErrorDetail: false,
         steps: [],
       },
@@ -118,13 +119,15 @@ export function reduceChatStreamEvent(
 
   if (input.event === 'node_start') {
     const node = String(data.node || '')
-    assistant.chainCollapsed = false
+    assistant.chainCollapsed = true
+    const label = String(data.label || node)
     assistant.steps.push({
       node,
-      label: String(data.label || node),
+      label,
       status: 'running',
       reasoning: '',
       streamText: '',
+      events: [`开始${label}。`],
       showReasoning: true,
       showPythonCode: false,
       output: null,
@@ -133,7 +136,9 @@ export function reduceChatStreamEvent(
   } else if (input.event === 'node_progress') {
     const step = findStep(assistant, String(data.node || ''))
     if (step && step.status === 'running') {
-      step.summary = String(data.message || step.summary || '处理中...')
+      const message = String(data.message || step.summary || '处理中...')
+      step.summary = message
+      replaceProgressEvent(step, message)
     }
   } else if (input.event === 'reasoning') {
     const step = findStep(assistant, String(data.node || ''))
@@ -152,6 +157,7 @@ export function reduceChatStreamEvent(
       step.status = 'done'
       step.output = (data.output as Record<string, unknown>) || {}
       step.summary = summarizeStep(step)
+      if (step.summary) appendStepEvent(step, `完成：${step.summary}`)
     }
   } else if (input.event === 'answer_start') {
     assistant.content = ''
@@ -178,7 +184,8 @@ export function reduceChatStreamEvent(
         label: String(step.label || step.node || ''),
         status: step.status === 'running' || step.status === 'pending' ? step.status : 'done',
         reasoning: String(step.reasoning || ''),
-        streamText: String(step.streamText || (step as Record<string, unknown>).stream_text || ''),
+        streamText: streamTextFromTrace(step),
+        events: eventsFromTrace(step),
         showReasoning: false,
         output: step.output || null,
         summary: String(step.summary || ''),
@@ -217,6 +224,37 @@ function summarizeStreamingToken(step: ChatReasoningStep): string {
   const text = String(step.streamText || '').replace(/\s+/g, ' ').trim()
   if (!text) return step.summary || '正在生成...'
   return text.length > 80 ? `${text.slice(0, 80)}...` : text
+}
+
+function appendStepEvent(step: ChatReasoningStep, message: string) {
+  const text = message.trim()
+  if (!text) return
+  const events = step.events || []
+  if (events[events.length - 1] !== text) {
+    step.events = [...events, text]
+  }
+}
+
+function replaceProgressEvent(step: ChatReasoningStep, message: string) {
+  const text = message.trim()
+  if (!text) return
+  const events = step.events || []
+  const durableEvents = events.filter(event => {
+    const normalized = String(event || '').trim()
+    return normalized && !normalized.startsWith('正在') && !normalized.endsWith('...')
+  })
+  step.events = [...durableEvents, text]
+}
+
+function streamTextFromTrace(step: ChatReasoningStep) {
+  const rawStep = step as unknown as Record<string, unknown>
+  return String(step.streamText || rawStep.stream_text || '')
+}
+
+function eventsFromTrace(step: ChatReasoningStep) {
+  const rawStep = step as unknown as Record<string, unknown>
+  if (Array.isArray(rawStep.events)) return rawStep.events.map(String).filter(Boolean)
+  return step.summary ? [String(step.summary)] : []
 }
 
 export function toggleAssistantReasoning(
@@ -311,6 +349,12 @@ function summarizeStep(step: ChatReasoningStep): string {
   const output = step.output || {}
   if (step.node === 'intent_recognition') {
     return `→ ${String(output.intent || '')}`
+  }
+  if (step.node === 'semantic_enhance') {
+    const original = String(output.original_question || '')
+    const enhanced = String(output.enhanced_question || '')
+    if (enhanced && enhanced !== original) return `已改写问题：${enhanced}`
+    return enhanced || '问题已整理'
   }
   if (step.node === 'semantic_runtime_recall') {
     const domain = String(output.domain || '')

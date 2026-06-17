@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import suppress
@@ -22,7 +23,16 @@ app = FastAPI(title="WenQu DataQuery Agent", version="0.1.0")
 
 ANSWER_CHUNK_SIZE = 32
 STREAM_PROGRESS_INTERVAL_SECONDS = 0.5
+MIN_NODE_DISPLAY_SECONDS = 1.0
 logger = logging.getLogger(__name__)
+CUSTOM_STREAM_NODES = {
+    "semantic_enhance",
+    "nl2lf_generate",
+    "nl2sql_fallback",
+    "python_generate",
+    "python_analyze",
+    "report_generator",
+}
 
 app.add_middleware(
     CORSMiddleware,
@@ -131,6 +141,7 @@ async def chat_stream(request: dict):
     # 节点中文名映射
     NODE_LABELS = {
         "intent_recognition": "意图识别",
+        "semantic_enhance": "语义增强",
         "semantic_runtime_recall": "知识召回",
         "schema_recall": "数据定位",
         "nl2lf_generate": "LogicForm 生成",
@@ -161,6 +172,9 @@ async def chat_stream(request: dict):
         reasoning_buffer = ""
         node_token_buffers: dict[str, str] = {}
         progress_counters: dict[str, int] = {}
+        custom_stream_seen: dict[str, bool] = {}
+        pending_model_tokens: dict[str, str] = {}
+        node_started_at: dict[str, float] = {}
         reasoning_trace: list[dict] = []
 
         try:
@@ -179,6 +193,12 @@ async def chat_stream(request: dict):
                             index = progress_counters.get(current_node, 0)
                             progress_counters[current_node] = index + 1
                             progress = node_progress_message(current_node, index)
+                            step = ensure_trace_step(
+                                reasoning_trace,
+                                current_node,
+                                NODE_LABELS.get(current_node, current_node),
+                            )
+                            append_trace_event(step, progress)
                             yield sse_event({
                                 "event": "node_progress",
                                 "data": json.dumps({
@@ -201,7 +221,9 @@ async def chat_stream(request: dict):
                     # 节点开始
                     if kind == "on_chain_start" and node in NODE_LABELS:
                         current_node = node
-                        ensure_trace_step(reasoning_trace, node, NODE_LABELS[node])
+                        node_started_at[node] = time.monotonic()
+                        step = ensure_trace_step(reasoning_trace, node, NODE_LABELS[node])
+                        append_trace_event(step, f"开始{NODE_LABELS[node]}。")
                         yield sse_event({
                             "event": "node_start",
                             "data": json.dumps({
@@ -215,36 +237,72 @@ async def chat_stream(request: dict):
                         chunk = event.get("data", {}).get("chunk")
                         if chunk:
                             content = getattr(chunk, "content", "") or ""
-                            reasoning = ""
-                            if hasattr(chunk, "additional_kwargs"):
-                                reasoning = chunk.additional_kwargs.get("reasoning_content", "")
-                            if reasoning:
-                                reasoning_buffer += reasoning
-                                append_trace_reasoning(reasoning_trace, current_node, NODE_LABELS.get(current_node, ""), reasoning)
-                                yield sse_event({
-                                    "event": "reasoning",
-                                    "data": json.dumps({
-                                        "node": current_node,
-                                        "label": NODE_LABELS.get(current_node, ""),
-                                        "delta": reasoning,
-                                    }, ensure_ascii=False),
-                                })
-                            elif content:
-                                if current_node:
+                            content = str(content)
+                            if current_node and content:
+                                if current_node in CUSTOM_STREAM_NODES:
+                                    pending_model_tokens[current_node] = (
+                                        pending_model_tokens.get(current_node, "") + content
+                                    )
+                                else:
                                     node_token_buffers[current_node] = (
                                         node_token_buffers.get(current_node, "") + content
                                     )
                                     append_trace_stream_text(reasoning_trace, current_node, NODE_LABELS.get(current_node, ""), content)
+                                    yield sse_event({
+                                        "event": "token",
+                                        "data": json.dumps({
+                                            "node": current_node,
+                                            "delta": content,
+                                        }, ensure_ascii=False),
+                                    })
+
+                    elif kind == "on_custom_event" and node == "wenqu_token":
+                        payload = event.get("data", {}) or {}
+                        token_node = str(payload.get("node") or current_node or "")
+                        content = str(payload.get("delta") or "")
+                        event_kind = str(payload.get("kind") or "token")
+                        if token_node and content:
+                            custom_stream_seen[token_node] = True
+                            pending_model_tokens.pop(token_node, None)
+                            if event_kind == "reasoning":
+                                reasoning_buffer += content
+                                append_trace_reasoning(
+                                    reasoning_trace,
+                                    token_node,
+                                    NODE_LABELS.get(token_node, token_node),
+                                    content,
+                                )
+                                yield sse_event({
+                                    "event": "reasoning",
+                                    "data": json.dumps({
+                                        "node": token_node,
+                                        "label": NODE_LABELS.get(token_node, token_node),
+                                        "delta": content,
+                                    }, ensure_ascii=False),
+                                })
+                            else:
+                                node_token_buffers[token_node] = (
+                                    node_token_buffers.get(token_node, "") + content
+                                )
+                                append_trace_stream_text(
+                                    reasoning_trace,
+                                    token_node,
+                                    NODE_LABELS.get(token_node, token_node),
+                                    content,
+                                )
                                 yield sse_event({
                                     "event": "token",
                                     "data": json.dumps({
-                                        "node": current_node,
+                                        "node": token_node,
+                                        "label": NODE_LABELS.get(token_node, token_node),
                                         "delta": content,
                                     }, ensure_ascii=False),
                                 })
 
                     # LLM 调用结束 — 检查 reasoning_content
                     elif kind == "on_chat_model_end":
+                        if current_node in CUSTOM_STREAM_NODES:
+                            continue
                         msg = event.get("data", {}).get("output")
                         if msg and hasattr(msg, "additional_kwargs"):
                             rc = msg.additional_kwargs.get("reasoning_content", "")
@@ -261,6 +319,33 @@ async def chat_stream(request: dict):
 
                     # 节点结束
                     elif kind == "on_chain_end" and node in NODE_LABELS:
+                        async for pending_event in hold_node_for_display(
+                            node=node,
+                            node_labels=NODE_LABELS,
+                            node_started_at=node_started_at,
+                            progress_counters=progress_counters,
+                            reasoning_trace=reasoning_trace,
+                        ):
+                            yield pending_event
+                        if node in CUSTOM_STREAM_NODES and not custom_stream_seen.get(node):
+                            pending = pending_model_tokens.pop(node, "")
+                            if pending:
+                                node_token_buffers[node] = (
+                                    node_token_buffers.get(node, "") + pending
+                                )
+                                append_trace_stream_text(
+                                    reasoning_trace,
+                                    node,
+                                    NODE_LABELS[node],
+                                    pending,
+                                )
+                                yield sse_event({
+                                    "event": "token",
+                                    "data": json.dumps({
+                                        "node": node,
+                                        "delta": pending,
+                                    }, ensure_ascii=False),
+                                })
                         output = event.get("data", {}).get("output", {})
                         final_result.update(output)
                         # 提取节点关键输出
@@ -276,6 +361,8 @@ async def chat_stream(request: dict):
                         })
                         current_node = ""
                         reasoning_buffer = ""
+                        pending_model_tokens.pop(node, None)
+                        node_started_at.pop(node, None)
             finally:
                 if not producer_task.done():
                     producer_task.cancel()
@@ -380,6 +467,44 @@ def sse_event(event: dict) -> dict:
     return event
 
 
+async def hold_node_for_display(
+    *,
+    node: str,
+    node_labels: dict[str, str],
+    node_started_at: dict[str, float],
+    progress_counters: dict[str, int],
+    reasoning_trace: list[dict],
+):
+    if MIN_NODE_DISPLAY_SECONDS <= 0:
+        return
+    started_at = node_started_at.get(node)
+    if started_at is None:
+        started_at = time.monotonic()
+        node_started_at[node] = started_at
+    remaining = MIN_NODE_DISPLAY_SECONDS - (time.monotonic() - started_at)
+    if remaining <= 0:
+        return
+
+    index = progress_counters.get(node, 0)
+    progress_counters[node] = index + 1
+    progress = node_progress_message(node, index)
+    step = ensure_trace_step(
+        reasoning_trace,
+        node,
+        node_labels.get(node, node),
+    )
+    append_trace_event(step, progress)
+    yield sse_event({
+        "event": "node_progress",
+        "data": json.dumps({
+            "node": node,
+            "label": node_labels.get(node, node),
+            "message": progress,
+        }, ensure_ascii=False),
+    })
+    await asyncio.sleep(remaining)
+
+
 def log_sse_event(event: dict) -> None:
     event_name = event.get("event", "")
     data = event.get("data", "{}")
@@ -449,6 +574,8 @@ def ensure_trace_step(trace: list[dict], node: str, label: str) -> dict:
         "label": label,
         "status": "running",
         "reasoning": "",
+        "streamText": "",
+        "events": [],
         "output": None,
         "summary": "",
     }
@@ -470,16 +597,34 @@ def append_trace_stream_text(trace: list[dict], node: str, label: str, delta: st
     step["streamText"] = f"{step.get('streamText', '')}{delta}"
 
 
+def append_trace_event(step: dict, message: str) -> None:
+    text = message.strip()
+    if not text:
+        return
+    events = step.setdefault("events", [])
+    if not events or events[-1] != text:
+        events.append(text)
+
+
 def complete_trace_step(trace: list[dict], node: str, label: str, output: dict) -> None:
     step = ensure_trace_step(trace, node, label)
     step["status"] = "done"
     step["output"] = output
     step["summary"] = summarize_trace_step(node, output)
+    if step["summary"]:
+        append_trace_event(step, f"完成：{step['summary']}。")
 
 
 def summarize_trace_step(node: str, output: dict) -> str:
     if node == "intent_recognition":
         return f"→ {output.get('intent', '')}"
+    if node == "semantic_enhance":
+        enhance = output.get("semantic_enhancement") or {}
+        original = str(enhance.get("original_question") or "")
+        enhanced = str(enhance.get("enhanced_question") or "")
+        if enhanced and enhanced != original:
+            return f"已改写问题：{enhanced}"
+        return "问题已整理"
     if node == "semantic_runtime_recall":
         domain = output.get("domain") or ""
         count = output.get("count", 0)
@@ -538,6 +683,7 @@ def summarize_trace_step(node: str, output: dict) -> str:
 def node_progress_message(node: str, index: int = 0) -> str:
     messages = {
         "intent_recognition": ["正在识别问题意图...", "正在判断是否进入问数链路..."],
+        "semantic_enhance": ["正在补全省略的指标、维度和 TopN 口径..."],
         "semantic_runtime_recall": ["正在检索知识库、匹配语义资产...", "正在整理可用指标、维度和规则..."],
         "schema_recall": ["正在定位相关数据表、字段和关联关系...", "正在根据业务口径缩小候选 schema..."],
         "nl2lf_generate": ["正在调用大模型生成 LogicForm...", "正在把自然语言映射为指标、维度和过滤条件...", "正在等待模型流式返回结构化 JSON..."],
@@ -575,6 +721,15 @@ def _extract_node_output(node: str, output: dict) -> dict:
     """提取每个节点的关键输出用于前端展示."""
     if node == "intent_recognition":
         return {"intent": output.get("intent", "")}
+    elif node == "semantic_enhance":
+        enhance = output.get("semantic_enhancement") or {}
+        return {
+            "original_question": enhance.get("original_question", ""),
+            "enhanced_question": enhance.get("enhanced_question", ""),
+            "rewrite_type": enhance.get("rewrite_type", ""),
+            "preserved_constraints": enhance.get("preserved_constraints", []),
+            "reason": enhance.get("reason", ""),
+        }
     elif node == "semantic_runtime_recall":
         evidence = output.get("runtime_evidence", [])
         runtime = output.get("semantic_runtime") or {}

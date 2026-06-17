@@ -7,7 +7,7 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
     """召回当前问数需要的语义运行时上下文。"""
     agent_id = state.get("agent_id", 0)
     datasource_id = state.get("datasource_id")
-    question = state.get("question", "")
+    question = state.get("enhanced_question") or state.get("question", "")
     svc = get_semantic_runtime_service()
     domain_id = await resolve_runtime_domain_id(agent_id, datasource_id)
 

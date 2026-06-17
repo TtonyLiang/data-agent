@@ -1,5 +1,6 @@
 from app.agent.nodes.intent import rule_based_intent
 from app.agent.graph import route_after_sql_compile, route_after_sql_execute
+from app.agent.nodes.intent import rule_based_intent_with_history
 
 
 def test_rule_based_intent_treats_metric_business_question_as_data_query():
@@ -8,6 +9,15 @@ def test_rule_based_intent_treats_metric_business_question_as_data_query():
 
 def test_rule_based_intent_keeps_schema_question_as_metadata_query():
     assert rule_based_intent("订单表有哪些字段") == "metadata_query"
+
+
+def test_followup_question_uses_recent_data_history():
+    history = [
+        {"role": "user", "content": "贷款排名前三的申请区域是什么，分别申请了多少笔"},
+        {"role": "assistant", "content": "已返回前三个区域。", "logic_form": {"metrics": ["application_count"]}},
+    ]
+
+    assert rule_based_intent_with_history("前五呢", history) == "data_query"
 
 
 def test_route_after_sql_compile_stops_when_sql_is_empty():

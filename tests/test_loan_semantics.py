@@ -1,4 +1,5 @@
 from app.agent.nodes.nl2lf_generate import fallback_logic_form, normalize_logic_form
+from app.agent.nodes.semantic_enhance import deterministic_enhancement
 from app.agent.nodes import semantic_runtime_recall
 from app.models.knowledge import (
     LogicForm,
@@ -252,6 +253,50 @@ def test_application_count_followup_corrects_amount_metric_with_history():
     assert normalized.dimensions == ["application_region"]
     assert normalized.sort[0].field == "application_count"
     assert normalized.limit == 3
+
+
+def test_application_count_followup_top5_overrides_previous_top3():
+    logic_form = LogicForm(
+        metrics=["application_count"],
+        dimensions=["application_region"],
+        sort=[{"field": "application_count", "direction": "desc"}],
+        limit=3,
+    )
+    history = [
+        {"role": "user", "content": "贷款排名前三的申请区域是什么，分别申请了多少笔"},
+        {"role": "assistant", "content": "前三个申请区域分别是华南、东北、西北。"},
+    ]
+
+    normalized = normalize_logic_form("前五呢", logic_form, history)
+
+    assert normalized.metrics == ["application_count"]
+    assert normalized.dimensions == ["application_region"]
+    assert normalized.sort[0].field == "application_count"
+    assert normalized.limit == 5
+
+
+def test_semantic_enhancement_resolves_top5_followup():
+    history = [
+        {"role": "user", "content": "贷款排名前三的申请区域是什么，分别申请了多少笔"},
+        {"role": "assistant", "content": "前三个申请区域分别是华南、东北、西北。"},
+    ]
+
+    result = deterministic_enhancement("前五呢", history)
+
+    assert result is not None
+    assert result["rewrite_type"] == "followup_resolution"
+    assert "前五" in result["enhanced_question"]
+    assert "申请区域" in result["enhanced_question"]
+    assert "多少笔" in result["enhanced_question"]
+
+
+def test_semantic_enhancement_clarifies_application_count_region_question():
+    result = deterministic_enhancement("贷款排名前三的申请区域是什么，分别申请了多少笔", [])
+
+    assert result is not None
+    assert "申请笔数" in result["enhanced_question"]
+    assert "申请区域" in result["enhanced_question"]
+    assert "金额" not in result["enhanced_question"]
 
 
 def test_high_pd_balance_and_overdue_query_compiles_cross_table_metrics():

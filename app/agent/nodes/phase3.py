@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
+
+from langchain_core.callbacks.manager import adispatch_custom_event
 
 from app.models.knowledge import LogicForm, SemanticRuntime
 from app.services.python_executor import PythonExecutionError, get_python_executor
@@ -66,7 +69,9 @@ async def planner_node(state: dict) -> dict:
     profile = profile_rows(rows)
     analysis_steps = _analysis_steps(rows, logic_form)
     plan = {
-        "objective": state.get("question", ""),
+        "objective": state.get("enhanced_question") or state.get("question", ""),
+        "original_question": state.get("question", ""),
+        "enhanced_question": state.get("enhanced_question", ""),
         "mode": "local_basic_profile",
         "mode_label": "本地基础画像",
         "row_count": len(rows),
@@ -99,6 +104,7 @@ async def python_generate_node(state: dict) -> dict:
     rows = state.get("sql_result") or []
     profile = profile_rows(rows)
     code = _build_analysis_code()
+    await emit_phase3_stream("python_generate", code)
     return {
         "python_code": code,
         "python_result": {
@@ -123,7 +129,7 @@ async def python_analyze_node(state: dict) -> dict:
     rows = state.get("sql_result") or []
     code = state.get("python_code") or _build_analysis_code()
     if not rows:
-        return {
+        result = {
             "python_result": {
                 "status": "skipped",
                 "row_count": 0,
@@ -133,6 +139,8 @@ async def python_analyze_node(state: dict) -> dict:
                 "dimensions": [],
             }
         }
+        await emit_phase3_stream("python_analyze", json_dumps_pretty(result["python_result"]))
+        return result
 
     try:
         executed = get_python_executor().execute(code, rows)
@@ -142,15 +150,18 @@ async def python_analyze_node(state: dict) -> dict:
         payload["computed_items"] = computed_items(payload)
         if executed.stderr:
             payload["stderr"] = executed.stderr[-1000:]
+        await emit_phase3_stream("python_analyze", json_dumps_pretty(payload))
         return {"python_result": payload}
     except (PythonExecutionError, TimeoutError, Exception) as exc:
-        return {
+        result = {
             "python_result": {
                 "status": "failed",
                 "row_count": len(rows),
                 "error": str(exc) or exc.__class__.__name__,
             }
         }
+        await emit_phase3_stream("python_analyze", json_dumps_pretty(result["python_result"]))
+        return result
 
 
 async def report_generator_node(state: dict) -> dict:
@@ -160,6 +171,7 @@ async def report_generator_node(state: dict) -> dict:
     plan = state.get("plan") or {}
     python_result = state.get("python_result") or {}
     report = _build_report_payload(state, rows, logic_form, plan, python_result)
+    await emit_phase3_stream("report_generator", report_to_stream_text(report))
     return {
         "report": report.get("summary", ""),
         "report_payload": report,
@@ -192,6 +204,28 @@ def computed_items(python_result: dict[str, Any]) -> list[str]:
     if python_result.get("dimension_samples"):
         items.append("维度样例")
     return items
+
+
+async def emit_phase3_stream(node: str, text: str, chunk_size: int = 120) -> None:
+    """Emit real node content before node_complete so the UI can render it live."""
+    if not text:
+        return
+    for start in range(0, len(text), chunk_size):
+        try:
+            await adispatch_custom_event(
+                "wenqu_token",
+                {
+                    "node": node,
+                    "delta": text[start:start + chunk_size],
+                    "kind": "token",
+                },
+            )
+        except RuntimeError:
+            return
+
+
+def json_dumps_pretty(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2)
 
 
 def _is_number_like(value: Any) -> bool:
@@ -364,6 +398,7 @@ def _build_report_payload(
         "row_count": len(rows),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "question": state.get("question", ""),
+        "enhanced_question": state.get("enhanced_question", ""),
         "metrics": metric_keys,
         "dimensions": dimension_keys,
         "data_profile": profile,
@@ -431,7 +466,7 @@ def _report_executive_summary(
 ) -> dict[str, Any]:
     bullets = []
     if rows:
-        bullets.append(f"本次查询共返回 {len(rows)} 行结果，已完成基础画像分析。")
+        bullets.append(f"本次查询共返回 {len(rows)} 行数据，已完成基础画像分析。")
     else:
         bullets.append("本次查询未返回结果，当前报告主要说明查询口径和空结果原因。")
     if metric_keys:
@@ -463,10 +498,15 @@ def _report_executive_summary(
 
 
 def _report_background(state: dict, metric_keys: list[str], dimension_keys: list[str]) -> dict[str, Any]:
+    enhanced_question = str(state.get("enhanced_question") or "").strip()
+    original_question = str(state.get("question") or "").strip()
+    question_line = f"用户原始问题：{original_question or '未提供'}。"
+    if enhanced_question and enhanced_question != original_question:
+        question_line += f" 语义增强后问题：{enhanced_question}。"
     return {
         "title": "分析背景与用户诉求",
         "paragraphs": [
-            f"用户问题：{state.get('question', '').strip() or '未提供'}。",
+            question_line,
             f"当前分析基于已编译 SQL 结果，围绕 {', '.join(metric_keys) if metric_keys else '查询结果'} 展开。",
             f"关注维度为 {', '.join(dimension_keys) if dimension_keys else '无'}。",
             f"SQL 结果用于后续 Python 统计和报告生成，不直接在 Python 阶段访问业务库。",
@@ -661,6 +701,71 @@ def _format_number(value: Any) -> str:
             return f"{int(number):,}"
         return f"{number:,.4f}".rstrip("0").rstrip(".")
     return str(value)
+
+
+def report_to_stream_text(report: dict[str, Any]) -> str:
+    """Convert the structured report payload to a readable streamed report draft."""
+    lines: list[str] = []
+    title = str(report.get("title") or "查询结果分析")
+    summary = str(report.get("summary") or "")
+    lines.append(f"# {title}")
+    if summary:
+        lines.append(summary)
+
+    executive = report.get("executive_summary") or {}
+    bullets = executive.get("bullets") if isinstance(executive, dict) else []
+    if bullets:
+        lines.append("")
+        lines.append("## 执行摘要")
+        lines.extend(f"- {item}" for item in bullets)
+
+    background = report.get("background") or {}
+    paragraphs = background.get("paragraphs") if isinstance(background, dict) else []
+    if paragraphs:
+        lines.append("")
+        lines.append("## 分析背景与用户诉求")
+        lines.extend(str(item) for item in paragraphs)
+
+    process = report.get("analysis_process") or {}
+    steps = process.get("steps") if isinstance(process, dict) else []
+    if steps:
+        lines.append("")
+        lines.append("## 数据分析过程")
+        for item in steps:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"- {item.get('title', '分析步骤')}：{item.get('text', '')}")
+            result = str(item.get("result") or "")
+            if result and len(result) < 260:
+                lines.append(f"  结果：{result}")
+
+    interpretation = report.get("interpretation") or {}
+    interpretation_bullets = interpretation.get("bullets") if isinstance(interpretation, dict) else []
+    if interpretation_bullets:
+        lines.append("")
+        lines.append("## 结果解读")
+        lines.extend(f"- {item}" for item in interpretation_bullets)
+
+    charts = report.get("charts") or []
+    if charts:
+        lines.append("")
+        lines.append("## 图表")
+        for chart in charts:
+            if not isinstance(chart, dict):
+                continue
+            lines.append(f"- {chart.get('title', '图表')}：{chart.get('subtitle', '')}")
+            for row in (chart.get("data") or [])[:6]:
+                if isinstance(row, dict):
+                    lines.append(f"  - {row.get('label')}: {_format_number(row.get('value'))}")
+
+    suggestions = report.get("suggestions") or {}
+    suggestion_items = suggestions.get("items") if isinstance(suggestions, dict) else []
+    if suggestion_items:
+        lines.append("")
+        lines.append("## 建议与后续行动")
+        lines.extend(f"- {item}" for item in suggestion_items)
+
+    return "\n".join(lines).strip()
 
 
 def _final_answer_from_report(report: dict[str, Any], fallback: str) -> str:

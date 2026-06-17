@@ -37,7 +37,7 @@ async def schema_recall_node(state: dict) -> dict:
 
     runtime = state.get("semantic_runtime") or {}
     evidence = state.get("runtime_evidence") or []
-    question = state.get("question", "")
+    question = state.get("enhanced_question") or state.get("question", "")
     tokens = _tokens(question)
     semantic_terms = _semantic_terms(runtime, evidence)
     business_priority = _business_priority(runtime, evidence, question)

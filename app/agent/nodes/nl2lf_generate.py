@@ -1,6 +1,8 @@
 import json
 import re
 
+from langchain_core.callbacks.manager import adispatch_custom_event
+
 from app.models.knowledge import LogicFilter, LogicForm, LogicSort
 from app.services.llm_service import get_llm_service
 
@@ -30,7 +32,8 @@ async def nl2lf_generate_node(state: dict) -> dict:
     if state.get("semantic_error"):
         return {"logic_form": None}
 
-    question = state.get("question", "")
+    question = state.get("enhanced_question") or state.get("question", "")
+    original_question = state.get("question", question)
     runtime = state.get("semantic_runtime") or {}
     history = state.get("chat_history", [])
     runtime_context = build_runtime_context(runtime)
@@ -40,11 +43,20 @@ async def nl2lf_generate_node(state: dict) -> dict:
         llm_kwargs = await llm.resolve_agent_chat_kwargs(state.get("agent_id"))
         messages = [
             {"role": "system", "content": NL2LF_PROMPT.format(runtime_context=runtime_context)},
-            {"role": "user", "content": build_user_prompt(question, history)},
+            {"role": "user", "content": build_user_prompt(question, history, original_question)},
         ]
         response_parts: list[str] = []
         async for chunk in llm.achat_stream(messages, **llm_kwargs):
-            response_parts.append(str(getattr(chunk, "content", "") or ""))
+            reasoning = ""
+            if hasattr(chunk, "additional_kwargs"):
+                reasoning = chunk.additional_kwargs.get("reasoning_content", "")
+            if reasoning:
+                await emit_node_delta("nl2lf_generate", reasoning, kind="reasoning")
+            content = str(getattr(chunk, "content", "") or "")
+            if not content:
+                continue
+            response_parts.append(content)
+            await emit_node_delta("nl2lf_generate", content, kind="token")
         response = "".join(response_parts)
         logic_form = parse_logic_form(response)
     except Exception:
@@ -89,7 +101,7 @@ def normalize_logic_form(
         filters = normalize_application_count_filters(filters)
         if asks_ranking(context_compact):
             sort = [LogicSort(field="application_count", direction="desc")]
-            limit = extract_top_limit(context_compact) or limit or 10
+            limit = extract_top_limit(compact) or extract_top_limit(context_compact) or limit or 10
 
     if high_pd_segment and not any(item.field == "risk_grade" for item in filters):
         filters.append(LogicFilter(field="risk_grade", operator="=", value="D"))
@@ -118,6 +130,22 @@ def normalize_logic_form(
             "limit": limit,
         }
     )
+
+
+async def emit_node_delta(node: str, delta: str, kind: str) -> None:
+    try:
+        await adispatch_custom_event(
+            "wenqu_token",
+            {
+                "node": node,
+                "kind": kind,
+                "delta": delta,
+            },
+        )
+    except RuntimeError:
+        # Direct unit calls run outside a LangChain parent run. Streaming is
+        # best-effort there; the graph path still emits the custom event.
+        return
 
 
 def contextual_question_text(question: str, history: list[dict] | None = None) -> str:
@@ -258,14 +286,19 @@ def build_runtime_context(runtime: dict) -> str:
     )
 
 
-def build_user_prompt(question: str, history: list[dict]) -> str:
+def build_user_prompt(question: str, history: list[dict], original_question: str | None = None) -> str:
     if not history:
+        if original_question and original_question != question:
+            return f"原始问题: {original_question}\n语义增强后的问题: {question}"
         return question
     recent = []
     for item in history[-6:]:
         role = "用户" if item.get("role") == "user" else "助手"
         recent.append(f"{role}: {item.get('content', '')}")
-    return "对话历史:\n" + "\n".join(recent) + f"\n\n当前问题: {question}"
+    current = f"当前问题: {question}"
+    if original_question and original_question != question:
+        current = f"原始问题: {original_question}\n语义增强后的问题: {question}"
+    return "对话历史:\n" + "\n".join(recent) + f"\n\n{current}"
 
 
 def parse_logic_form(response: str) -> LogicForm:

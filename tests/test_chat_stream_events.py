@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 
 import pytest
 
@@ -78,6 +79,39 @@ class SlowSemanticRuntimeGraph:
         }
 
 
+class SemanticEnhanceStreamGraph:
+    async def astream_events(self, state, version):
+        yield {"event": "on_chain_start", "name": "semantic_enhance", "data": {}}
+        yield {
+            "event": "on_chain_end",
+            "name": "semantic_enhance",
+            "data": {
+                "output": {
+                    "enhanced_question": "查询贷款申请按申请区域分组的申请笔数，并按申请笔数降序排序，取前5个区域。",
+                    "semantic_enhancement": {
+                        "original_question": "前五呢",
+                        "enhanced_question": "查询贷款申请按申请区域分组的申请笔数，并按申请笔数降序排序，取前5个区域。",
+                        "rewrite_type": "followup_resolution",
+                        "preserved_constraints": ["TopN=5", "数量/笔数口径"],
+                        "reason": "已结合上一轮问题补全追问。",
+                    },
+                }
+            },
+        }
+        yield {
+            "event": "on_chain_end",
+            "name": "semantic_runtime_recall",
+            "data": {
+                "output": {
+                    "semantic_runtime": {"domain": {"name": "贷款风控"}},
+                    "runtime_evidence": [],
+                    "semantic_error": None,
+                    "final_answer": "语义召回完成。",
+                }
+            },
+        }
+
+
 class TokenStreamGraph:
     async def astream_events(self, state, version):
         class Chunk:
@@ -86,6 +120,61 @@ class TokenStreamGraph:
 
         yield {"event": "on_chain_start", "name": "nl2lf_generate", "data": {}}
         yield {"event": "on_chat_model_stream", "name": "ChatOpenAI", "data": {"chunk": Chunk()}}
+        yield {
+            "event": "on_chain_end",
+            "name": "nl2lf_generate",
+            "data": {
+                "output": {
+                    "logic_form": {"metrics": ["application_count"], "dimensions": []},
+                    "final_answer": "完成。",
+                }
+            },
+        }
+
+
+class CustomTokenStreamGraph:
+    async def astream_events(self, state, version):
+        yield {"event": "on_chain_start", "name": "nl2lf_generate", "data": {}}
+        yield {
+            "event": "on_custom_event",
+            "name": "wenqu_token",
+            "data": {"node": "nl2lf_generate", "delta": '{"metrics":'},
+        }
+        yield {
+            "event": "on_custom_event",
+            "name": "wenqu_token",
+            "data": {"node": "nl2lf_generate", "delta": '["application_count"]}'},
+        }
+        yield {
+            "event": "on_chain_end",
+            "name": "nl2lf_generate",
+            "data": {
+                "output": {
+                    "logic_form": {"metrics": ["application_count"], "dimensions": []},
+                    "final_answer": "完成。",
+                }
+            },
+        }
+
+
+class MixedTokenStreamGraph:
+    async def astream_events(self, state, version):
+        class Chunk:
+            content = "{\n"
+            additional_kwargs = {}
+
+        yield {"event": "on_chain_start", "name": "nl2lf_generate", "data": {}}
+        yield {"event": "on_chat_model_stream", "name": "ChatOpenAI", "data": {"chunk": Chunk()}}
+        yield {
+            "event": "on_custom_event",
+            "name": "wenqu_token",
+            "data": {"node": "nl2lf_generate", "delta": "{\n"},
+        }
+        yield {
+            "event": "on_custom_event",
+            "name": "wenqu_token",
+            "data": {"node": "nl2lf_generate", "delta": '  "metrics":["application_count"]\n}'},
+        }
         yield {
             "event": "on_chain_end",
             "name": "nl2lf_generate",
@@ -141,15 +230,18 @@ async def test_chat_stream_emits_final_answer_deltas_and_saves_only_final(monkey
         events.append(item)
 
     event_names = [event["event"] for event in events]
-    assert event_names == [
-        "node_start",
-        "node_complete",
-        "answer_start",
-        "answer_delta",
-        "answer_complete",
-        "result",
-        "done",
-    ]
+    assert event_names[0] == "node_start"
+    assert "node_complete" in event_names
+    assert "answer_start" in event_names
+    assert "answer_delta" in event_names
+    assert "answer_complete" in event_names
+    assert "result" in event_names
+    assert event_names[-1] == "done"
+    assert event_names.index("node_start") < event_names.index("node_complete")
+    assert event_names.index("node_complete") < event_names.index("answer_start")
+    assert event_names.index("answer_start") < event_names.index("answer_delta")
+    assert event_names.index("answer_delta") < event_names.index("answer_complete")
+    assert event_names.index("answer_complete") < event_names.index("result")
 
     answer = "".join(
         json.loads(event["data"])["delta"]
@@ -163,32 +255,22 @@ async def test_chat_stream_emits_final_answer_deltas_and_saves_only_final(monkey
     assert result["answer"] == answer
     assert result["sql"] == "SELECT 1 AS m1_plus_rate"
 
-    assert saved_turns == [
-        {
-            "agent_id": 1,
-            "session_id": "session-1",
-            "question": "近三个月M1+逾期率是多少",
-            "answer": "近三个月M1+逾期率为12.34%。",
-            "sql": "SELECT 1 AS m1_plus_rate",
-            "logic_form": {"metrics": ["m1_plus_rate"], "dimensions": []},
-            "sql_result": [{"m1_plus_rate": 0.1234}],
-            "reasoning_trace": [
-                {
-                    "node": "sql_execute",
-                    "label": "SQL 执行",
-                    "status": "done",
-                    "reasoning": "",
-                    "output": {
-                        "row_count": 1,
-                        "error": None,
-                        "columns": ["m1_plus_rate"],
-                        "sample_rows": [{"m1_plus_rate": 0.1234}],
-                    },
-                    "summary": "1 条结果",
-                }
-            ],
-        }
-    ]
+    assert saved_turns[0]["agent_id"] == 1
+    assert saved_turns[0]["session_id"] == "session-1"
+    assert saved_turns[0]["question"] == "近三个月M1+逾期率是多少"
+    assert saved_turns[0]["answer"] == "近三个月M1+逾期率为12.34%。"
+    assert saved_turns[0]["sql"] == "SELECT 1 AS m1_plus_rate"
+    assert saved_turns[0]["logic_form"] == {"metrics": ["m1_plus_rate"], "dimensions": []}
+    assert saved_turns[0]["sql_result"] == [{"m1_plus_rate": 0.1234}]
+    trace = saved_turns[0]["reasoning_trace"]
+    assert trace[0]["node"] == "sql_execute"
+    assert trace[0]["label"] == "SQL 执行"
+    assert trace[0]["status"] == "done"
+    assert trace[0]["output"]["row_count"] == 1
+    assert trace[0]["summary"] == "1 条结果"
+    assert trace[0]["events"][0] == "开始SQL 执行。"
+    assert "正在执行 SQL 查询并等待数据库返回..." in trace[0]["events"]
+    assert trace[0]["events"][-1] == "完成：1 条结果。"
 
 
 @pytest.mark.asyncio
@@ -303,6 +385,76 @@ async def test_chat_stream_emits_progress_while_node_is_waiting(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_exposes_semantic_enhance_node(monkeypatch):
+    async def fake_load_history(agent_id, session_id, limit=5):
+        return [{"role": "user", "content": "贷款排名前三的申请区域是什么，分别申请了多少笔"}]
+
+    async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
+        return None
+
+    async def fake_validate_datasource_access(agent_id, datasource_id):
+        return None
+
+    monkeypatch.setattr(main, "get_graph", lambda: SemanticEnhanceStreamGraph())
+    monkeypatch.setattr(main, "load_history", fake_load_history)
+    monkeypatch.setattr(main, "save_turn", fake_save_turn)
+    monkeypatch.setattr(main, "validate_datasource_access", fake_validate_datasource_access)
+
+    response = await main.chat_stream(
+        {
+            "question": "前五呢",
+            "agent_id": 1,
+            "datasource_id": 1,
+            "session_id": "session-enhance",
+        }
+    )
+
+    events = [item async for item in response.body_iterator]
+    event_names = [event["event"] for event in events]
+    result = json.loads(next(event for event in events if event["event"] == "result")["data"])
+
+    assert "node_start" in event_names
+    assert "node_complete" in event_names
+    assert result["reasoning_trace"][0]["node"] == "semantic_enhance"
+    assert result["reasoning_trace"][0]["output"]["enhanced_question"].startswith("查询贷款申请")
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_keeps_fast_node_visible_for_minimum_duration(monkeypatch):
+    async def fake_load_history(agent_id, session_id, limit=5):
+        return []
+
+    async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
+        return None
+
+    async def fake_validate_datasource_access(agent_id, datasource_id):
+        return None
+
+    monkeypatch.setattr(main, "get_graph", lambda: IncrementalStreamGraph())
+    monkeypatch.setattr(main, "load_history", fake_load_history)
+    monkeypatch.setattr(main, "save_turn", fake_save_turn)
+    monkeypatch.setattr(main, "validate_datasource_access", fake_validate_datasource_access)
+    monkeypatch.setattr(main, "MIN_NODE_DISPLAY_SECONDS", 0.03)
+
+    started = time.monotonic()
+    response = await main.chat_stream(
+        {
+            "question": "查一个值",
+            "agent_id": 1,
+            "datasource_id": 1,
+            "session_id": "session-min-node",
+        }
+    )
+
+    events = [item async for item in response.body_iterator]
+    elapsed = time.monotonic() - started
+    progress_events = [event for event in events if event["event"] == "node_progress"]
+
+    assert elapsed >= 0.03
+    assert progress_events
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_emits_model_tokens_inside_node(monkeypatch):
     async def fake_load_history(agent_id, session_id, limit=5):
         return []
@@ -335,6 +487,75 @@ async def test_chat_stream_emits_model_tokens_inside_node(monkeypatch):
     assert token_payload["node"] == "nl2lf_generate"
     assert token_payload["delta"] == '{"metrics":["application_count"]}'
     assert result["reasoning_trace"][0]["streamText"] == '{"metrics":["application_count"]}'
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_forwards_custom_node_tokens(monkeypatch):
+    async def fake_load_history(agent_id, session_id, limit=5):
+        return []
+
+    async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
+        return None
+
+    async def fake_validate_datasource_access(agent_id, datasource_id):
+        return None
+
+    monkeypatch.setattr(main, "get_graph", lambda: CustomTokenStreamGraph())
+    monkeypatch.setattr(main, "load_history", fake_load_history)
+    monkeypatch.setattr(main, "save_turn", fake_save_turn)
+    monkeypatch.setattr(main, "validate_datasource_access", fake_validate_datasource_access)
+
+    response = await main.chat_stream(
+        {
+            "question": "申请笔数",
+            "agent_id": 1,
+            "datasource_id": 1,
+            "session_id": "session-custom-token",
+        }
+    )
+
+    events = [item async for item in response.body_iterator]
+    token_events = [event for event in events if event["event"] == "token"]
+    result = json.loads(next(event for event in events if event["event"] == "result")["data"])
+
+    assert [json.loads(event["data"])["delta"] for event in token_events] == [
+        '{"metrics":',
+        '["application_count"]}',
+    ]
+    assert result["reasoning_trace"][0]["streamText"] == '{"metrics":["application_count"]}'
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_deduplicates_mixed_model_and_custom_tokens(monkeypatch):
+    async def fake_load_history(agent_id, session_id, limit=5):
+        return []
+
+    async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
+        return None
+
+    async def fake_validate_datasource_access(agent_id, datasource_id):
+        return None
+
+    monkeypatch.setattr(main, "get_graph", lambda: MixedTokenStreamGraph())
+    monkeypatch.setattr(main, "load_history", fake_load_history)
+    monkeypatch.setattr(main, "save_turn", fake_save_turn)
+    monkeypatch.setattr(main, "validate_datasource_access", fake_validate_datasource_access)
+
+    response = await main.chat_stream(
+        {
+            "question": "申请笔数",
+            "agent_id": 1,
+            "datasource_id": 1,
+            "session_id": "session-mixed-token",
+        }
+    )
+
+    events = [item async for item in response.body_iterator]
+    token_events = [json.loads(event["data"])["delta"] for event in events if event["event"] == "token"]
+    result = json.loads(next(event for event in events if event["event"] == "result")["data"])
+
+    assert token_events == ["{\n", '  "metrics":["application_count"]\n}']
+    assert result["reasoning_trace"][0]["streamText"] == '{\n  "metrics":["application_count"]\n}'
 
 
 @pytest.mark.asyncio

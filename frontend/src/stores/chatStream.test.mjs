@@ -117,6 +117,62 @@ function assistantMessage(state) {
 
 {
   let state = createChatStreamState()
+  state = startChatRun(state, { runId: 10, question: '前五呢' })
+  state = reduceChatStreamEvent(state, {
+    runId: 10,
+    event: 'node_start',
+    data: { node: 'semantic_enhance', label: '语义增强' },
+  })
+  state = reduceChatStreamEvent(state, {
+    runId: 10,
+    event: 'node_progress',
+    data: {
+      node: 'semantic_enhance',
+      message: '正在将问题改写成更清晰的业务问法...',
+    },
+  })
+  state = reduceChatStreamEvent(state, {
+    runId: 10,
+    event: 'node_progress',
+    data: {
+      node: 'semantic_enhance',
+      message: '正在补全省略的指标、维度和 TopN 口径...',
+    },
+  })
+
+  const step = assistantMessage(state).steps[0]
+  assert.equal(step.summary, '正在补全省略的指标、维度和 TopN 口径...')
+  assert.deepEqual(step.events, ['开始语义增强。', '正在补全省略的指标、维度和 TopN 口径...'])
+}
+
+{
+  let state = createChatStreamState()
+  state = startChatRun(state, { runId: 9, question: '前五呢' })
+  state = reduceChatStreamEvent(state, {
+    runId: 9,
+    event: 'node_start',
+    data: { node: 'semantic_enhance', label: '语义增强' },
+  })
+  state = reduceChatStreamEvent(state, {
+    runId: 9,
+    event: 'node_complete',
+    data: {
+      node: 'semantic_enhance',
+      output: {
+        original_question: '前五呢',
+        enhanced_question: '查询贷款申请按申请区域分组的申请笔数，取前五个区域。',
+      },
+    },
+  })
+
+  const step = assistantMessage(state).steps[0]
+  assert.equal(step.label, '语义增强')
+  assert.match(step.summary, /申请笔数/)
+  assert.equal(step.output.enhanced_question, '查询贷款申请按申请区域分组的申请笔数，取前五个区域。')
+}
+
+{
+  let state = createChatStreamState()
   state = startChatRun(state, { runId: 3, question: '生成 SQL' })
   state = reduceChatStreamEvent(state, {
     runId: 3,

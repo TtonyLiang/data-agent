@@ -139,8 +139,17 @@ class LLMService:
             streaming=True,
         )
         client = self.get_client(**kwargs, streaming=True)
-        async for chunk in client.astream(self._to_lc_messages(messages)):
-            yield chunk
+        lc_messages = self._to_lc_messages(messages)
+        try:
+            async for event in client.astream_events(lc_messages, version="v2"):
+                if event.get("event") != "on_chat_model_stream":
+                    continue
+                chunk = event.get("data", {}).get("chunk")
+                if chunk is not None:
+                    yield chunk
+        except Exception:
+            async for chunk in client.astream(lc_messages):
+                yield chunk
 
     async def achat_with_reasoning(
         self, messages: list[dict[str, str]], **kwargs
@@ -174,12 +183,26 @@ class LLMService:
             streaming=True,
         )
         client = self.get_client(**kwargs, streaming=True)
-        async for chunk in client.astream(self._to_lc_messages(messages)):
-            content = chunk.content or ""
-            reasoning = ""
-            if hasattr(chunk, "additional_kwargs"):
-                reasoning = chunk.additional_kwargs.get("reasoning_content", "")
-            yield content, reasoning
+        lc_messages = self._to_lc_messages(messages)
+        try:
+            async for event in client.astream_events(lc_messages, version="v2"):
+                if event.get("event") != "on_chat_model_stream":
+                    continue
+                chunk = event.get("data", {}).get("chunk")
+                if chunk is None:
+                    continue
+                content = chunk.content or ""
+                reasoning = ""
+                if hasattr(chunk, "additional_kwargs"):
+                    reasoning = chunk.additional_kwargs.get("reasoning_content", "")
+                yield content, reasoning
+        except Exception:
+            async for chunk in client.astream(lc_messages):
+                content = chunk.content or ""
+                reasoning = ""
+                if hasattr(chunk, "additional_kwargs"):
+                    reasoning = chunk.additional_kwargs.get("reasoning_content", "")
+                yield content, reasoning
 
 
 _llm_service: LLMService | None = None

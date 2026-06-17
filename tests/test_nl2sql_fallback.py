@@ -23,11 +23,16 @@ class FakeLlmService:
     async def resolve_agent_chat_kwargs(self, agent_id):
         return {"model": "fake"}
 
-    async def achat(self, messages, **kwargs):
-        return (
+    async def achat_stream(self, messages, **kwargs):
+        class Chunk:
+            def __init__(self, content):
+                self.content = content
+
+        response = (
             '{"sql": "SELECT region AS application_region, COUNT(*) AS application_count '
             'FROM loan_application_indicator GROUP BY region ORDER BY application_count DESC LIMIT 3"}'
         )
+        yield Chunk(response)
 
 
 @pytest.mark.asyncio

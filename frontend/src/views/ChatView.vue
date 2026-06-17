@@ -100,109 +100,173 @@
                 <el-tag v-if="msg.sql" size="small" type="success">SQL</el-tag>
               </div>
 
-              <div v-if="msg.role === 'assistant' && msg.steps.length > 0" class="chain-panel">
-                <div class="chain-header">
-                  <div class="chain-title">
-                    <el-icon v-if="isAssistantStreaming(msg)" class="is-loading"><Loading /></el-icon>
-                    <el-icon v-else><CircleCheck /></el-icon>
-                    <span>{{ isAssistantStreaming(msg) ? '分析中...' : '分析过程' }}</span>
-                  </div>
-                  <button class="chain-collapse" type="button" @click="toggleChain(msg.id)">
-                    <el-icon><ArrowRight v-if="msg.chainCollapsed" /><ArrowDown v-else /></el-icon>
-                    <span>{{ msg.chainCollapsed ? '展开' : '收起' }}</span>
-                  </button>
-                </div>
+              <div v-if="msg.role === 'assistant' && msg.steps.length > 0" class="analysis-process">
+                <button
+                  v-if="!isAssistantStreaming(msg)"
+                  class="analysis-process-toggle"
+                  type="button"
+                  @click="toggleChain(msg.id)"
+                >
+                  <el-icon><ArrowRight v-if="msg.chainCollapsed" /><ArrowDown v-else /></el-icon>
+                  <span>{{ msg.chainCollapsed ? '展开分析过程' : '收起分析过程' }}</span>
+                  <small>{{ processBrief(msg) }}</small>
+                </button>
 
-                <div v-if="msg.chainCollapsed" class="chain-collapsed-summary">
-                  <el-tag
-                    v-for="step in msg.steps"
+                <div v-if="isAssistantStreaming(msg) || !msg.chainCollapsed" class="analysis-flow">
+                  <section
+                    v-for="(step, stepIndex) in narrativeSteps(msg)"
                     :key="`${msg.id}-${step.node}`"
-                    :type="step.status === 'done' ? 'success' : step.status === 'running' ? 'primary' : 'info'"
-                    size="small"
-                    effect="plain"
+                    :class="['analysis-step', step.status, `node-${step.node}`]"
                   >
-                    {{ displayStepLabel(step) }}
-                  </el-tag>
-                </div>
-
-                <div v-else>
-                  <div v-for="step in msg.steps" :key="step.node" class="chain-step">
-                    <div class="step-header">
-                      <span :class="['step-status', step.status]">
+                    <div class="analysis-step-heading">
+                      <span v-if="analysisStepIndex(step, stepIndex)" class="analysis-step-number">{{ analysisStepIndex(step, stepIndex) }}</span>
+                      <span v-else class="analysis-step-icon">
                         <el-icon v-if="step.status === 'running'" class="is-loading"><Loading /></el-icon>
+                        <el-icon v-else-if="step.node === 'sql_execute'"><DocumentCopy /></el-icon>
                         <el-icon v-else-if="step.status === 'done'"><CircleCheck /></el-icon>
                         <el-icon v-else><Clock /></el-icon>
                       </span>
-                      <span class="step-label">{{ displayStepLabel(step) }}</span>
-                      <button
-                        v-if="canShowPythonCode(step)"
-                        type="button"
-                        class="step-summary step-summary-button"
-                        @click="togglePythonCode(msg.id, step.node)"
-                      >
-                        <span>统计脚本</span>
-                        <span>{{ pythonSummarySuffix(step) }}</span>
-                      </button>
-                      <span v-else-if="step.summary" class="step-summary">{{ step.summary }}</span>
+                      <h3>{{ displayStepLabel(step) }}</h3>
+                      <span class="analysis-step-state">{{ narrativeStatusText(step) }}</span>
                     </div>
 
-                    <div v-if="step.reasoning" class="step-reasoning">
-                      <div class="reasoning-toggle" @click="toggleReasoning(msg.id, step.node)">
-                        <el-icon><View v-if="!step.showReasoning" /><Hide v-else /></el-icon>
-                        <span>思考过程 ({{ step.reasoning.length }}字)</span>
-                      </div>
-                      <div v-if="step.showReasoning" class="reasoning-content">
-                        {{ step.reasoning }}
-                      </div>
+                    <p v-if="stepLeadLine(step)" class="analysis-lead">{{ stepLeadLine(step) }}</p>
+                    <div v-if="visibleStepEvents(step).length" class="analysis-live-lines">
+                      <p v-for="event in visibleStepEvents(step)" :key="event">{{ event }}</p>
                     </div>
 
-                    <div v-if="step.output" class="step-output">
-                      <div v-if="stepDetails(step).length" class="output-detail-grid">
-                        <div v-for="detail in stepDetails(step)" :key="detail.label" class="output-detail-item">
-                          <span>{{ detail.label }}</span>
-                          <strong>{{ detail.value }}</strong>
-                        </div>
+                    <template v-if="step.node === 'semantic_enhance'">
+                      <div v-if="semanticEnhanceLines(step).length" class="analysis-block">
+                        <h4>问题改写</h4>
+                        <ul class="compact-list">
+                          <li v-for="item in semanticEnhanceLines(step)" :key="item">{{ item }}</li>
+                        </ul>
                       </div>
-                      <div v-if="stepListDetails(step).length" class="output-list-grid">
-                        <div v-for="detail in stepListDetails(step)" :key="detail.label" class="output-list-block">
-                          <span>{{ detail.label }}</span>
-                          <ul>
-                            <li v-for="item in detail.items" :key="item">{{ item }}</li>
-                          </ul>
-                        </div>
-                      </div>
-                      <div v-if="step.node === 'nl2lf_generate' && getOutputObject(step.output, 'logic_form')" class="output-enhanced">
-                        <pre><code>{{ formatJson(getOutputObject(step.output, 'logic_form')) }}</code></pre>
-                      </div>
-                      <div v-else-if="step.streamText" class="output-stream-text">
-                        <pre><code>{{ step.streamText }}</code></pre>
-                      </div>
-                      <div v-else-if="(step.node === 'lf_to_sql_compile' || step.node === 'nl2sql_fallback') && getOutputString(step.output, 'compiled_sql')" class="output-sql">
-                        <pre><code>{{ getOutputString(step.output, 'compiled_sql') }}</code></pre>
-                      </div>
-                      <div v-else-if="canShowPythonCode(step)" class="output-code-section">
-                        <button type="button" class="output-code-toggle" @click="togglePythonCode(msg.id, step.node)">
-                          <el-icon><View v-if="!step.showPythonCode" /><Hide v-else /></el-icon>
-                          <span>{{ step.showPythonCode ? '收起统计脚本' : '查看统计脚本' }}</span>
-                        </button>
-                        <div v-if="step.showPythonCode" class="output-sql output-python-code">
-                          <pre><code>{{ getOutputString(step.output, 'python_code') }}</code></pre>
-                        </div>
-                      </div>
-                      <div v-else-if="(step.node === 'lf_to_sql_compile' || step.node === 'nl2sql_fallback') && getOutputString(step.output, 'error')" class="output-result">
-                        <span class="error">{{ step.node === 'nl2sql_fallback' ? '兜底失败' : '编译失败' }}: {{ getOutputString(step.output, 'error') }}</span>
-                      </div>
-                      <div v-else-if="step.node === 'sql_execute' && hasOutputKey(step.output, 'row_count')" class="output-result">
-                        <span v-if="getOutputString(step.output, 'error')" class="error">错误: {{ getOutputString(step.output, 'error') }}</span>
-                        <span v-else>返回 {{ getOutputValue(step.output, 'row_count') }} 条结果</span>
-                      </div>
-                      <div v-else-if="getOutputStrings(step.output, 'errors').length" class="output-result">
-                        <span class="error">{{ getOutputStrings(step.output, 'errors').join('；') }}</span>
-                      </div>
-                      <div v-else-if="getOutputStrings(step.output, 'items').length" class="output-evidence">
-                        语义资产: {{ getOutputStrings(step.output, 'items').join(', ') }}
-                      </div>
+                    </template>
+
+                    <div v-if="step.node === 'semantic_runtime_recall' && semanticAssetLines(step).length" class="analysis-block">
+                      <h4>命中的语义资产</h4>
+                      <ul>
+                        <li v-for="item in semanticAssetLines(step)" :key="item">{{ item }}</li>
+                      </ul>
                     </div>
+
+                    <template v-if="step.node === 'schema_recall'">
+                      <div v-if="schemaTableLines(step).length" class="analysis-block">
+                        <h4>候选表</h4>
+                        <ul>
+                          <li v-for="item in schemaTableLines(step)" :key="item">{{ item }}</li>
+                        </ul>
+                      </div>
+                      <div v-if="schemaColumnLines(step).length" class="analysis-block">
+                        <h4>候选字段</h4>
+                        <ul class="compact-list">
+                          <li v-for="item in schemaColumnLines(step)" :key="item">{{ item }}</li>
+                        </ul>
+                      </div>
+                      <div v-if="schemaJoinLines(step).length" class="analysis-block">
+                        <h4>关联提示</h4>
+                        <ul class="compact-list">
+                          <li v-for="item in schemaJoinLines(step)" :key="item">{{ item }}</li>
+                        </ul>
+                      </div>
+                    </template>
+
+                    <div v-if="step.node === 'nl2lf_generate'" class="analysis-code-block">
+                      <pre><code>{{ logicFormText(step) }}</code></pre>
+                    </div>
+
+                    <template v-if="step.node === 'lf_validate' || step.node === 'semantic_check'">
+                      <div v-if="validationDetailLines(step).length" class="analysis-block">
+                        <h4>{{ step.node === 'semantic_check' ? '检查范围' : '校验信息' }}</h4>
+                        <ul class="compact-list">
+                          <li v-for="item in validationDetailLines(step)" :key="item">{{ item }}</li>
+                        </ul>
+                      </div>
+                    </template>
+
+                    <template v-if="step.node === 'sql_execute'">
+                      <div v-if="sqlSampleRows(step).length" class="analysis-table">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th v-for="col in sqlSampleColumns(step)" :key="col">
+                                <span>{{ columnTitle(col) }}</span>
+                                <small>{{ col }}</small>
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr v-for="(row, rowIndex) in sqlSampleRows(step)" :key="rowIndex">
+                              <td v-for="col in sqlSampleColumns(step)" :key="col">{{ formatDisplayValue(col, row[col]) }}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </template>
+
+                    <div v-if="step.node === 'planner' && plannerStepLines(step).length" class="analysis-block">
+                      <h4>{{ plannerStepLines(step).length }} 个步骤</h4>
+                      <ul>
+                        <li v-for="(item, itemIndex) in plannerStepLines(step)" :key="item">步骤{{ itemIndex + 1 }}：{{ item }}</li>
+                      </ul>
+                    </div>
+
+                    <template v-if="step.node === 'python_generate'">
+                      <div v-if="pythonTaskLines(step).length" class="analysis-block">
+                        <h4>脚本会执行</h4>
+                        <ul class="compact-list">
+                          <li v-for="item in pythonTaskLines(step)" :key="item">{{ item }}</li>
+                        </ul>
+                      </div>
+                      <h4 class="analysis-subtitle">脚本编写</h4>
+                      <div class="analysis-code-block python">
+                        <pre><code>{{ pythonCodeText(step) }}</code></pre>
+                      </div>
+                    </template>
+
+                    <template v-if="step.node === 'python_analyze'">
+                      <div v-if="pythonComputedLines(step).length" class="analysis-block">
+                        <h4>已计算内容</h4>
+                        <ul class="compact-list">
+                          <li v-for="item in pythonComputedLines(step)" :key="item">{{ item }}</li>
+                        </ul>
+                      </div>
+                      <h4 class="analysis-subtitle">输出内容</h4>
+                      <div class="analysis-code-block json">
+                        <pre><code>{{ pythonResultText(step) }}</code></pre>
+                      </div>
+                    </template>
+
+                    <template v-if="step.node === 'report_generator'">
+                      <div v-if="reportStreamText(step)" class="analysis-report-text">
+                        <pre>{{ reportStreamText(step) }}</pre>
+                      </div>
+                      <div v-if="reportChartLines(step).length" class="analysis-chart-list">
+                        <div v-for="chart in reportChartLines(step)" :key="chart.title" class="analysis-mini-chart">
+                          <strong>{{ chart.title }}</strong>
+                          <span>{{ chart.subtitle }}</span>
+                          <div
+                            v-for="row in chart.data"
+                            :key="row.label"
+                            class="analysis-mini-bar"
+                          >
+                            <em>{{ row.label }}</em>
+                            <i :style="{ width: `${barPercent(row.value, chart.data)}%` }"></i>
+                            <b>{{ formatReportValue(row.value) }}</b>
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+
+                    <div v-if="genericStreamText(step)" class="analysis-code-block">
+                      <pre><code>{{ genericStreamText(step) }}</code></pre>
+                    </div>
+                  </section>
+
+                  <div v-if="isAssistantStreaming(msg)" class="analysis-stream-cursor">
+                    <span></span>
+                    <p>正在持续生成...</p>
                   </div>
                 </div>
               </div>
@@ -388,7 +452,7 @@
               </div>
             </div>
           </div>
-          <div v-else class="panel-empty">发起查询后，这里会展示理解问题、知识召回、生成 LogicForm、编译 SQL 和执行查询的过程。</div>
+          <div v-else class="panel-empty">发起查询后，这里会展示理解问题、语义增强、知识召回、生成 LogicForm、编译 SQL 和执行查询的过程。</div>
         </el-tab-pane>
 
         <el-tab-pane label="SQL" name="sql">
@@ -662,7 +726,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted, nextTick, onUnmounted, watch } from 'vue'
-import { Promotion, Loading, ChatDotRound, Plus, Delete, CircleCheck, Clock, View, Hide, Search, Refresh, Download, DocumentCopy, WarningFilled, ArrowDown, ArrowRight, InfoFilled, FullScreen } from '@element-plus/icons-vue'
+import { Promotion, Loading, ChatDotRound, Plus, Delete, CircleCheck, Clock, Search, Refresh, Download, DocumentCopy, WarningFilled, ArrowDown, ArrowRight, InfoFilled, FullScreen } from '@element-plus/icons-vue'
 import {
   sendMessageStream, fetchAgents, fetchDatasources, fetchSessions, fetchHistory, deleteSession,
   fetchSemanticAssets, fetchSemanticDomains,
@@ -676,8 +740,6 @@ import {
   startChatRun,
   toggleAssistantChain,
   toggleAssistantErrorDetail,
-  toggleAssistantPythonCode,
-  toggleAssistantReasoning,
   type ChatMessage,
   type ChatReasoningStep,
   type ChatStreamState,
@@ -941,13 +1003,8 @@ function resetVisibleColumns() {
   visibleResultColumns.value = latestColumns.value.slice(0, 12)
 }
 
-function statusText(status: string) {
-  if (status === 'done') return '已完成'
-  if (status === 'running') return '处理中'
-  return '等待执行'
-}
-
 function displayStepLabel(step: ChatReasoningStep) {
+  if (step.node === 'semantic_enhance') return '语义增强'
   if (step.node === 'semantic_runtime_recall') return '知识召回'
   if (step.node === 'schema_recall') return '数据定位'
   return step.label === '语义运行时' ? '知识召回' : step.label
@@ -1040,6 +1097,8 @@ function historyToMessage(item: HistoryItem, sid: string, index: number): ChatMe
         label: step.label,
         status: step.status === 'running' || step.status === 'pending' ? step.status : 'done',
         reasoning: step.reasoning || '',
+        streamText: step.streamText || '',
+        events: step.events || [],
         showReasoning: false,
         output: step.output || null,
         summary: step.summary || '',
@@ -1052,23 +1111,6 @@ function historyToMessage(item: HistoryItem, sid: string, index: number): ChatMe
     content: item.content,
     steps: [],
   }
-}
-
-function toggleReasoning(messageId: string, node: string) {
-  streamState.value = toggleAssistantReasoning(streamState.value, messageId, node)
-}
-
-function togglePythonCode(messageId: string, node: string) {
-  streamState.value = toggleAssistantPythonCode(streamState.value, messageId, node)
-}
-
-function canShowPythonCode(step: ChatReasoningStep) {
-  return step.node === 'python_generate' && !!getOutputString(step.output || {}, 'python_code')
-}
-
-function pythonSummarySuffix(step: ChatReasoningStep) {
-  const tasks = getOutputArray(step.output || {}, 'generated_tasks').length
-  return ` · ${tasks} 个任务 · 点击${step.showPythonCode ? '收起' : '查看'}`
 }
 
 function toggleChain(messageId: string) {
@@ -1087,10 +1129,6 @@ function shouldShowAnswerCard(message: ChatMessage) {
   return message.role === 'assistant' && !isAssistantStreaming(message)
 }
 
-function getOutputValue(output: Record<string, unknown>, key: string) {
-  return output[key]
-}
-
 function getOutputString(output: Record<string, unknown>, key: string) {
   const value = output[key]
   return typeof value === 'string' ? value : ''
@@ -1105,191 +1143,276 @@ function formatJson(value: Record<string, unknown> | null) {
   return value ? JSON.stringify(value, null, 2) : ''
 }
 
-function getOutputStrings(output: Record<string, unknown>, key: string) {
-  const value = output[key]
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
-}
-
 function getOutputArray(output: Record<string, unknown> | null, key: string) {
   if (!output) return []
   const value = output[key]
   return Array.isArray(value) ? value : []
 }
 
-function hasOutputKey(output: Record<string, unknown>, key: string) {
-  return Object.prototype.hasOwnProperty.call(output, key)
+function processBrief(message: ChatMessage) {
+  const done = message.steps.filter(step => step.status === 'done').length
+  return `${done}/${message.steps.length} 个环节已完成`
 }
 
-function stepDetails(step: ChatReasoningStep) {
-  const output = step.output || {}
-  const details: Array<{ label: string; value: string }> = []
-  if (step.node === 'semantic_runtime_recall') {
-    const counts = getOutputObject(output, 'runtime_counts')
-    if (counts) {
-      details.push({ label: '指标数', value: String(counts.metrics ?? 0) })
-      details.push({ label: '字段/维度', value: String(counts.dimensions ?? 0) })
-      details.push({ label: '规则', value: String(counts.rules ?? 0) })
-      details.push({ label: '模板', value: String(counts.templates ?? 0) })
-    }
-    details.push({ label: '召回资产', value: `${String(output.count ?? 0)} 条` })
-  } else if (step.node === 'schema_recall') {
-    const scope = getOutputObject(output, 'schema_scope')
-    details.push({ label: '候选表', value: `${getOutputArray(output, 'matched_tables').length} 张` })
-    details.push({ label: '候选字段', value: `${getOutputArray(output, 'matched_columns').length} 个` })
-    details.push({ label: '关联提示', value: `${getOutputArray(output, 'likely_joins').length} 条` })
-    if (scope) details.push({ label: '定位模式', value: scope.fallback_used ? '已采集表兜底' : '语义引导' })
-  } else if (step.node === 'nl2lf_generate') {
-    details.push({ label: '指标', value: arraySummary(getOutputArray(output, 'metrics')) || '未识别' })
-    details.push({ label: '维度', value: arraySummary(getOutputArray(output, 'dimensions')) || '无' })
-    details.push({ label: '过滤', value: `${getOutputArray(output, 'filters').length} 个` })
-    if (output.limit !== null && output.limit !== undefined) {
-      details.push({ label: 'Limit', value: String(output.limit) })
-    }
-  } else if (step.node === 'lf_validate') {
-    details.push({ label: '结果', value: output.valid === true ? '通过' : '未通过' })
-    details.push({ label: '使用资产', value: `${getOutputArray(output, 'used_assets').length} 个` })
-  } else if (step.node === 'lf_to_sql_compile' || step.node === 'nl2sql_fallback') {
-    details.push({ label: '策略', value: String(output.strategy || (step.node === 'nl2sql_fallback' ? 'nl2sql_fallback' : 'logic_form')) })
-    details.push({ label: '使用资产', value: `${getOutputArray(output, 'used_assets').length} 个` })
-    if (output.reason) details.push({ label: '原因', value: String(output.reason) })
-  } else if (step.node === 'sql_execute') {
-    details.push({ label: '返回行数', value: `${String(output.row_count ?? 0)} 行` })
-    details.push({ label: '字段数', value: `${getOutputArray(output, 'columns').length} 列` })
-  } else if (step.node === 'semantic_check') {
-    details.push({ label: '一致性', value: output.valid === true ? '通过' : '未通过' })
-    const checked = getOutputObject(output, 'checked_items')
-    if (checked) {
-      details.push({ label: '检查指标', value: arraySummary(getOutputArray(checked, 'metrics')) || '无' })
-      details.push({ label: '检查维度', value: arraySummary(getOutputArray(checked, 'dimensions')) || '无' })
-    }
-  } else if (step.node === 'planner') {
-    details.push({ label: '分析模式', value: String(output.mode_label || '本地基础画像') })
-    details.push({ label: '结果规模', value: `${String(output.row_count ?? 0)} 行 / ${String(output.column_count ?? 0)} 列` })
-    details.push({ label: '数值字段', value: `${getOutputArray(output, 'numeric_columns').length} 个` })
-    details.push({ label: '维度字段', value: `${getOutputArray(output, 'dimension_columns').length} 个` })
-  } else if (step.node === 'python_generate') {
-    details.push({ label: '执行范围', value: String(output.analysis_scope || 'SQL 结果集基础统计') })
-    details.push({ label: '脚本长度', value: `${String(output.code_length ?? 0)} 字符` })
-    details.push({ label: '生成任务', value: `${getOutputArray(output, 'generated_tasks').length} 个` })
-  } else if (step.node === 'python_analyze') {
-    details.push({ label: '状态', value: String(output.status || 'unknown') })
-    details.push({ label: '计算项', value: `${getOutputArray(output, 'computed_items').length} 个` })
-    details.push({ label: '数值统计', value: `${getOutputArray(output, 'metrics').length} 个字段` })
-    details.push({ label: '维度识别', value: `${getOutputArray(output, 'dimensions').length} 个字段` })
-  } else if (step.node === 'report_generator') {
-    details.push({ label: '报告模式', value: String(output.mode_label || '结构化报告') })
-    details.push({ label: '结果行数', value: `${String(output.row_count ?? 0)} 行` })
-    details.push({ label: '报告段落', value: `${getOutputArray(output, 'sections').length} 段` })
-  }
-  return details
+function narrativeSteps(message: ChatMessage) {
+  const order = [
+    'intent_recognition',
+    'semantic_enhance',
+    'semantic_runtime_recall',
+    'schema_recall',
+    'nl2lf_generate',
+    'lf_validate',
+    'lf_to_sql_compile',
+    'nl2sql_fallback',
+    'semantic_check',
+    'sql_execute',
+    'planner',
+    'python_generate',
+    'python_analyze',
+    'report_generator',
+  ]
+  return [...message.steps].sort((left, right) => {
+    const leftIndex = order.indexOf(left.node)
+    const rightIndex = order.indexOf(right.node)
+    return (leftIndex === -1 ? 999 : leftIndex) - (rightIndex === -1 ? 999 : rightIndex)
+  })
 }
 
-function stepListDetails(step: ChatReasoningStep) {
+function analysisStepIndex(step: ChatReasoningStep, stepIndex: number) {
+  if (['intent_recognition', 'semantic_enhance', 'semantic_runtime_recall', 'schema_recall'].includes(step.node)) {
+    return String(stepIndex + 1)
+  }
+  return ''
+}
+
+function narrativeStatusText(step: ChatReasoningStep) {
+  if (step.status === 'running') return '正在处理'
+  if (step.status === 'done') return '完成'
+  return '等待'
+}
+
+function stepLeadLine(step: ChatReasoningStep) {
   const output = step.output || {}
-  const blocks: Array<{ label: string; items: string[] }> = []
-  if (step.node === 'semantic_runtime_recall') {
-    const assets = getOutputArray(output, 'matched_assets')
-      .map(item => formatMatchedAsset(item))
-      .filter(Boolean)
-      .slice(0, 6)
-    if (assets.length) blocks.push({ label: '命中的语义资产', items: assets })
-    const metrics = getOutputArray(output, 'available_metrics')
-      .map(item => formatAvailableMetric(item))
-      .filter(Boolean)
-      .slice(0, 6)
-    if (metrics.length) blocks.push({ label: '当前可用指标', items: metrics })
+  if (step.node === 'intent_recognition') {
+    const intent = String(output.intent || '').trim()
+    return intent ? `→ ${intent}${intent === 'data_query' ? '智能问数' : ''}` : step.summary
   }
-  if (step.node === 'schema_recall') {
-    const tables = getOutputArray(output, 'matched_tables')
-      .map(item => formatMatchedTable(item))
-      .filter(Boolean)
-      .slice(0, 6)
-    const columns = getOutputArray(output, 'matched_columns')
-      .map(item => formatMatchedColumn(item))
-      .filter(Boolean)
-      .slice(0, 10)
-    const joins = getOutputArray(output, 'likely_joins')
-      .map(item => formatJoinHint(item))
-      .filter(Boolean)
-      .slice(0, 6)
-    if (tables.length) blocks.push({ label: '候选表', items: tables })
-    if (columns.length) blocks.push({ label: '候选字段', items: columns })
-    if (joins.length) blocks.push({ label: '关联提示', items: joins })
+  if (step.node === 'semantic_enhance') {
+    const enhanced = String(output.enhanced_question || '').trim()
+    return enhanced || step.summary
   }
-  if (step.node === 'lf_validate' || step.node === 'semantic_check') {
-    const errors = getOutputArray(output, 'errors').map(String)
-    const warnings = getOutputArray(output, 'warnings').map(String)
-    if (errors.length) blocks.push({ label: '错误', items: errors })
-    if (warnings.length) blocks.push({ label: '提醒', items: warnings })
+  if (step.node === 'semantic_runtime_recall') return step.summary
+  if (step.node === 'lf_validate') {
+    if (output.valid === true) return '校验通过'
+    const errors = getStringArray(output, 'errors')
+    return errors.length ? `校验未通过：${errors.join('；')}` : step.summary
   }
-  if (step.node === 'lf_to_sql_compile' || step.node === 'nl2sql_fallback') {
-    const assets = getOutputArray(output, 'used_assets').map(String)
-    const warnings = getOutputArray(output, 'warnings').map(String)
-    if (assets.length) blocks.push({ label: '使用资产', items: assets.slice(0, 8) })
-    if (warnings.length) blocks.push({ label: '提醒', items: warnings })
+  if (step.node === 'lf_to_sql_compile') {
+    if (getOutputString(output, 'compiled_sql')) return '已根据 LogicForm 编译受控 SQL'
+    if (getOutputString(output, 'error')) return `SQL 编译失败：${getOutputString(output, 'error')}`
+    return step.summary
+  }
+  if (step.node === 'nl2sql_fallback') {
+    if (getOutputString(output, 'compiled_sql')) return '语义层未命中，已使用数据定位上下文生成兜底 SQL'
+    if (getOutputString(output, 'error')) return `兜底生成失败：${getOutputString(output, 'error')}`
+    return step.summary
+  }
+  if (step.node === 'semantic_check') {
+    if (output.valid === true) return '一致性通过'
+    const errors = getStringArray(output, 'errors')
+    return errors.length ? `一致性未通过：${errors.join('；')}` : step.summary
   }
   if (step.node === 'sql_execute') {
-    const columns = getOutputArray(output, 'columns').map(String)
-    if (columns.length) blocks.push({ label: '返回字段', items: columns.slice(0, 12) })
+    const error = getOutputString(output, 'error')
+    if (error) return `SQL 执行失败：${error}`
+    if (Object.prototype.hasOwnProperty.call(output, 'row_count')) return `${String(output.row_count ?? 0)} 条结果`
+    return step.summary
   }
   if (step.node === 'planner') {
-    const numeric = getOutputArray(output, 'numeric_columns').map(String)
-    const dimensions = getOutputArray(output, 'dimension_columns').map(String)
-    const limitations = getOutputArray(output, 'limitations').map(String)
-    if (numeric.length) blocks.push({ label: '计划分析的数值字段', items: numeric.slice(0, 8) })
-    if (dimensions.length) blocks.push({ label: '计划分析的维度字段', items: dimensions.slice(0, 8) })
-    if (limitations.length) blocks.push({ label: '当前阶段边界', items: limitations })
+    const count = plannerStepLines(step).length
+    return count ? `${count} 个步骤` : step.summary
   }
-  if (step.node === 'python_generate') {
-    const tasks = getOutputArray(output, 'generated_tasks').map(String)
-    if (tasks.length) blocks.push({ label: '脚本会执行', items: tasks })
-  }
-  if (step.node === 'python_analyze') {
-    const computed = getOutputArray(output, 'computed_items').map(String)
-    const dimensions = getOutputArray(output, 'dimensions').map(String)
-    if (computed.length) blocks.push({ label: '已计算内容', items: computed })
-    if (dimensions.length) blocks.push({ label: '识别到的维度字段', items: dimensions.slice(0, 8) })
-  }
-  if (step.node === 'report_generator') {
-    const limitations = getOutputArray(output, 'limitations').map(String)
-    if (limitations.length) blocks.push({ label: '报告边界', items: limitations })
-  }
-  return blocks
+  if (step.node === 'python_generate') return step.summary || '正在编写统计脚本'
+  if (step.node === 'python_analyze') return step.summary || '正在执行统计分析'
+  if (step.node === 'report_generator') return step.summary || '正在输出业务报告'
+  return step.summary
 }
 
-function arraySummary(items: unknown[]) {
-  return items.map(String).filter(Boolean).slice(0, 4).join(', ')
+function visibleStepEvents(step: ChatReasoningStep) {
+  if (step.status !== 'running') return []
+  const lead = stepLeadLine(step).trim()
+  return (step.events || [])
+    .map(event => event.replace(/^完成：/, '').trim())
+    .filter(event => event && !event.startsWith('开始') && event !== lead)
+    .slice(-2)
 }
 
-function formatMatchedAsset(item: unknown) {
+function semanticAssetLines(step: ChatReasoningStep) {
+  return getOutputArray(step.output || {}, 'matched_assets')
+    .map(item => formatSemanticAsset(item))
+    .filter(Boolean)
+    .slice(0, 8)
+}
+
+function semanticEnhanceLines(step: ChatReasoningStep) {
+  const output = step.output || {}
+  const lines: string[] = []
+  const original = String(output.original_question || '').trim()
+  const enhanced = String(output.enhanced_question || '').trim()
+  const reason = String(output.reason || '').trim()
+  const preserved = getStringArray(output, 'preserved_constraints')
+  if (original) lines.push(`原始问题：${original}`)
+  if (enhanced && enhanced !== original) lines.push(`增强问题：${enhanced}`)
+  if (reason) lines.push(`改写说明：${reason}`)
+  if (preserved.length) lines.push(`保留约束：${preserved.join('、')}`)
+  return lines
+}
+
+function schemaTableLines(step: ChatReasoningStep) {
+  return getOutputArray(step.output || {}, 'matched_tables')
+    .map(item => formatSchemaTable(item))
+    .filter(Boolean)
+    .slice(0, 8)
+}
+
+function schemaColumnLines(step: ChatReasoningStep) {
+  return getOutputArray(step.output || {}, 'matched_columns')
+    .map(item => formatSchemaColumn(item))
+    .filter(Boolean)
+    .slice(0, 12)
+}
+
+function schemaJoinLines(step: ChatReasoningStep) {
+  return getOutputArray(step.output || {}, 'likely_joins')
+    .map(item => formatJoinHint(item))
+    .filter(Boolean)
+    .slice(0, 8)
+}
+
+function logicFormText(step: ChatReasoningStep) {
+  const logicForm = getOutputObject(step.output || {}, 'logic_form')
+  if (logicForm) return formatJson(logicForm)
+  return step.streamText || '{\n  "status": "正在生成 LogicForm..."\n}'
+}
+
+function validationDetailLines(step: ChatReasoningStep) {
+  const output = step.output || {}
+  const lines: string[] = []
+  const errors = getStringArray(output, 'errors')
+  const warnings = getStringArray(output, 'warnings')
+  if (errors.length) lines.push(...errors.map(item => `错误：${item}`))
+  if (warnings.length) lines.push(...warnings.map(item => `提醒：${item}`))
+  const checked = getOutputObject(output, 'checked_items')
+  if (checked) {
+    const metrics = getOutputArray(checked, 'metrics').map(String).filter(Boolean)
+    const dimensions = getOutputArray(checked, 'dimensions').map(String).filter(Boolean)
+    if (metrics.length) lines.push(`检查指标：${metrics.join('、')}`)
+    if (dimensions.length) lines.push(`检查维度：${dimensions.join('、')}`)
+  }
+  const usedAssets = getOutputArray(output, 'used_assets').map(String).filter(Boolean)
+  if (usedAssets.length) lines.push(`使用资产：${usedAssets.slice(0, 6).join('、')}`)
+  return lines
+}
+
+function sqlSampleRows(step: ChatReasoningStep) {
+  return getRecordArray(step.output || {}, 'sample_rows')
+}
+
+function sqlSampleColumns(step: ChatReasoningStep) {
+  const output = step.output || {}
+  const columns = getOutputArray(output, 'columns').map(String).filter(Boolean)
+  if (columns.length) return columns
+  const first = sqlSampleRows(step)[0]
+  return first ? Object.keys(first) : []
+}
+
+function plannerStepLines(step: ChatReasoningStep) {
+  const plan = getOutputObject(step.output || {}, 'plan')
+  const steps = getOutputArray(plan || {}, 'analysis_steps')
+  return steps
+    .map((item) => {
+      if (!item || typeof item !== 'object') return String(item || '')
+      const record = item as Record<string, unknown>
+      return String(record.description || record.name || '').trim()
+    })
+    .filter(Boolean)
+}
+
+function pythonTaskLines(step: ChatReasoningStep) {
+  return getOutputArray(step.output || {}, 'generated_tasks').map(String).filter(Boolean)
+}
+
+function pythonCodeText(step: ChatReasoningStep) {
+  return step.streamText || getOutputString(step.output || {}, 'python_code') || '# 正在生成统计脚本...'
+}
+
+function pythonComputedLines(step: ChatReasoningStep) {
+  return getOutputArray(step.output || {}, 'computed_items').map(String).filter(Boolean)
+}
+
+function pythonResultText(step: ChatReasoningStep) {
+  if (step.streamText) return step.streamText
+  const result = getOutputObject(step.output || {}, 'python_result')
+  return result ? formatJson(result) : '{\n  "status": "正在执行统计分析..."\n}'
+}
+
+function reportStreamText(step: ChatReasoningStep) {
+  if (step.streamText) return step.streamText
+  const output = step.output || {}
+  const title = getOutputString(output, 'title')
+  const summary = getOutputString(output, 'summary')
+  if (!title && !summary) return ''
+  return [title ? `# ${title}` : '', summary].filter(Boolean).join('\n\n')
+}
+
+function reportChartLines(step: ChatReasoningStep) {
+  return getOutputArray(step.output || {}, 'charts')
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map(item => ({
+      title: String(item.title || '图表'),
+      subtitle: String(item.subtitle || ''),
+      data: getRecordArray(item, 'data')
+        .map(row => ({ label: String(row.label ?? '-'), value: row.value }))
+        .slice(0, 8),
+    }))
+    .filter(chart => chart.data.length > 0)
+}
+
+function genericStreamText(step: ChatReasoningStep) {
+  if (!step.streamText) return ''
+  if (['semantic_enhance', 'nl2lf_generate', 'python_generate', 'python_analyze', 'report_generator'].includes(step.node)) return ''
+  if (step.node === 'lf_to_sql_compile' || step.node === 'nl2sql_fallback') return step.streamText
+  return ''
+}
+
+function getStringArray(output: Record<string, unknown>, key: string) {
+  return getOutputArray(output, key).map(String).filter(Boolean)
+}
+
+function getRecordArray(output: Record<string, unknown> | null, key: string) {
+  return getOutputArray(output, key).filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+}
+
+function formatSemanticAsset(item: unknown) {
   if (!item || typeof item !== 'object') return ''
   const record = item as Record<string, unknown>
-  const key = String(record.key || '')
-  const type = String(record.type || '')
+  const key = String(record.key || record.type || '')
+  const content = String(record.content || '').trim()
   const score = record.score === undefined ? '' : ` · score ${record.score}`
-  const content = String(record.content || '').slice(0, 48)
-  return [key || type, content].filter(Boolean).join('：') + score
+  return `${key}${content ? `：${content}` : ''}${score}`
 }
 
-function formatAvailableMetric(item: unknown) {
+function formatSchemaTable(item: unknown) {
   if (!item || typeof item !== 'object') return ''
   const record = item as Record<string, unknown>
-  const key = String(record.key || '')
-  const name = String(record.name || '')
-  const dimensions = Array.isArray(record.dimensions) ? record.dimensions.map(String).slice(0, 4).join(', ') : ''
-  return `${name || key}${key ? ` (${key})` : ''}${dimensions ? ` · 可按 ${dimensions}` : ''}`
-}
-
-function formatMatchedTable(item: unknown) {
-  if (!item || typeof item !== 'object') return ''
-  const record = item as Record<string, unknown>
-  const name = String(record.table_name || record.table || '')
+  const table = String(record.table_name || record.table || '')
   const comment = String(record.table_comment || record.comment || '')
   const reason = String(record.reason || '')
-  return `${comment || name}${name ? ` (${name})` : ''}${reason ? ` · ${reason}` : ''}`
+  const score = record.score === undefined ? '' : ` · score ${record.score}`
+  return `${comment || table}${table ? ` (${table})` : ''}${reason ? ` · ${reason}` : ''}${score}`
 }
 
-function formatMatchedColumn(item: unknown) {
+function formatSchemaColumn(item: unknown) {
   if (!item || typeof item !== 'object') return ''
   const record = item as Record<string, unknown>
   const table = String(record.table_name || record.table || '')
@@ -1301,7 +1424,15 @@ function formatMatchedColumn(item: unknown) {
 function formatJoinHint(item: unknown) {
   if (!item || typeof item !== 'object') return ''
   const record = item as Record<string, unknown>
-  return [record.left, record.right].filter(Boolean).join(' = ')
+  const left = String(record.left || '')
+  const right = String(record.right || '')
+  return left && right ? `${left} = ${right}` : String(record.hint || '')
+}
+
+function statusText(status: string) {
+  if (status === 'done') return '已完成'
+  if (status === 'running') return '处理中'
+  return '等待执行'
 }
 
 function compactSql(sql: string) {
@@ -1614,6 +1745,7 @@ function columnTitle(key: string) {
 
 function errorStageText(message: ChatMessage) {
   const node = message.error?.node || ''
+  if (node === 'semantic_enhance') return '语义增强'
   if (node === 'semantic_runtime_recall') return '知识召回'
   if (node === 'schema_recall') return '数据定位'
   if (node === 'nl2lf_generate') return 'LogicForm 生成'
@@ -2479,249 +2611,339 @@ onUnmounted(() => {
   flex: 0 0 auto;
 }
 
-.chain-panel {
+
+.analysis-process {
   max-width: 100%;
-  min-width: 0;
-  background: #fbfcff;
-  border: 1px solid var(--wq-border);
-  border-radius: 8px;
-  padding: 14px;
   margin-bottom: 16px;
-  overflow: hidden;
 }
 
-.chain-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.chain-title {
+.analysis-process-toggle {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 14px;
-  font-weight: 680;
-  color: var(--wq-text);
-}
-
-.chain-collapse {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--wq-subtle);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.chain-collapse:hover {
-  color: var(--wq-primary);
-}
-
-.chain-collapsed-summary {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.chain-step { margin-bottom: 12px; min-width: 0; }
-
-.step-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  border: 1px solid #dbe6f5;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  color: #344054;
   font-size: 13px;
-  min-width: 0;
-}
-
-.step-status { display: flex; align-items: center; }
-.step-status.running { color: var(--wq-primary); }
-.step-status.done { color: var(--wq-success); }
-.step-status.pending { color: var(--wq-subtle); }
-.step-label { font-weight: 650; color: #344054; min-width: 80px; }
-
-.step-summary {
-  color: var(--wq-subtle);
-  font-size: 12px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.step-summary-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
   cursor: pointer;
   text-align: left;
 }
 
-.step-summary-button span:first-child {
-  color: var(--wq-primary);
-  font-weight: 650;
+.analysis-process-toggle:hover {
+  border-color: #b9c8ff;
+  background: #f8fbff;
 }
 
-.step-summary-button:hover span:first-child { text-decoration: underline; }
+.analysis-process-toggle span {
+  font-weight: 680;
+}
 
-.step-reasoning { margin: 6px 0 6px 28px; }
+.analysis-process-toggle small {
+  margin-left: auto;
+  color: var(--wq-subtle);
+  font-size: 12px;
+}
 
-.reasoning-toggle {
+.analysis-flow {
+  display: grid;
+  gap: 20px;
+  padding: 4px 0 2px;
+}
+
+.analysis-step {
+  min-width: 0;
+  padding-bottom: 2px;
+}
+
+.analysis-step + .analysis-step {
+  border-top: 1px solid #eef2f7;
+  padding-top: 18px;
+}
+
+.analysis-step-heading {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--wq-subtle);
-  cursor: pointer;
-  user-select: none;
-}
-
-.reasoning-toggle:hover { color: var(--wq-primary); }
-
-.reasoning-content {
-  margin-top: 6px;
-  padding: 10px 12px;
-  background: #f3f6fb;
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--wq-muted);
-  line-height: 1.65;
-  max-height: 200px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-}
-
-.step-output {
-  max-width: calc(100% - 28px);
+  gap: 9px;
   min-width: 0;
-  margin: 4px 0 0 28px;
-  font-size: 12px;
-  color: var(--wq-muted);
+  margin-bottom: 8px;
 }
 
-.output-sql {
-  max-width: 100%;
-  background: #101828;
-  border-radius: 6px;
-  padding: 8px;
-  margin-top: 6px;
-  overflow-x: auto;
+.analysis-step-heading h3 {
+  margin: 0;
+  color: #1d2939;
+  font-size: 16px;
+  line-height: 1.35;
+  font-weight: 760;
 }
 
-.output-sql pre { margin: 0; min-width: 0; }
-.output-sql code { color: #e6edf7; font-size: 12px; font-family: "SFMono-Regular", Consolas, monospace; }
-.output-code-section { margin-top: 6px; }
-.output-code-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0;
-  border: 0;
-  background: transparent;
+.analysis-step-number,
+.analysis-step-icon {
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--wq-primary-soft);
   color: var(--wq-primary);
   font-size: 12px;
-  cursor: pointer;
+  font-weight: 760;
 }
-.output-code-toggle:hover { text-decoration: underline; }
-.output-python-code {
-  max-height: 320px;
-  overflow: auto;
+
+.analysis-step.done .analysis-step-number,
+.analysis-step.done .analysis-step-icon {
+  background: #ecfdf3;
+  color: #079455;
 }
-.output-stream-text {
-  margin-top: 8px;
+
+.analysis-step-state {
+  color: var(--wq-subtle);
+  font-size: 12px;
+}
+
+.analysis-step.running .analysis-step-state {
+  color: var(--wq-primary);
+}
+
+.analysis-lead,
+.analysis-live-lines p {
+  margin: 0;
+  color: #344054;
+  font-size: 14px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.analysis-live-lines {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0 33px;
+}
+
+.analysis-live-lines p {
+  color: var(--wq-subtle);
+  font-size: 13px;
+}
+
+.analysis-block {
+  margin-top: 10px;
+  margin-left: 33px;
+  min-width: 0;
+}
+
+.analysis-block h4,
+.analysis-subtitle {
+  margin: 0 0 7px;
+  color: #475467;
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 720;
+}
+
+.analysis-block ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #344054;
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.analysis-block li {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.compact-list {
+  columns: 1;
+}
+
+.analysis-code-block {
+  margin: 10px 0 0 33px;
+  max-width: calc(100% - 33px);
   border: 1px solid #dbe6f5;
   border-radius: 8px;
   background: #fbfdff;
+  overflow: hidden;
 }
 
-.output-stream-text pre {
+.analysis-code-block.python {
+  background: #101828;
+  border-color: #101828;
+}
+
+.analysis-code-block.json {
+  background: #f8fafc;
+}
+
+.analysis-code-block pre {
   margin: 0;
-  max-height: 240px;
+  max-height: 360px;
   overflow: auto;
-  padding: 10px 12px;
+  padding: 12px 14px;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.output-stream-text code {
+.analysis-code-block code {
   color: #344054;
   font-size: 12px;
-  line-height: 1.65;
+  line-height: 1.7;
   font-family: "SFMono-Regular", Consolas, monospace;
 }
-.output-result .error { color: var(--wq-danger); }
 
-.output-detail-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-  gap: 6px;
-  margin-top: 6px;
+.analysis-code-block.python code {
+  color: #e6edf7;
 }
 
-.output-detail-item {
-  min-width: 0;
-  padding: 7px 8px;
-  border: 1px solid #e4eaf5;
-  border-radius: 6px;
-  background: #fbfdff;
+.analysis-subtitle {
+  margin: 12px 0 0 33px;
 }
 
-.output-detail-item span {
-  display: block;
-  color: #8a97ad;
-  font-size: 11px;
-  line-height: 1.2;
+.analysis-table {
+  margin: 12px 0 0 33px;
+  max-width: calc(100% - 33px);
+  overflow-x: auto;
+  border: 1px solid #dbe6f5;
+  border-radius: 8px;
+  background: #fff;
 }
 
-.output-detail-item strong {
-  display: block;
-  margin-top: 3px;
+.analysis-table table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 420px;
+}
+
+.analysis-table th,
+.analysis-table td {
+  border-bottom: 1px solid #edf2f7;
+  padding: 9px 10px;
+  text-align: left;
   color: #344054;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+.analysis-table th {
+  position: sticky;
+  top: 0;
+  background: #f8fbff;
+  font-weight: 720;
+}
+
+.analysis-table th span,
+.analysis-table th small {
+  display: block;
+}
+
+.analysis-table th small {
+  margin-top: 2px;
+  color: #98a2b3;
+  font-weight: 400;
+}
+
+.analysis-report-text {
+  margin: 10px 0 0 33px;
+  color: #263448;
+}
+
+.analysis-report-text pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: inherit;
+  font: inherit;
+  line-height: 1.75;
+}
+
+.analysis-chart-list {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 0 33px;
+}
+
+.analysis-mini-chart {
+  padding: 12px;
+  border: 1px solid #dbe6f5;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.analysis-mini-chart strong,
+.analysis-mini-chart span {
+  display: block;
+}
+
+.analysis-mini-chart strong {
+  color: #1d2939;
+  font-size: 14px;
+}
+
+.analysis-mini-chart span {
+  margin: 4px 0 10px;
+  color: var(--wq-subtle);
   font-size: 12px;
-  line-height: 1.35;
+}
+
+.analysis-mini-bar {
+  display: grid;
+  grid-template-columns: minmax(72px, 120px) minmax(80px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 7px;
+}
+
+.analysis-mini-bar em {
+  color: #475467;
+  font-style: normal;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.output-list-grid {
-  display: grid;
-  gap: 6px;
-  margin-top: 6px;
+.analysis-mini-bar i {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--wq-primary);
 }
 
-.output-list-block {
-  padding: 8px 10px;
-  border: 1px solid #e4eaf5;
-  border-radius: 6px;
-  background: #fff;
+.analysis-mini-bar b {
+  color: #344054;
+  font-size: 12px;
+  font-weight: 680;
 }
 
-.output-list-block > span {
-  display: block;
-  margin-bottom: 4px;
-  color: #667085;
-  font-weight: 650;
+.analysis-stream-cursor {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--wq-subtle);
+  font-size: 13px;
 }
 
-.output-list-block ul {
+.analysis-stream-cursor span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--wq-primary);
+  box-shadow: 0 0 0 0 rgba(63, 111, 243, 0.35);
+  animation: analysisPulse 1.2s infinite;
+}
+
+.analysis-stream-cursor p {
   margin: 0;
-  padding-left: 16px;
-  color: #475467;
-  line-height: 1.6;
 }
 
-.output-list-block li {
-  word-break: break-word;
+@keyframes analysisPulse {
+  0% { box-shadow: 0 0 0 0 rgba(63, 111, 243, 0.35); }
+  70% { box-shadow: 0 0 0 8px rgba(63, 111, 243, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(63, 111, 243, 0); }
 }
 
 .insight-panel {

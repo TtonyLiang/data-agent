@@ -58,6 +58,21 @@ DATA_QUERY_KEYWORDS = (
     "m3",
 )
 
+FOLLOWUP_DATA_QUERY_KEYWORDS = (
+    "前",
+    "后",
+    "再看",
+    "换成",
+    "改成",
+    "呢",
+    "继续",
+    "上面",
+    "刚才",
+    "不是金额",
+    "笔数",
+    "数量",
+)
+
 METADATA_QUERY_KEYWORDS = (
     "有哪些表",
     "所有表",
@@ -86,12 +101,37 @@ def rule_based_intent(question: str) -> str | None:
     return None
 
 
+def rule_based_intent_with_history(question: str, history: list[dict] | None = None) -> str | None:
+    """Resolve short follow-up questions against recent data-query context."""
+    direct = rule_based_intent(question)
+    if direct:
+        return direct
+    normalized = (question or "").strip().lower().replace(" ", "")
+    if not normalized or not history:
+        return direct
+    has_followup_signal = any(keyword in normalized for keyword in FOLLOWUP_DATA_QUERY_KEYWORDS)
+    if not has_followup_signal:
+        return direct
+    if recent_history_has_data_context(history):
+        return "data_query"
+    return direct
+
+
+def recent_history_has_data_context(history: list[dict]) -> bool:
+    for item in reversed(history[-8:]):
+        content = str(item.get("content") or "")
+        if item.get("logic_form") or item.get("sql") or rule_based_intent(content) == "data_query":
+            return True
+    return False
+
+
 async def intent_recognition_node(state: dict) -> dict:
     """意图识别节点."""
     llm = get_llm_service()
     question = state.get("question", "")
+    history = state.get("chat_history") or []
 
-    deterministic_intent = rule_based_intent(question)
+    deterministic_intent = rule_based_intent_with_history(question, history)
     if deterministic_intent:
         return {
             "intent": deterministic_intent,
@@ -112,9 +152,9 @@ async def intent_recognition_node(state: dict) -> dict:
         result = json.loads(response.strip())
         intent = result.get("intent", "chat")
     except (json.JSONDecodeError, AttributeError):
-        intent = rule_based_intent(question) or "chat"
+        intent = rule_based_intent_with_history(question, history) or "chat"
 
     if intent == "chat":
-        intent = rule_based_intent(question) or intent
+        intent = rule_based_intent_with_history(question, history) or intent
 
     return {"intent": intent, "need_analysis": intent == "data_query"}

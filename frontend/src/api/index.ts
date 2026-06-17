@@ -189,6 +189,8 @@ export interface ReasoningTraceStep {
   label: string
   status: 'running' | 'done' | 'pending'
   reasoning: string
+  streamText?: string
+  events?: string[]
   output: Record<string, unknown> | null
   summary: string
 }

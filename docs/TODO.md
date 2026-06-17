@@ -11,7 +11,7 @@
 - [x] FastAPI 后端服务 (端口 4400)
 - [x] Vue3 + Element Plus 前端管理台 (端口 4399)
 - [x] LangGraph 核心工作流升级为 LogicForm + 深度分析链路:
-  `intent -> semantic_runtime_recall -> nl2lf_generate -> lf_validate -> lf_to_sql_compile -> semantic_check -> sql_execute -> planner -> python_generate -> python_analyze -> report_generator`
+  `intent -> semantic_enhance -> semantic_runtime_recall -> schema_recall -> nl2lf_generate -> lf_validate -> lf_to_sql_compile -> semantic_check -> sql_execute -> planner -> python_generate -> python_analyze -> report_generator`
 - [x] 端到端问数验证: 自然语言 -> LogicForm -> SQL -> 查询结果 -> 分析结论
 
 ---
@@ -89,6 +89,9 @@
   已记录 Post-2 populated state QA 清单，覆盖成功、空结果、错误、NL2SQL 兜底、报告展开和历史恢复场景。
 - [x] 本轮变更说明整理:
   Phase 2.8/Post-2 验收结论与后续清单已同步到 TODO 与设计 QA 记录。
+- [x] 语义增强节点:
+  在意图识别和知识召回之间新增 `semantic_enhance`，将原始问题改写为更清晰的业务自然语言；
+  后续知识召回、数据定位、LogicForm 和 NL2SQL 兜底优先使用增强问题，原始问题保留用于历史和审计。
 
 ---
 
@@ -110,6 +113,8 @@
   兜底只使用已采集 schema，生成单条只读 SELECT，经过 SQL 安全校验后再执行
 - [x] 数据定位 / 表召回:
   在知识召回后召回候选表、字段和关联提示，作为 LogicForm 和 NL2SQL 兜底的物理 schema grounding 上下文。
+- [x] 多轮追问语义增强:
+  “前五呢”“我问的是笔数不是金额”等短追问会结合最近对话补全业务对象、指标、维度和 TopN 口径后再进入召回与生成。
 - [ ] SemanticCheck 自动修复增强: 不一致时进入可解释修复或追问，而不是只阻断
 - [ ] ReportGenerator 图表增强: 增加 ECharts 图表建议和可视化片段
 - [ ] 生产默认执行后端: 轻量隔离进程池或独立 worker 服务，使用 OS 资源限制和任务级临时目录

@@ -14,6 +14,10 @@ class AgentState(TypedDict, total=False):
     intent: str  # "data_query" | "chat" | "metadata_query"
     need_analysis: bool
 
+    # 语义增强
+    enhanced_question: str
+    semantic_enhancement: dict[str, Any]
+
     # 语义运行时 / LogicForm
     runtime_evidence: list[dict[str, Any]]
     semantic_runtime: dict[str, Any]
@@ -63,7 +67,7 @@ MAX_SQL_RETRIES = 2
 def build_mvp_graph() -> StateGraph:
     """构建 LangGraph 工作流.
 
-    流程: Intent → SemanticRuntimeRecall → NL2LF → LFValidate → LFToSQL
+    流程: Intent → SemanticEnhance → SemanticRuntimeRecall → NL2LF → LFValidate → LFToSQL
     → SemanticCheck → SQLExecute → Planner → PythonGenerate → PythonAnalyze
     → ReportGenerator → End
     SQL 执行失败时自动重试 (最多2次).
@@ -82,12 +86,14 @@ def build_mvp_graph() -> StateGraph:
         semantic_check_node,
     )
     from app.agent.nodes.schema_recall import schema_recall_node
+    from app.agent.nodes.semantic_enhance import semantic_enhance_node
     from app.agent.nodes.semantic_runtime_recall import semantic_runtime_recall_node
     from app.agent.nodes.sql_execute import sql_execute_node
 
     graph = StateGraph(AgentState)
 
     graph.add_node("intent_recognition", intent_recognition_node)
+    graph.add_node("semantic_enhance", semantic_enhance_node)
     graph.add_node("semantic_runtime_recall", semantic_runtime_recall_node)
     graph.add_node("schema_recall", schema_recall_node)
     graph.add_node("nl2lf_generate", nl2lf_generate_node)
@@ -107,11 +113,12 @@ def build_mvp_graph() -> StateGraph:
         "intent_recognition",
         route_after_intent,
         {
-            "data_query": "semantic_runtime_recall",
+            "data_query": "semantic_enhance",
             "chat": END,
             "metadata_query": END,
         },
     )
+    graph.add_edge("semantic_enhance", "semantic_runtime_recall")
     graph.add_edge("semantic_runtime_recall", "schema_recall")
     graph.add_edge("schema_recall", "nl2lf_generate")
     graph.add_edge("nl2lf_generate", "lf_validate")

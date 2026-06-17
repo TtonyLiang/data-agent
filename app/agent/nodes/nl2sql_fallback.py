@@ -1,5 +1,7 @@
 import json
 
+from langchain_core.callbacks.manager import adispatch_custom_event
+
 from app.services.llm_service import get_llm_service
 from app.services.metadata_service import get_metadata_service
 from app.utils.sql_validator import extract_sql_from_llm, validate_sql
@@ -37,22 +39,33 @@ async def nl2sql_fallback_node(state: dict) -> dict:
         state.get("relevant_columns") or [],
     )
 
-    question = state.get("question", "")
-    prompt = build_fallback_user_prompt(question, state.get("chat_history") or [])
+    question = state.get("enhanced_question") or state.get("question", "")
+    original_question = state.get("question", question)
+    prompt = build_fallback_user_prompt(question, state.get("chat_history") or [], original_question)
     llm = get_llm_service()
     llm_kwargs = await llm.resolve_agent_chat_kwargs(state.get("agent_id"))
-    response = await llm.achat(
-        [
-            {
-                "role": "system",
-                "content": NL2SQL_FALLBACK_PROMPT.format(
-                    schema_context=schema_context,
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ],
-        **llm_kwargs,
-    )
+    messages = [
+        {
+            "role": "system",
+            "content": NL2SQL_FALLBACK_PROMPT.format(
+                schema_context=schema_context,
+            ),
+        },
+        {"role": "user", "content": prompt},
+    ]
+    response_parts: list[str] = []
+    async for chunk in llm.achat_stream(messages, **llm_kwargs):
+        reasoning = ""
+        if hasattr(chunk, "additional_kwargs"):
+            reasoning = chunk.additional_kwargs.get("reasoning_content", "")
+        if reasoning:
+            await emit_node_delta("nl2sql_fallback", reasoning, kind="reasoning")
+        content = str(getattr(chunk, "content", "") or "")
+        if not content:
+            continue
+        response_parts.append(content)
+        await emit_node_delta("nl2sql_fallback", content, kind="token")
+    response = "".join(response_parts)
     sql = extract_sql_from_response(response)
     ok, reason = validate_sql(sql)
     if not ok:
@@ -128,14 +141,31 @@ def build_schema_context(
     return json.dumps(tables, ensure_ascii=False)
 
 
-def build_fallback_user_prompt(question: str, history: list[dict]) -> str:
+async def emit_node_delta(node: str, delta: str, kind: str) -> None:
+    try:
+        await adispatch_custom_event(
+            "wenqu_token",
+            {
+                "node": node,
+                "kind": kind,
+                "delta": delta,
+            },
+        )
+    except RuntimeError:
+        return
+
+
+def build_fallback_user_prompt(question: str, history: list[dict], original_question: str | None = None) -> str:
+    current = question
+    if original_question and original_question != question:
+        current = f"原始问题: {original_question}\n语义增强后的问题: {question}"
     if not history:
-        return question
+        return current
     recent = []
     for item in history[-6:]:
         role = "用户" if item.get("role") == "user" else "助手"
         recent.append(f"{role}: {item.get('content', '')}")
-    return "对话历史:\n" + "\n".join(recent) + f"\n\n当前问题: {question}"
+    return "对话历史:\n" + "\n".join(recent) + f"\n\n当前问题: {current}"
 
 
 def extract_sql_from_response(response: str) -> str:
