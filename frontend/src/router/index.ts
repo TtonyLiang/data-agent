@@ -6,6 +6,7 @@ const routes = [
   { path: '/', name: 'Chat', component: () => import('../views/ChatView.vue') },
   { path: '/agent', name: 'Agent', component: () => import('../views/AgentList.vue') },
   { path: '/model-config', name: 'ModelConfig', component: () => import('../views/ModelConfig.vue') },
+  { path: '/prompt-config', name: 'PromptConfig', component: () => import('../views/PromptConfig.vue') },
   { path: '/datasource', name: 'Datasource', component: () => import('../views/DatasourceConfig.vue') },
   { path: '/knowledge', name: 'SemanticRuntime', component: () => import('../views/KnowledgeConfig.vue') },
 ]

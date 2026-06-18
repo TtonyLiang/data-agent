@@ -9,6 +9,7 @@ export interface ChatReasoningStep {
   reasoning: string
   streamText?: string
   events?: string[]
+  progress?: string
   showReasoning: boolean
   showPythonCode?: boolean
   output: Record<string, unknown> | null
@@ -37,6 +38,9 @@ export interface ChatMessage {
   semantic_check?: Record<string, unknown>
   python_result?: Record<string, unknown>
   report_payload?: Record<string, unknown>
+  execution_trace?: Record<string, unknown>
+  human_confirmation?: Record<string, unknown>
+  clarification?: Record<string, unknown>
   steps: ChatReasoningStep[]
 }
 
@@ -128,6 +132,7 @@ export function reduceChatStreamEvent(
       reasoning: '',
       streamText: '',
       events: [`开始${label}。`],
+      progress: '',
       showReasoning: true,
       showPythonCode: false,
       output: null,
@@ -137,7 +142,7 @@ export function reduceChatStreamEvent(
     const step = findStep(assistant, String(data.node || ''))
     if (step && step.status === 'running') {
       const message = String(data.message || step.summary || '处理中...')
-      step.summary = message
+      step.progress = message
       replaceProgressEvent(step, message)
     }
   } else if (input.event === 'reasoning') {
@@ -156,6 +161,7 @@ export function reduceChatStreamEvent(
     if (step) {
       step.status = 'done'
       step.output = (data.output as Record<string, unknown>) || {}
+      step.progress = ''
       step.summary = summarizeStep(step)
       if (step.summary) appendStepEvent(step, `完成：${step.summary}`)
     }
@@ -177,6 +183,9 @@ export function reduceChatStreamEvent(
     assistant.semantic_check = (data.semantic_check as Record<string, unknown>) || undefined
     assistant.python_result = (data.python_result as Record<string, unknown>) || undefined
     assistant.report_payload = (data.report_payload as Record<string, unknown>) || undefined
+    assistant.execution_trace = (data.execution_trace as Record<string, unknown>) || undefined
+    assistant.human_confirmation = (data.human_confirmation as Record<string, unknown>) || undefined
+    assistant.clarification = (data.clarification as Record<string, unknown>) || undefined
     const trace = data.reasoning_trace as ChatReasoningStep[] | undefined
     if (Array.isArray(trace) && trace.length) {
       assistant.steps = trace.map(step => ({
@@ -186,6 +195,7 @@ export function reduceChatStreamEvent(
         reasoning: String(step.reasoning || ''),
         streamText: streamTextFromTrace(step),
         events: eventsFromTrace(step),
+        progress: '',
         showReasoning: false,
         output: step.output || null,
         summary: String(step.summary || ''),
@@ -213,6 +223,7 @@ export function reduceChatStreamEvent(
       status: step.status === 'running' ? 'done' : step.status,
       showReasoning: false,
       showPythonCode: step.showPythonCode ?? false,
+      progress: step.status === 'running' ? '' : step.progress,
     }))
   }
 
@@ -338,6 +349,9 @@ function cloneMessage(message: ChatMessage): ChatMessage {
     semantic_check: message.semantic_check ? { ...message.semantic_check } : message.semantic_check,
     python_result: message.python_result ? { ...message.python_result } : message.python_result,
     report_payload: message.report_payload ? { ...message.report_payload } : message.report_payload,
+    execution_trace: message.execution_trace ? { ...message.execution_trace } : message.execution_trace,
+    human_confirmation: message.human_confirmation ? { ...message.human_confirmation } : message.human_confirmation,
+    clarification: message.clarification ? { ...message.clarification } : message.clarification,
   }
 }
 

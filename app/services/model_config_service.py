@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import time
+from datetime import datetime, timedelta, timezone
+
+import httpx
+
 from app.config import get_settings
 from app.db.mysql import get_management_db
 from app.models.model_config import ModelConfig, ModelConfigCreate, ModelConfigType, ModelConfigUpdate
@@ -11,6 +16,10 @@ MASKED_API_KEY_CHARS = {"*", "•"}
 def _public_model_config(row: dict) -> dict:
     data = dict(row)
     data["api_key_configured"] = bool((data.get("api_key") or "").strip())
+    expires_at = data.get("api_key_expires_at")
+    expired, expires_soon = api_key_expiry_flags(expires_at)
+    data["api_key_expired"] = expired
+    data["api_key_expires_soon"] = expires_soon
     data.pop("api_key", None)
     return data
 
@@ -30,8 +39,8 @@ class ModelConfigService:
         db = get_management_db()
         return await db.execute_insert(
             "INSERT INTO model_config "
-            "(name, model_type, provider, base_url, model_name, api_key, api_key_enabled, embedding_dimension, status) "
-            "VALUES (:name, :model_type, :provider, :base_url, :model_name, :api_key, :api_key_enabled, :dimension, :status)",
+            "(name, model_type, provider, base_url, model_name, api_key, api_key_enabled, api_key_expires_at, embedding_dimension, status) "
+            "VALUES (:name, :model_type, :provider, :base_url, :model_name, :api_key, :api_key_enabled, :api_key_expires_at, :dimension, :status)",
             {
                 "name": config.name,
                 "model_type": config.model_type,
@@ -40,6 +49,7 @@ class ModelConfigService:
                 "model_name": config.model_name,
                 "api_key": _clean_api_key(config.api_key),
                 "api_key_enabled": int(config.api_key_enabled),
+                "api_key_expires_at": config.api_key_expires_at,
                 "dimension": config.embedding_dimension,
                 "status": config.status,
             },
@@ -73,7 +83,8 @@ class ModelConfigService:
         await db.execute_query(
             "UPDATE model_config SET name = :name, model_type = :model_type, provider = :provider, "
             "base_url = :base_url, model_name = :model_name, api_key = :api_key, "
-            "api_key_enabled = :api_key_enabled, embedding_dimension = :dimension, status = :status "
+            "api_key_enabled = :api_key_enabled, api_key_expires_at = :api_key_expires_at, "
+            "embedding_dimension = :dimension, status = :status "
             "WHERE id = :id",
             {
                 "id": config_id,
@@ -84,6 +95,7 @@ class ModelConfigService:
                 "model_name": config.model_name,
                 "api_key": api_key,
                 "api_key_enabled": int(config.api_key_enabled),
+                "api_key_expires_at": config.api_key_expires_at,
                 "dimension": config.embedding_dimension,
                 "status": config.status,
             },
@@ -102,6 +114,56 @@ class ModelConfigService:
         )
         await db.execute_query("DELETE FROM model_config WHERE id = :id", {"id": config_id})
         return True
+
+    async def test_connection(self, config_id: int) -> dict:
+        config = await self.get(config_id)
+        if config is None:
+            return {"ok": False, "message": "模型配置不存在"}
+        if config.api_key_enabled and not (config.api_key or "").strip():
+            return {"ok": False, "message": "API Key 已启用但未配置"}
+
+        endpoint = "chat/completions" if config.model_type == "chat" else "embeddings"
+        url = f"{config.base_url.rstrip('/')}/{endpoint}"
+        headers = {"Content-Type": "application/json"}
+        if config.api_key_enabled and config.api_key:
+            headers["Authorization"] = f"Bearer {config.api_key}"
+        payload = (
+            {
+                "model": config.model_name,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 8,
+                "temperature": 0,
+            }
+            if config.model_type == "chat"
+            else {
+                "model": config.model_name,
+                "input": "ping",
+            }
+        )
+        started_at = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(url, json=payload, headers=headers)
+            latency_ms = round((time.monotonic() - started_at) * 1000, 2)
+            if response.status_code >= 400:
+                return {
+                    "ok": False,
+                    "status_code": response.status_code,
+                    "latency_ms": latency_ms,
+                    "message": safe_response_error(response.text),
+                }
+            return {
+                "ok": True,
+                "status_code": response.status_code,
+                "latency_ms": latency_ms,
+                "message": "连接成功",
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "message": f"连接失败: {exc.__class__.__name__}",
+                "detail": str(exc)[:200],
+            }
 
     async def get_agent_chat_config(self, agent_id: int) -> ModelConfig | None:
         db = get_management_db()
@@ -144,6 +206,7 @@ class ModelConfigService:
                 model_name=s.llm_model,
                 api_key=s.llm_api_key,
                 api_key_enabled=bool(s.llm_api_key),
+                api_key_expires_at=None,
             )
         return ModelConfig(
             id=None,
@@ -154,6 +217,7 @@ class ModelConfigService:
             model_name=s.embedding_model,
             api_key=s.embedding_api_key,
             api_key_enabled=bool(s.embedding_api_key),
+            api_key_expires_at=None,
             embedding_dimension=s.embedding_dimension,
         )
 
@@ -166,3 +230,24 @@ def get_model_config_service() -> ModelConfigService:
     if _model_config_service is None:
         _model_config_service = ModelConfigService()
     return _model_config_service
+
+
+def safe_response_error(text: str) -> str:
+    compact = " ".join((text or "").split())
+    if not compact:
+        return "模型服务返回错误"
+    return compact[:220]
+
+
+def api_key_expiry_flags(expires_at) -> tuple[bool, bool]:
+    if not expires_at:
+        return False, False
+    if isinstance(expires_at, str):
+        try:
+            expires_at = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False, False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    return expires_at <= now, now < expires_at <= now + timedelta(days=30)

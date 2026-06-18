@@ -1,5 +1,11 @@
 from app.agent.nodes.intent import rule_based_intent
-from app.agent.graph import route_after_sql_compile, route_after_sql_execute
+from app.agent.graph import (
+    route_after_nl2sql_fallback_compile,
+    route_after_schema_recall,
+    route_after_semantic_check,
+    route_after_sql_compile,
+    route_after_sql_execute,
+)
 from app.agent.nodes.intent import rule_based_intent_with_history
 
 
@@ -26,6 +32,36 @@ def test_route_after_sql_compile_stops_when_sql_is_empty():
 
 def test_route_after_sql_compile_continues_when_sql_exists():
     assert route_after_sql_compile({"compiled_sql": "SELECT 1"}) == "compiled"
+
+
+def test_route_after_semantic_check_can_pause_for_human_confirmation():
+    assert route_after_semantic_check(
+        {"semantic_check": {"valid": True}, "require_sql_confirmation": True}
+    ) == "confirm"
+    assert route_after_nl2sql_fallback_compile(
+        {"compiled_sql": "SELECT 1", "require_sql_confirmation": True}
+    ) == "confirm"
+
+
+def test_route_after_semantic_check_repairs_invalid_check_before_blocking():
+    assert route_after_semantic_check(
+        {"semantic_check": {"valid": False}, "sql_retry_count": 0}
+    ) == "repair"
+    assert route_after_semantic_check(
+        {"semantic_check": {"valid": False}, "sql_retry_count": 2}
+    ) == "invalid"
+
+
+def test_route_after_schema_recall_can_ask_for_clarification_when_enabled():
+    assert route_after_schema_recall(
+        {"enable_low_confidence_clarification": True, "relevant_tables": [], "relevant_columns": []}
+    ) == "clarify"
+    assert route_after_schema_recall(
+        {"enable_low_confidence_clarification": True, "relevant_tables": [{"table_name": "loan_application"}]}
+    ) == "continue"
+    assert route_after_schema_recall(
+        {"enable_low_confidence_clarification": False, "relevant_tables": [], "relevant_columns": []}
+    ) == "continue"
 
 
 def test_route_after_sql_execute_stops_when_result_exists_despite_stale_error():

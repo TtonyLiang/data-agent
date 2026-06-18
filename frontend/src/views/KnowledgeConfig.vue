@@ -599,9 +599,54 @@
             <span>{{ formatSnapshotCounts(item.asset_counts) }}</span>
             <small>{{ item.created_at }}</small>
           </div>
+          <div class="snapshot-actions">
+            <el-button size="small" @click="handleDiffSnapshot(item)">差异</el-button>
+            <el-button size="small" type="warning" plain @click="handleRollbackSnapshot(item)">回滚</el-button>
+          </div>
         </article>
       </div>
     </el-drawer>
+
+    <el-dialog v-model="showSnapshotDiffDialog" title="快照差异" width="760px" append-to-body>
+      <div v-if="snapshotDiff" class="snapshot-diff">
+        <div class="snapshot-diff-summary">
+          <div>
+            <span>新增</span>
+            <strong>{{ snapshotDiffSummary.added }}</strong>
+          </div>
+          <div>
+            <span>删除</span>
+            <strong>{{ snapshotDiffSummary.removed }}</strong>
+          </div>
+          <div>
+            <span>变更</span>
+            <strong>{{ snapshotDiffSummary.changed }}</strong>
+          </div>
+          <div>
+            <span>领域配置</span>
+            <strong>{{ snapshotDiffSummary.domain_changed ? '有变化' : '无变化' }}</strong>
+          </div>
+        </div>
+        <section v-if="snapshotDomainChanges.length" class="snapshot-diff-section">
+          <h4>领域配置差异</h4>
+          <div v-for="item in snapshotDomainChanges" :key="item.field" class="snapshot-change-row">
+            <span>{{ detailFieldLabels[item.field] || item.field }}</span>
+            <p>当前：{{ formatDiffValue(item.current) }}</p>
+            <p>快照：{{ formatDiffValue(item.snapshot) }}</p>
+          </div>
+        </section>
+        <section v-for="section in snapshotAssetDiffSections" :key="section.type" class="snapshot-diff-section">
+          <h4>{{ assetTypeName(section.type) }}</h4>
+          <p>新增 {{ section.added.length }} 项，删除 {{ section.removed.length }} 项，变更 {{ section.changed.length }} 项</p>
+          <div v-if="section.added.length" class="snapshot-key-list"><strong>当前新增：</strong>{{ section.added.join('、') }}</div>
+          <div v-if="section.removed.length" class="snapshot-key-list"><strong>快照中存在但当前已删除：</strong>{{ section.removed.join('、') }}</div>
+          <div v-if="section.changed.length" class="snapshot-key-list"><strong>内容变更：</strong>{{ snapshotChangedKeys(section.changed) }}</div>
+        </section>
+      </div>
+      <template #footer>
+        <el-button @click="showSnapshotDiffDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -615,6 +660,7 @@ import {
   createSemanticSnapshot,
   deleteSemanticDomain,
   deleteSemanticAsset,
+  diffSemanticSnapshot,
   exportSemanticDomain,
   fetchAgents,
   fetchAllDatasources,
@@ -622,6 +668,7 @@ import {
   fetchSemanticAssets,
   fetchSemanticSnapshots,
   importSemanticDomain,
+  rollbackSemanticSnapshot,
   syncSemanticVector,
   upsertSemanticDomain,
   upsertSemanticAsset,
@@ -1118,7 +1165,9 @@ const showAssetDialog = ref(false)
 const showAssetGuide = ref(false)
 const showAssetDetail = ref(false)
 const showSnapshotDrawer = ref(false)
+const showSnapshotDiffDialog = ref(false)
 const snapshots = ref<Record<string, unknown>[]>([])
+const snapshotDiff = ref<Record<string, any> | null>(null)
 const domainDialogMode = ref<'create' | 'edit'>('create')
 const editingAssetType = ref('concept')
 const assetDialogMode = ref<'create' | 'edit'>('create')
@@ -1153,6 +1202,24 @@ const selectedAssetJson = computed(() => JSON.stringify(selectedAsset.value || {
 const assetDetailRows = computed(() => {
   if (!selectedAsset.value) return []
   return buildAssetDetailRows(selectedAssetType.value, selectedAsset.value)
+})
+const snapshotDiffSummary = computed(() => snapshotDiff.value?.summary || {
+  added: 0,
+  removed: 0,
+  changed: 0,
+  domain_changed: false,
+})
+const snapshotDomainChanges = computed(() => Array.isArray(snapshotDiff.value?.domain) ? snapshotDiff.value.domain : [])
+const snapshotAssetDiffSections = computed(() => {
+  const assets = snapshotDiff.value?.assets || {}
+  return assetTabs
+    .map(tab => ({
+      type: tab.name,
+      added: Array.isArray(assets[tab.name]?.added) ? assets[tab.name].added : [],
+      removed: Array.isArray(assets[tab.name]?.removed) ? assets[tab.name].removed : [],
+      changed: Array.isArray(assets[tab.name]?.changed) ? assets[tab.name].changed : [],
+    }))
+    .filter(section => section.added.length || section.removed.length || section.changed.length)
 })
 
 const assetCounts = computed(() => {
@@ -1442,6 +1509,36 @@ async function openSnapshots() {
   }
 }
 
+async function handleDiffSnapshot(item: Record<string, unknown>) {
+  if (!selectedDomain.value || !item.id) return
+  try {
+    snapshotDiff.value = await diffSemanticSnapshot(selectedDomain.value.id, Number(item.id))
+    showSnapshotDiffDialog.value = true
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '快照差异加载失败')
+  }
+}
+
+async function handleRollbackSnapshot(item: Record<string, unknown>) {
+  if (!selectedDomain.value || !item.id) return
+  try {
+    await ElMessageBox.confirm(
+      `确定将语义层「${selectedDomain.value.name}」回滚到快照「${item.name || item.id}」？当前资产会被快照内容覆盖，建议先导出或创建新快照。`,
+      '回滚语义层快照',
+      { type: 'warning' },
+    )
+    const result = await rollbackSemanticSnapshot(selectedDomain.value.id, Number(item.id))
+    ElMessage.success(result.message || '语义层已回滚')
+    await loadDomains()
+    if (selectedDomain.value?.id) domainId.value = selectedDomain.value.id
+    await loadAssets()
+    await openSnapshots()
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(error instanceof Error ? error.message : '快照回滚失败')
+  }
+}
+
 function formatSnapshotCounts(value: unknown) {
   if (!value || typeof value !== 'object') return '无资产统计'
   const record = value as Record<string, unknown>
@@ -1451,6 +1548,20 @@ function formatSnapshotCounts(value: unknown) {
     `指标 ${record.metric ?? 0}`,
     `映射 ${record.mapping ?? 0}`,
   ].join(' · ')
+}
+
+function assetTypeName(type: string) {
+  return assetTabs.find(tab => tab.name === type)?.label || type
+}
+
+function formatDiffValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return '-'
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+function snapshotChangedKeys(items: Record<string, unknown>[]) {
+  return items.map(item => String(item.key || '')).filter(Boolean).join('、')
 }
 
 function defaultDomainAgentId() {
@@ -2568,6 +2679,87 @@ function columnNameLabel(assetKey: string, columnName: string) {
   gap: 12px;
   color: var(--wq-subtle);
   font-size: 12px;
+}
+
+.snapshot-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.snapshot-diff {
+  display: grid;
+  gap: 16px;
+}
+
+.snapshot-diff-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.snapshot-diff-summary > div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--wq-border);
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.snapshot-diff-summary span,
+.snapshot-diff-summary strong {
+  display: block;
+}
+
+.snapshot-diff-summary span {
+  color: var(--wq-subtle);
+  font-size: 12px;
+}
+
+.snapshot-diff-summary strong {
+  margin-top: 5px;
+  color: var(--wq-text);
+  font-size: 18px;
+}
+
+.snapshot-diff-section {
+  padding: 12px;
+  border: 1px solid var(--wq-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.snapshot-diff-section h4 {
+  margin: 0 0 8px;
+  color: var(--wq-text);
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.snapshot-diff-section p,
+.snapshot-key-list {
+  margin: 6px 0 0;
+  color: #475467;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.snapshot-change-row {
+  padding: 10px 0;
+  border-top: 1px solid var(--wq-border);
+}
+
+.snapshot-change-row:first-of-type {
+  border-top: 0;
+}
+
+.snapshot-change-row span {
+  display: block;
+  color: var(--wq-text);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 @media (max-width: 1100px) {

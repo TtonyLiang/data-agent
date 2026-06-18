@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.config import get_settings
 from app.services.metadata_service import get_metadata_service
 
 
@@ -23,7 +24,11 @@ async def schema_recall_node(state: dict) -> dict:
             },
         }
 
-    schema = await get_metadata_service().get_schema(datasource_id)
+    metadata_service = get_metadata_service()
+    if hasattr(metadata_service, "get_authorized_schema"):
+        schema = await metadata_service.get_authorized_schema(datasource_id, state.get("agent_id"))
+    else:
+        schema = await metadata_service.get_schema(datasource_id)
     if not schema:
         return {
             "relevant_tables": [],
@@ -41,6 +46,8 @@ async def schema_recall_node(state: dict) -> dict:
     tokens = _tokens(question)
     semantic_terms = _semantic_terms(runtime, evidence)
     business_priority = _business_priority(runtime, evidence, question)
+    business_groups = _business_groups(question)
+    settings = get_settings()
 
     table_scores: dict[str, dict[str, Any]] = {}
     column_hits: list[dict[str, Any]] = []
@@ -57,6 +64,9 @@ async def schema_recall_node(state: dict) -> dict:
         table_business = business_priority["tables"].get(table_name, {"score": 0.0, "reasons": []})
         table_score += float(table_business.get("score") or 0)
         table_reasons = [*table_business.get("reasons", []), *table_reasons]
+        group_score, group_reasons = _score_business_groups(table_name, table_comment, business_groups)
+        table_score += group_score
+        table_reasons = [*group_reasons, *table_reasons]
         table_scores[table_name] = {
             "table": table_name,
             "table_name": table_name,
@@ -81,6 +91,13 @@ async def schema_recall_node(state: dict) -> dict:
             )
             score += float(column_business.get("score") or 0)
             reasons = [*column_business.get("reasons", []), *reasons]
+            column_group_score, column_group_reasons = _score_business_groups(
+                f"{table_name}.{column_name}",
+                column_comment,
+                business_groups,
+            )
+            score += column_group_score
+            reasons = [*column_group_reasons, *reasons]
             if score > 0:
                 table_scores[table_name]["score"] += min(score, 6)
                 column_hits.append({
@@ -106,7 +123,8 @@ async def schema_recall_node(state: dict) -> dict:
         key=lambda item: (-float(item.get("score") or 0), item.get("table_name") or ""),
     )
     positive_tables = [item for item in matched_tables if float(item.get("score") or 0) > 0]
-    selected_tables = (positive_tables or matched_tables)[:6]
+    max_tables = max(1, settings.schema_recall_max_tables)
+    selected_tables = (positive_tables or matched_tables)[:max_tables]
     selected_names = {item["table_name"] for item in selected_tables}
 
     matched_columns = [
@@ -115,7 +133,7 @@ async def schema_recall_node(state: dict) -> dict:
             key=lambda item: (-float(item.get("score") or 0), item.get("table_name") or "", item.get("column_name") or ""),
         )
         if item["table_name"] in selected_names
-    ][:24]
+    ][:max(1, settings.schema_recall_max_columns)]
 
     return {
         "relevant_tables": selected_tables,
@@ -130,6 +148,7 @@ async def schema_recall_node(state: dict) -> dict:
             "matched_tables": len(selected_tables),
             "matched_columns": len(matched_columns),
             "fallback_used": not bool(positive_tables),
+            "business_groups": business_groups,
         },
     }
 
@@ -274,6 +293,54 @@ def _mapping_match(mapping: dict[str, Any], question_profile: dict[str, Any]) ->
         score += 18
         reasons.append("问题聚焦申请业务")
     return max(score, 0), _unique_reasons(reasons)
+
+
+def _business_groups(question: str) -> list[str]:
+    compact = (question or "").lower().replace(" ", "")
+    groups = []
+    if any(token in compact for token in ("申请", "进件", "审批")):
+        groups.append("application")
+    if any(token in compact for token in ("放款", "发放", "借据", "余额", "本金")):
+        groups.append("account")
+    if any(token in compact for token in ("还款", "逾期", "m1", "m2", "m3", "dpd", "mob", "vintage")):
+        groups.append("repayment")
+    if any(token in compact for token in ("催收", "回收", "入催")):
+        groups.append("collection")
+    if any(token in compact for token in ("客户", "客群", "分层", "风险")):
+        groups.append("customer")
+    return _unique_reasons(groups)
+
+
+def _score_business_groups(name: str, comment: str, groups: list[str]) -> tuple[float, list[str]]:
+    if not groups:
+        return 0.0, []
+    text = f"{name} {comment}".lower()
+    group_terms = {
+        "application": ("application", "apply", "approval", "申请", "进件", "审批"),
+        "account": ("account", "loan", "balance", "disbursement", "放款", "余额", "借据", "本金"),
+        "repayment": ("repayment", "overdue", "dpd", "mob", "vintage", "还款", "逾期", "账龄", "批次"),
+        "collection": ("collection", "recovery", "催收", "回收", "入催"),
+        "customer": ("customer", "segment", "risk", "客户", "客群", "风险"),
+    }
+    score = 0.0
+    reasons: list[str] = []
+    for group in groups:
+        terms = group_terms.get(group, ())
+        if any(term in text for term in terms):
+            score += 18
+            reasons.append(f"业务域匹配: {business_group_label(group)}")
+    return score, reasons
+
+
+def business_group_label(group: str) -> str:
+    labels = {
+        "application": "申请/审批",
+        "account": "放款/账户",
+        "repayment": "还款/逾期",
+        "collection": "催收/回收",
+        "customer": "客户/风险",
+    }
+    return labels.get(group, group)
 
 
 def _asset_match_score(item: dict[str, Any], question_profile: dict[str, Any], fields: tuple[str, ...]) -> tuple[float, list[str]]:

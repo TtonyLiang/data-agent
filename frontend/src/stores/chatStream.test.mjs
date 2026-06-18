@@ -112,7 +112,8 @@ function assistantMessage(state) {
 
   const message = assistantMessage(state)
   assert.equal(message.steps[0].status, 'running')
-  assert.equal(message.steps[0].summary, '正在检索知识库、匹配语义资产...')
+  assert.equal(message.steps[0].summary, '')
+  assert.equal(message.steps[0].progress, '正在检索知识库、匹配语义资产...')
 }
 
 {
@@ -141,7 +142,8 @@ function assistantMessage(state) {
   })
 
   const step = assistantMessage(state).steps[0]
-  assert.equal(step.summary, '正在补全省略的指标、维度和 TopN 口径...')
+  assert.equal(step.summary, '')
+  assert.equal(step.progress, '正在补全省略的指标、维度和 TopN 口径...')
   assert.deepEqual(step.events, ['开始语义增强。', '正在补全省略的指标、维度和 TopN 口径...'])
 }
 

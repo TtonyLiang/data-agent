@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+import ast
 import json
+import logging
+import re
+from copy import deepcopy
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from langchain_core.callbacks.manager import adispatch_custom_event
 
 from app.models.knowledge import LogicForm, SemanticRuntime
+from app.services.llm_service import get_llm_service
+from app.services.prompt_service import get_prompt_service
 from app.services.python_executor import PythonExecutionError, get_python_executor
 from app.services.semantic_runtime import get_semantic_runtime_service
+
+logger = logging.getLogger(__name__)
+PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
+PYTHON_GENERATE_PROMPT = (PROMPT_DIR / "phase3_python_generate.system.md").read_text(encoding="utf-8")
+REPORT_GENERATOR_PROMPT = (PROMPT_DIR / "phase3_report_generator.system.md").read_text(encoding="utf-8")
 
 
 async def semantic_check_node(state: dict) -> dict:
@@ -68,12 +80,13 @@ async def planner_node(state: dict) -> dict:
     logic_form = state.get("logic_form") or {}
     profile = profile_rows(rows)
     analysis_steps = _analysis_steps(rows, logic_form)
+    mode = infer_analysis_mode(state, profile)
     plan = {
         "objective": state.get("enhanced_question") or state.get("question", ""),
         "original_question": state.get("question", ""),
         "enhanced_question": state.get("enhanced_question", ""),
-        "mode": "local_basic_profile",
-        "mode_label": "本地基础画像",
+        "mode": mode["mode"],
+        "mode_label": mode["label"],
         "row_count": len(rows),
         "column_count": len(profile["columns"]),
         "numeric_columns": profile["numeric_columns"],
@@ -87,13 +100,13 @@ async def planner_node(state: dict) -> dict:
         ],
         "analysis_steps": analysis_steps,
         "report_steps": [
-            "基于 SQL 结果生成摘要",
-            "汇总数值字段基础统计",
-            "组装前端结构化报告",
+            "整理 Python 分析输出与 SQL 样例",
+            "由大模型流式生成 Markdown 报告",
+            "提取报告摘要、图表和明细表供前端展示",
         ],
         "limitations": [
-            "当前阶段只做 SQL 结果后的基础统计画像",
-            "尚未接入大模型解释、图表推荐和异常归因",
+            "Python 阶段只处理 SQL 结果集，不直接访问业务库",
+            "图表配置基于返回结果和 Python 分析输出生成，复杂归因仍需结合更多业务上下文复核",
         ],
     }
     return {"plan": plan}
@@ -103,22 +116,46 @@ async def python_generate_node(state: dict) -> dict:
     """生成只处理 SQL 结果集的 Python 分析代码。"""
     rows = state.get("sql_result") or []
     profile = profile_rows(rows)
-    code = _build_analysis_code()
-    await emit_phase3_stream("python_generate", code)
+    plan = state.get("plan") or {}
+    mode = plan.get("mode") or infer_analysis_mode(state, profile)["mode"]
+    source = "safe_template"
+    error = ""
+    code = ""
+    if should_use_llm_python_generate(state):
+        try:
+            code = await generate_python_code_with_llm(state, profile)
+            validate_generated_python(code)
+            source = "llm_python_generate"
+        except Exception as exc:
+            error = str(exc) or exc.__class__.__name__
+            logger.warning("LLM PythonGenerate failed, fallback to safe template: %s", error)
+            await emit_phase3_stream(
+                "python_generate",
+                f"LLM 生成脚本未通过安全校验，已切换到默认安全模板。原因：{error}\n\n",
+                chunk_size=80,
+            )
+            code = ""
+    if not code:
+        code = _build_analysis_code(mode)
+    if source != "llm_python_generate":
+        await emit_phase3_stream("python_generate", code)
     return {
         "python_code": code,
         "python_result": {
             "status": "generated",
+            "generation_source": source,
+            "generation_error": error,
             "row_count": len(rows),
             "column_count": len(profile["columns"]),
             "numeric_columns": profile["numeric_columns"],
             "dimension_columns": profile["dimension_columns"],
             "executor": "restricted_local_subprocess",
-            "analysis_scope": "SQL 结果集基础统计，不访问业务库",
+            "analysis_scope": "SQL 结果集分析，不访问业务库",
+            "analysis_mode": mode,
             "generated_tasks": [
-                "识别数值列与维度列",
-                "计算 count/sum/avg/min/max",
-                "提取维度样例和空值计数",
+                "识别用户问题对应的指标列与维度列",
+                "根据排名、趋势、分布等语义生成统计结果",
+                "输出报告可消费的 insights、charts 和 tables",
             ],
         },
     }
@@ -127,7 +164,7 @@ async def python_generate_node(state: dict) -> dict:
 async def python_analyze_node(state: dict) -> dict:
     """执行 Python 分析并输出结构化结果。"""
     rows = state.get("sql_result") or []
-    code = state.get("python_code") or _build_analysis_code()
+    code = state.get("python_code") or _build_analysis_code(infer_analysis_mode(state, profile_rows(rows))["mode"])
     if not rows:
         result = {
             "python_result": {
@@ -146,7 +183,8 @@ async def python_analyze_node(state: dict) -> dict:
         executed = get_python_executor().execute(code, rows)
         payload = executed.payload or {}
         payload["status"] = "success" if executed.ok else "failed"
-        payload["analysis_scope"] = "SQL 结果集基础统计"
+        payload["analysis_scope"] = "SQL 结果集分析，不访问业务库"
+        payload.setdefault("analysis_mode", (state.get("plan") or {}).get("mode") or "profile")
         payload["computed_items"] = computed_items(payload)
         if executed.stderr:
             payload["stderr"] = executed.stderr[-1000:]
@@ -171,9 +209,34 @@ async def report_generator_node(state: dict) -> dict:
     plan = state.get("plan") or {}
     python_result = state.get("python_result") or {}
     report = _build_report_payload(state, rows, logic_form, plan, python_result)
-    await emit_phase3_stream("report_generator", report_to_stream_text(report))
+    markdown = ""
+    source = "fallback_template"
+    error = ""
+    if should_use_llm_report(state):
+        try:
+            markdown = await generate_report_markdown_with_llm(state, rows, logic_form, plan, python_result)
+            if len(re.sub(r"\s+", "", markdown)) < min_report_length(rows):
+                raise ValueError("报告正文过短，未达到分析报告信息密度要求")
+            source = "llm_report_generator"
+        except Exception as exc:
+            error = str(exc) or exc.__class__.__name__
+            logger.warning("LLM report generation failed, fallback to structured report: %s", error)
+            markdown = ""
+    if not markdown:
+        markdown = report_to_stream_text(report)
+        if rows and len(re.sub(r"\s+", "", markdown)) < 300:
+            markdown = enrich_fallback_report(markdown, report)
+    markdown = align_markdown_chart_kinds(markdown, report.get("charts") or [])
+    report["markdown"] = markdown
+    report["body"] = markdown
+    report["generation_source"] = source
+    report["generation_error"] = error
+    report["summary"] = extract_report_summary(markdown) or report.get("summary", "")
+    report["sections"] = markdown_to_sections(markdown) or report.get("sections", [])
+    if source != "llm_report_generator":
+        await emit_phase3_stream("report_generator", markdown, chunk_size=80)
     return {
-        "report": report.get("summary", ""),
+        "report": markdown,
         "report_payload": report,
         "final_answer": _final_answer_from_report(report, state.get("final_answer", "")),
     }
@@ -203,6 +266,10 @@ def computed_items(python_result: dict[str, Any]) -> list[str]:
         items.append("空值计数")
     if python_result.get("dimension_samples"):
         items.append("维度样例")
+    if python_result.get("charts"):
+        items.append(f"图表建议 {len(python_result.get('charts') or [])} 个")
+    if python_result.get("insights"):
+        items.append(f"关键洞察 {len(python_result.get('insights') or [])} 条")
     return items
 
 
@@ -224,8 +291,266 @@ async def emit_phase3_stream(node: str, text: str, chunk_size: int = 120) -> Non
             return
 
 
+async def emit_phase3_reasoning(node: str, text: str, chunk_size: int = 120) -> None:
+    if not text:
+        return
+    for start in range(0, len(text), chunk_size):
+        try:
+            await adispatch_custom_event(
+                "wenqu_token",
+                {
+                    "node": node,
+                    "delta": text[start:start + chunk_size],
+                    "kind": "reasoning",
+                },
+            )
+        except RuntimeError:
+            return
+
+
+def infer_analysis_mode(state: dict, profile: dict[str, Any]) -> dict[str, str]:
+    has_time_dimension = _has_time_like_dimension(profile.get("dimension_columns") or [])
+    text = " ".join(
+        str(value or "")
+        for value in (
+            state.get("question"),
+            state.get("enhanced_question"),
+            json_dumps_compact(state.get("logic_form") or {}),
+        )
+    ).lower()
+    if any(token in text for token in ("趋势", "变化", "环比", "同比", "按月", "按日", "month", "day", "trend")):
+        if not has_time_dimension:
+            if profile.get("numeric_columns") and profile.get("dimension_columns"):
+                row_count = len(state.get("sql_result") or [])
+                if 2 <= row_count <= 8:
+                    return {"mode": "distribution", "label": "结构分布分析"}
+                return {"mode": "ranking", "label": "分组对比分析"}
+            return {"mode": "profile", "label": "结果画像分析"}
+        return {"mode": "trend", "label": "趋势分析"}
+    if any(token in text for token in ("排名", "排行", "top", "前", "最多", "最少", "最高", "最低")):
+        return {"mode": "ranking", "label": "排名分析"}
+    if any(token in text for token in ("占比", "结构", "分布", "比例", "构成")):
+        return {"mode": "distribution", "label": "结构分布分析"}
+    if any(token in text for token in ("异常", "波动", "离群", "风险")):
+        return {"mode": "anomaly", "label": "异常识别分析"}
+    if profile.get("numeric_columns") and profile.get("dimension_columns"):
+        return {"mode": "ranking", "label": "分组对比分析"}
+    return {"mode": "profile", "label": "结果画像分析"}
+
+
+def _has_time_like_dimension(columns: list[str]) -> bool:
+    if not columns:
+        return False
+    joined = " ".join(str(column or "").lower() for column in columns)
+    time_tokens = ("date", "time", "day", "week", "month", "year", "quarter", "snapshot", "日期", "时间", "月份", "年月", "季度", "周", "日")
+    return any(token in joined for token in time_tokens)
+
+
+def should_use_llm_python_generate(state: dict) -> bool:
+    return bool(state.get("agent_id") and state.get("sql_result"))
+
+
+def should_use_llm_report(state: dict) -> bool:
+    return bool(state.get("agent_id"))
+
+
+async def generate_python_code_with_llm(state: dict, profile: dict[str, Any]) -> str:
+    llm = get_llm_service()
+    llm_kwargs = await llm.resolve_agent_chat_kwargs(state.get("agent_id"))
+    domain = ((state.get("semantic_runtime") or {}).get("domain") or {})
+    system_prompt = await get_prompt_service().resolve(
+        "phase3_python_generate.system",
+        PYTHON_GENERATE_PROMPT,
+        agent_id=state.get("agent_id"),
+        semantic_domain_id=domain.get("id") if isinstance(domain, dict) else None,
+        variables=phase3_prompt_variables(state, profile),
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "请只输出可执行 Python 代码。"},
+    ]
+    chunks: list[str] = []
+    async for chunk in llm.achat_stream(messages, **llm_kwargs):
+        reasoning = ""
+        if hasattr(chunk, "additional_kwargs"):
+            reasoning = chunk.additional_kwargs.get("reasoning_content", "")
+        if reasoning:
+            await emit_phase3_reasoning("python_generate", reasoning)
+        content = str(getattr(chunk, "content", "") or "")
+        if not content:
+            continue
+        chunks.append(content)
+        await emit_phase3_stream("python_generate", content, chunk_size=80)
+    return strip_code_fence("".join(chunks)).strip()
+
+
+async def generate_report_markdown_with_llm(
+    state: dict,
+    rows: list[dict[str, Any]],
+    logic_form: dict[str, Any],
+    plan: dict[str, Any],
+    python_result: dict[str, Any],
+) -> str:
+    llm = get_llm_service()
+    llm_kwargs = await llm.resolve_agent_chat_kwargs(state.get("agent_id"))
+    domain = ((state.get("semantic_runtime") or {}).get("domain") or {})
+    profile = profile_rows(rows)
+    variables = phase3_prompt_variables(
+        {
+            **state,
+            "logic_form": logic_form,
+            "plan": plan,
+            "python_result": python_result,
+        },
+        profile,
+    )
+    system_prompt = await get_prompt_service().resolve(
+        "phase3_report_generator.system",
+        REPORT_GENERATOR_PROMPT,
+        agent_id=state.get("agent_id"),
+        semantic_domain_id=domain.get("id") if isinstance(domain, dict) else None,
+        variables=variables,
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "请直接流式输出完整 Markdown 分析报告。"},
+    ]
+    chunks: list[str] = []
+    async for chunk in llm.achat_stream(messages, **llm_kwargs):
+        reasoning = ""
+        if hasattr(chunk, "additional_kwargs"):
+            reasoning = chunk.additional_kwargs.get("reasoning_content", "")
+        if reasoning:
+            await emit_phase3_reasoning("report_generator", reasoning)
+        content = str(getattr(chunk, "content", "") or "")
+        if not content:
+            continue
+        chunks.append(content)
+        await emit_phase3_stream("report_generator", content, chunk_size=80)
+    return "".join(chunks).strip()
+
+
+def phase3_prompt_variables(state: dict, profile: dict[str, Any]) -> dict[str, str]:
+    rows = state.get("sql_result") or []
+    return {
+        "question": str(state.get("question") or ""),
+        "enhanced_question": str(state.get("enhanced_question") or ""),
+        "plan": json_dumps_pretty(state.get("plan") or {}),
+        "logic_form": json_dumps_pretty(state.get("logic_form") or {}),
+        "sql": str(state.get("compiled_sql") or state.get("sql_text") or ""),
+        "profile": json_dumps_pretty(profile),
+        "sample_rows": json_dumps_pretty(rows[:30]),
+        "python_result": json_dumps_pretty(state.get("python_result") or {}),
+    }
+
+
+def validate_generated_python(code: str) -> None:
+    if not code:
+        raise PythonExecutionError("LLM 未生成 Python 代码")
+    if "rows" not in code:
+        raise PythonExecutionError("Python 分析代码必须使用 rows 输入变量")
+    if "print(" not in code or "json.dumps" not in code:
+        raise PythonExecutionError("Python 分析代码必须通过 print(json.dumps(...)) 输出 JSON")
+    tree = ast.parse(code)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in {"open", "exec", "eval", "compile", "__import__"}:
+                raise PythonExecutionError(f"Python 分析代码禁止调用 {node.func.id}")
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                _assert_prompt_allowed_module(alias.name)
+        if isinstance(node, ast.ImportFrom):
+            _assert_prompt_allowed_module(node.module or "")
+
+
+def _assert_prompt_allowed_module(module: str) -> None:
+    allowed = {"json", "math", "statistics", "collections", "datetime", "decimal", "itertools", "numpy", "pandas"}
+    root = module.split(".", 1)[0]
+    if root not in allowed:
+        raise PythonExecutionError(f"Python 分析代码禁止导入模块: {module}")
+
+
+def strip_code_fence(text: str) -> str:
+    stripped = text.strip()
+    if "```" not in stripped:
+        return stripped
+    match = re.search(r"```(?:python|py)?\s*(.*?)```", stripped, flags=re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return stripped.replace("```python", "").replace("```py", "").replace("```", "").strip()
+
+
 def json_dumps_pretty(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def json_dumps_compact(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def min_report_length(rows: list[dict[str, Any]]) -> int:
+    return 120 if not rows else 300
+
+
+def extract_report_summary(markdown: str) -> str:
+    lines = [
+        line.strip(" -")
+        for line in markdown.splitlines()
+        if line.strip() and not line.lstrip().startswith("#") and not line.strip().startswith("```")
+    ]
+    if not lines:
+        return ""
+    summary = lines[0]
+    return summary[:220] + "..." if len(summary) > 220 else summary
+
+
+def markdown_to_sections(markdown: str) -> list[dict[str, Any]]:
+    sections: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    in_code = False
+    for raw_line in markdown.splitlines():
+        line = raw_line.rstrip()
+        if line.strip().startswith("```"):
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
+        if line.startswith("## "):
+            current = {"title": line[3:].strip(), "items": []}
+            sections.append(current)
+            continue
+        if line.startswith("# "):
+            continue
+        text = line.strip()
+        if not text:
+            continue
+        if current is None:
+            current = {"title": "执行摘要", "items": []}
+            sections.append(current)
+        current["items"].append(text.lstrip("- ").strip())
+    return [section for section in sections if section.get("items")]
+
+
+def enrich_fallback_report(markdown: str, report: dict[str, Any]) -> str:
+    rows = int(report.get("row_count") or 0)
+    sql = str(report.get("sql") or "")
+    python_result = report.get("python_result") or {}
+    insights = python_result.get("insights") if isinstance(python_result, dict) else []
+    charts = report.get("charts") or []
+    additions = [
+        "",
+        "## 补充解读",
+        f"本报告基于 SQL 查询返回的 {rows} 行结果生成。Python 阶段没有直接访问业务数据库，只对已经返回的结果集做二次统计、排序和图表结构整理，因此报告中的数字应与结果表保持一致。",
+    ]
+    if insights:
+        additions.append("从分析脚本输出看，最值得关注的是：" + "；".join(str(item) for item in insights[:4]) + "。")
+    if charts:
+        chart_titles = "、".join(str(item.get("title") or "图表") for item in charts if isinstance(item, dict))
+        additions.append(f"可视化建议优先查看 {chart_titles}，用于判断头部集中、趋势变化或结构分布是否明显。")
+    if sql:
+        additions.append("如需复核口径，建议先查看 SQL 的筛选条件、分组字段和排序字段，再对照语义层指标定义确认是否与业务问题一致。")
+    additions.append("后续如果要继续追问，可以围绕排名靠前/靠后的对象、时间变化、区域差异或异常点进行下钻，以便从“查到结果”进一步走向“解释原因”。")
+    return markdown.rstrip() + "\n" + "\n".join(additions)
 
 
 def _is_number_like(value: Any) -> bool:
@@ -277,8 +602,10 @@ def _analysis_steps(rows: list[dict[str, Any]], logic_form: dict[str, Any]) -> l
     ]
 
 
-def _build_analysis_code() -> str:
-    return r'''
+def _build_analysis_code(mode: str = "profile") -> str:
+    return '''
+ANALYSIS_MODE = "__ANALYSIS_MODE__"
+
 def _is_number(value):
     if isinstance(value, bool) or value is None:
         return False
@@ -298,9 +625,18 @@ numeric_columns = [
     if any(_is_number(row.get(column)) for row in rows)
 ]
 dimension_columns = [column for column in columns if column not in numeric_columns]
+
+def _to_float(value):
+    return float(value) if _is_number(value) else None
+
+def _fmt(value):
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
 metrics = []
 for column in numeric_columns:
-    values = [float(row.get(column)) for row in rows if _is_number(row.get(column))]
+    values = [_to_float(row.get(column)) for row in rows if _is_number(row.get(column))]
     if not values:
         continue
     metrics.append({
@@ -329,6 +665,72 @@ null_counts = {
     for column in columns
 }
 
+primary_dimension = dimension_columns[0] if dimension_columns else None
+primary_metric = numeric_columns[0] if numeric_columns else None
+rank_rows = []
+if primary_dimension and primary_metric:
+    for row in rows[:20]:
+        value = _to_float(row.get(primary_metric))
+        if value is None:
+            continue
+        rank_rows.append({
+            "label": row.get(primary_dimension),
+            "value": _fmt(value),
+            primary_dimension: row.get(primary_dimension),
+            primary_metric: _fmt(value),
+        })
+
+charts = []
+if rank_rows:
+    if ANALYSIS_MODE == "trend":
+        chart_type = "line"
+    elif ANALYSIS_MODE == "distribution" and len(rank_rows[:12]) <= 8:
+        chart_type = "pie"
+    else:
+        chart_type = "bar"
+    charts.append({
+        "title": f"{primary_metric} 按 {primary_dimension} 展示",
+        "type": chart_type,
+        "x_field": primary_dimension,
+        "y_field": primary_metric,
+        "data": rank_rows[:12],
+        "echarts_option": {
+            **(
+                {
+                    "tooltip": {"trigger": "item"},
+                    "legend": {"bottom": 0},
+                    "series": [{
+                        "type": "pie",
+                        "radius": ["42%", "72%"],
+                        "name": primary_metric,
+                        "data": [{"name": str(item["label"]), "value": item["value"]} for item in rank_rows[:12]],
+                    }],
+                }
+                if chart_type == "pie" else
+                {
+                    "tooltip": {"trigger": "axis"},
+                    "xAxis": {"type": "category", "data": [str(item["label"]) for item in rank_rows[:12]]},
+                    "yAxis": {"type": "value", "name": primary_metric},
+                    "series": [{"type": chart_type, "name": primary_metric, "data": [item["value"] for item in rank_rows[:12]]}],
+                }
+            ),
+        },
+    })
+
+insights = []
+if rows:
+    insights.append(f"本次 SQL 返回 {len(rows)} 行、{len(columns)} 个字段。")
+if rank_rows:
+    first = rank_rows[0]
+    insights.append(f"{primary_dimension} 排在首位的是 {first.get('label')}，{primary_metric} 为 {first.get('value')}。")
+    if len(rank_rows) >= 3:
+        insights.append(f"前 3 项分别为 " + "、".join(f"{item.get('label')}({item.get('value')})" for item in rank_rows[:3]) + "。")
+if metrics:
+    metric = metrics[0]
+    insights.append(f"{metric['field']} 合计为 {_fmt(metric['sum'])}，平均值为 {_fmt(metric['avg'])}。")
+if not insights:
+    insights.append("当前结果主要为明细数据，未识别出可直接聚合的数值字段。")
+
 result = {
     "row_count": len(rows),
     "columns": columns,
@@ -336,9 +738,17 @@ result = {
     "dimensions": dimension_columns,
     "dimension_samples": dimension_samples,
     "null_counts": null_counts,
+    "analysis_mode": ANALYSIS_MODE,
+    "insights": insights,
+    "charts": charts,
+    "tables": [{
+        "title": "分析结果明细",
+        "columns": columns,
+        "rows": rows[:20],
+    }] if rows else [],
 }
 print(json.dumps(result, ensure_ascii=False))
-'''.strip()
+'''.strip().replace("__ANALYSIS_MODE__", mode)
 
 
 def _build_report_payload(
@@ -393,8 +803,8 @@ def _build_report_payload(
         "title": title,
         "summary": summary,
         "status": "empty" if not rows else "success",
-        "mode": "local_basic_profile",
-        "mode_label": "本地基础画像",
+        "mode": plan.get("mode") or python_result.get("analysis_mode") or "profile",
+        "mode_label": plan.get("mode_label") or "结果画像分析",
         "row_count": len(rows),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "question": state.get("question", ""),
@@ -559,7 +969,9 @@ def _report_interpretation(
         return {"title": "结果解读", "bullets": bullets}
 
     metric = (python_result.get("metrics") or [{}])[0] if python_result.get("metrics") else {}
-    dimension_column = (python_result.get("dimensions") or profile.get("dimension_columns") or [None])[0]
+    dimension_item = (python_result.get("dimensions") or profile.get("dimension_columns") or [None])[0]
+    dimension_column = _result_field_name(dimension_item)
+    metric_field = _result_field_name(metric)
     if isinstance(metric, dict) and metric.get("field") and metric.get("max") is not None:
         bullets.append(
             f"{metric.get('field')} 的最大值为 {_format_number(metric.get('max'))}，"
@@ -569,12 +981,12 @@ def _report_interpretation(
     if dimension_column and rows:
         top_row = rows[0]
         top_value = top_row.get(dimension_column)
-        top_metric = metric.get("field") if isinstance(metric, dict) else None
+        top_metric = metric_field
         if top_metric and top_metric in top_row:
             bullets.append(f"排名第一的 {dimension_column} 为 {top_value}，对应 {top_metric} 为 {_format_number(top_row.get(top_metric))}。")
-    if len(rows) >= 3 and dimension_column and metric.get("field"):
-        first = rows[0].get(metric["field"])
-        third = rows[2].get(metric["field"])
+    if len(rows) >= 3 and dimension_column and metric_field:
+        first = rows[0].get(metric_field)
+        third = rows[2].get(metric_field)
         if _is_number_like(first) and _is_number_like(third):
             gap = float(first) - float(third)
             bullets.append(f"Top1 与 Top3 相差 {_format_number(gap)}，头部集中度较明显。")
@@ -625,19 +1037,24 @@ def _report_charts(
     dimension_keys: list[str],
     python_result: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    generated_charts = normalize_python_charts(python_result.get("charts") or [])
+    if generated_charts:
+        return generated_charts
     metrics = python_result.get("metrics") or []
     if not rows or not metrics:
         return []
     metric = metrics[0]
-    if not isinstance(metric, dict) or not metric.get("field"):
+    metric_field = _result_field_name(metric)
+    if not metric_field:
         return []
-    dimension_column = (python_result.get("dimensions") or profile.get("dimension_columns") or [None])[0]
+    dimension_item = (python_result.get("dimensions") or profile.get("dimension_columns") or [None])[0]
+    dimension_column = _result_field_name(dimension_item)
     if not dimension_column:
         return []
     data = []
     for row in rows[:8]:
         label = row.get(dimension_column)
-        value = row.get(metric["field"])
+        value = row.get(metric_field)
         if label is None or value is None:
             continue
         data.append({
@@ -648,14 +1065,87 @@ def _report_charts(
         return []
     return [
         {
-            "title": f"{metric.get('field')} 排序图",
+            "title": f"{metric_field} 排序图",
             "subtitle": f"按 {dimension_column} 展开，展示前 {len(data)} 项结果。",
             "type": "bar",
+            "chart_kind": "bar",
             "x_field": dimension_column,
-            "y_field": metric["field"],
+            "y_field": metric_field,
             "data": data,
+            "echarts_option": {
+                "tooltip": {"trigger": "axis"},
+                "grid": {"left": 48, "right": 24, "top": 36, "bottom": 48},
+                "xAxis": {
+                    "type": "category",
+                    "name": dimension_column,
+                    "data": [str(item["label"]) for item in data],
+                },
+                "yAxis": {"type": "value", "name": str(metric_field)},
+                "series": [
+                    {
+                        "type": "bar",
+                        "name": str(metric_field),
+                        "data": [item["value"] for item in data],
+                    }
+                ],
+            },
         }
     ]
+
+
+def normalize_python_charts(charts: Any) -> list[dict[str, Any]]:
+    if not isinstance(charts, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for index, chart in enumerate(charts):
+        if not isinstance(chart, dict):
+            continue
+        data = chart.get("data") or []
+        if not isinstance(data, list):
+            data = []
+        normalized_data = []
+        for row in data[:50]:
+            if not isinstance(row, dict):
+                continue
+            normalized_data.append({
+                "label": row.get("label") if row.get("label") is not None else row.get(chart.get("x_field") or "x"),
+                "value": row.get("value") if row.get("value") is not None else row.get(chart.get("y_field") or "y"),
+                **row,
+            })
+        option = chart.get("echarts_option")
+        if not isinstance(option, dict):
+            option = {}
+        chart_type = _normalize_chart_kind(chart.get("chart_kind") or chart.get("type") or _chart_kind_from_echarts_option(option))
+        normalized.append({
+            "title": str(chart.get("title") or f"分析图表 {index + 1}"),
+            "subtitle": str(chart.get("subtitle") or ""),
+            "type": chart_type,
+            "chart_kind": chart_type,
+            "x_field": chart.get("x_field"),
+            "y_field": chart.get("y_field"),
+            "data": normalized_data,
+            "echarts_option": option,
+        })
+    return [item for item in normalized if item["data"] or item["echarts_option"]]
+
+
+def _normalize_chart_kind(value: Any) -> str:
+    kind = str(value or "").strip().lower()
+    if kind in {"pie", "bar", "line"}:
+        return kind
+    return "bar"
+
+
+def _chart_kind_from_echarts_option(option: Any) -> str:
+    if not isinstance(option, dict):
+        return "bar"
+    series = option.get("series")
+    if not isinstance(series, list) or not series:
+        return "bar"
+    first = series[0]
+    if not isinstance(first, dict):
+        return "bar"
+    return _normalize_chart_kind(first.get("type"))
 
 
 def _report_tables(
@@ -663,6 +1153,9 @@ def _report_tables(
     profile: dict[str, Any],
     python_result: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    generated_tables = normalize_python_tables(python_result.get("tables") or [])
+    if generated_tables:
+        return generated_tables
     if not rows:
         return []
     columns = profile.get("columns") or list(rows[0].keys())
@@ -675,20 +1168,55 @@ def _report_tables(
     ]
 
 
+def normalize_python_tables(tables: Any) -> list[dict[str, Any]]:
+    if not isinstance(tables, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for index, table in enumerate(tables):
+        if not isinstance(table, dict):
+            continue
+        rows = table.get("rows") or []
+        if not isinstance(rows, list):
+            continue
+        rows = [row for row in rows if isinstance(row, dict)]
+        if not rows:
+            continue
+        columns = table.get("columns")
+        if not isinstance(columns, list) or not columns:
+            columns = list(rows[0].keys())
+        normalized.append({
+            "title": str(table.get("title") or f"分析表 {index + 1}"),
+            "columns": [str(column) for column in columns],
+            "rows": rows[:50],
+        })
+    return normalized
+
+
 def _top_row_sentence(rows: list[dict[str, Any]], python_result: dict[str, Any]) -> str:
     if not rows:
         return ""
     dimensions = python_result.get("dimensions") or []
     metrics = python_result.get("metrics") or []
-    if not dimensions or not metrics or not isinstance(metrics[0], dict):
+    if not dimensions or not metrics:
         return ""
-    dimension = dimensions[0]
-    metric = metrics[0].get("field")
+    dimension = _result_field_name(dimensions[0])
+    metric = _result_field_name(metrics[0])
     if not metric:
         return ""
     row = rows[0]
     if dimension in row and metric in row:
         return f"首位 {dimension} 为 {row.get(dimension)}，{metric} 为 {_format_number(row.get(metric))}。"
+    return ""
+
+
+def _result_field_name(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("field", "column", "name", "key", "metric", "dimension"):
+            field = value.get(key)
+            if isinstance(field, str) and field:
+                return field
     return ""
 
 
@@ -766,6 +1294,39 @@ def report_to_stream_text(report: dict[str, Any]) -> str:
         lines.extend(f"- {item}" for item in suggestion_items)
 
     return "\n".join(lines).strip()
+
+
+def align_markdown_chart_kinds(markdown: str, charts: list[dict[str, Any]]) -> str:
+    if not markdown or not charts:
+        return markdown
+    normalized = markdown
+    for chart in charts:
+        if not isinstance(chart, dict):
+            continue
+        kind = _normalize_chart_kind(chart.get("chart_kind") or chart.get("type"))
+        option = chart.get("echarts_option")
+        if kind not in {"pie", "bar", "line"} or not isinstance(option, dict):
+            continue
+        expected_option = deepcopy(option)
+        block = "```echarts\n" + json.dumps(expected_option, ensure_ascii=False, indent=2) + "\n```"
+        title = str(chart.get("title") or "").strip()
+        if title and title in normalized:
+            normalized = replace_first_echarts_block_after_title(normalized, title, block)
+    return normalized
+
+
+def replace_first_echarts_block_after_title(markdown: str, title: str, block: str) -> str:
+    title_index = markdown.find(title)
+    if title_index < 0:
+        return markdown
+    fence_start = markdown.find("```", title_index)
+    if fence_start < 0:
+        return markdown
+    fence_end = markdown.find("```", fence_start + 3)
+    if fence_end < 0:
+        return markdown
+    fence_end += 3
+    return markdown[:fence_start] + block + markdown[fence_end:]
 
 
 def _final_answer_from_report(report: dict[str, Any], fallback: str) -> str:

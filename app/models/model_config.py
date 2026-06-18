@@ -16,6 +16,7 @@ class ModelConfig(BaseModel):
     model_name: str
     api_key: str | None = None
     api_key_enabled: bool = False
+    api_key_expires_at: datetime | None = None
     embedding_dimension: int | None = None
     status: str = "active"
     created_at: datetime | None = None
@@ -30,6 +31,7 @@ class ModelConfigCreate(BaseModel):
     model_name: str
     api_key: str | None = None
     api_key_enabled: bool = False
+    api_key_expires_at: datetime | None = None
     embedding_dimension: int | None = Field(default=None, ge=1)
     status: str = "active"
 

@@ -10,6 +10,9 @@ export interface ChatRequest {
   agent_id?: number
   datasource_id?: number | null
   session_id?: string
+  trace_id?: string
+  require_sql_confirmation?: boolean
+  enable_low_confidence_clarification?: boolean
 }
 
 export interface ChatResponse {
@@ -20,6 +23,14 @@ export interface ChatResponse {
   logic_form?: Record<string, unknown>
   answer: string
   sql_result: Record<string, unknown>[]
+  plan?: Record<string, unknown>
+  semantic_check?: Record<string, unknown>
+  python_result?: Record<string, unknown>
+  report_payload?: Record<string, unknown>
+  trace_id?: string
+  execution_trace?: Record<string, unknown>
+  human_confirmation?: Record<string, unknown>
+  clarification?: Record<string, unknown>
 }
 
 export interface DatasourceItem {
@@ -112,6 +123,9 @@ export interface ModelConfigItem {
   model_name: string
   api_key_enabled: boolean | number
   api_key_configured?: boolean | number
+  api_key_expires_at?: string | null
+  api_key_expired?: boolean | number
+  api_key_expires_soon?: boolean | number
   embedding_dimension?: number | null
   status: string
   created_at?: string
@@ -119,6 +133,24 @@ export interface ModelConfigItem {
 
 export type ModelConfigRequest = Omit<ModelConfigItem, 'id' | 'created_at'> & {
   api_key?: string | null
+}
+
+export interface PromptTemplateItem {
+  id: number
+  prompt_key: string
+  name: string
+  description?: string | null
+  agent_id?: number | null
+  model_config_id?: number | null
+  semantic_domain_id?: number | null
+  template_text: string
+  status: string
+  created_at?: string
+  updated_at?: string
+}
+
+export type PromptTemplateRequest = Omit<PromptTemplateItem, 'id' | 'created_at' | 'updated_at'> & {
+  id?: number | null
 }
 
 export async function fetchAgents(): Promise<AgentItem[]> {
@@ -158,13 +190,51 @@ export async function updateModelConfig(configId: number, config: ModelConfigReq
   return data
 }
 
+export async function testModelConfig(configId: number) {
+  const { data } = await api.post<{
+    ok: boolean
+    message: string
+    status_code?: number
+    latency_ms?: number
+    detail?: string
+  }>(`/model-config/${configId}/test`)
+  return data
+}
+
 export async function deleteModelConfig(configId: number) {
   const { data } = await api.delete(`/model-config/${configId}`)
   return data
 }
 
+export async function fetchPromptTemplates(promptKey?: string): Promise<PromptTemplateItem[]> {
+  const { data } = await api.get<{ templates: PromptTemplateItem[] }>('/prompt/list', {
+    params: promptKey ? { prompt_key: promptKey } : undefined,
+  })
+  return data.templates || []
+}
+
+export async function upsertPromptTemplate(template: PromptTemplateRequest) {
+  const { data } = await api.post('/prompt/templates', template)
+  return data
+}
+
+export async function deletePromptTemplate(templateId: number) {
+  const { data } = await api.delete(`/prompt/templates/${templateId}`)
+  return data
+}
+
+export async function resolvePromptTemplate(payload: Record<string, unknown>) {
+  const { data } = await api.post('/prompt/resolve', payload)
+  return data
+}
+
 export async function sendMessage(req: ChatRequest): Promise<ChatResponse> {
   const { data } = await api.post<ChatResponse>('/chat', req)
+  return data
+}
+
+export async function confirmSqlExecution(req: ChatRequest & { sql: string }): Promise<ChatResponse> {
+  const { data } = await api.post<ChatResponse>('/chat/confirm-sql', req)
   return data
 }
 
@@ -193,6 +263,15 @@ export interface ReasoningTraceStep {
   events?: string[]
   output: Record<string, unknown> | null
   summary: string
+}
+
+export interface FeedbackRequest {
+  agent_id?: number
+  session_id?: string | null
+  trace_id?: string | null
+  rating?: 'positive' | 'negative' | 'neutral'
+  comment?: string | null
+  payload?: Record<string, unknown>
 }
 
 export function sendMessageStream(
@@ -412,6 +491,21 @@ export async function fetchSemanticSnapshots(domainId: number) {
   return data.snapshots || []
 }
 
+export async function fetchSemanticSnapshot(domainId: number, snapshotId: number) {
+  const { data } = await api.get(`/semantic/domains/${domainId}/snapshots/${snapshotId}`)
+  return data.snapshot
+}
+
+export async function diffSemanticSnapshot(domainId: number, snapshotId: number) {
+  const { data } = await api.get(`/semantic/domains/${domainId}/snapshots/${snapshotId}/diff`)
+  return data
+}
+
+export async function rollbackSemanticSnapshot(domainId: number, snapshotId: number) {
+  const { data } = await api.post(`/semantic/domains/${domainId}/snapshots/${snapshotId}/rollback`)
+  return data
+}
+
 export async function fetchSemanticAssets(domainId: number, assetType?: string) {
   const { data } = await api.get(`/semantic/assets/${domainId}`, {
     params: assetType ? { type: assetType } : undefined,
@@ -490,5 +584,10 @@ export async function fetchHistory(agentId: number, sessionId: string): Promise<
 
 export async function deleteSession(agentId: number, sessionId: string) {
   const { data } = await api.delete(`/chat/sessions/${agentId}/${sessionId}`)
+  return data
+}
+
+export async function submitFeedback(feedback: FeedbackRequest) {
+  const { data } = await api.post('/feedback', feedback)
   return data
 }

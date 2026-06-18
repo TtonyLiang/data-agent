@@ -1,12 +1,18 @@
 import logging
 import asyncio
 import time
+from types import SimpleNamespace
 
 from app.services.llm_service import LLMService
 
 
 def test_llm_service_logs_prompt_messages(caplog):
     service = LLMService()
+    service._settings = SimpleNamespace(
+        llm_model="qwen3:14b",
+        max_llm_prompt_log_chars=8000,
+        llm_cache_enabled=False,
+    )
     messages = [
         {"role": "system", "content": "系统提示词"},
         {"role": "user", "content": "用户问题"},
@@ -20,6 +26,24 @@ def test_llm_service_logs_prompt_messages(caplog):
     assert "model=qwen3:14b" in log_text
     assert "[system] 系统提示词" in log_text
     assert "[user] 用户问题" in log_text
+
+
+def test_llm_service_truncates_prompt_logs(caplog):
+    service = LLMService()
+    service._settings = SimpleNamespace(
+        llm_model="qwen3:14b",
+        max_llm_prompt_log_chars=24,
+        llm_cache_enabled=False,
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.services.llm_service"):
+        service.log_prompt_messages(
+            [{"role": "user", "content": "很长" * 40}],
+            model="qwen3:14b",
+            streaming=False,
+        )
+
+    assert "[truncated" in caplog.text
 
 
 def test_llm_service_uses_placeholder_api_key_for_keyless_compatible_models(monkeypatch):
@@ -68,3 +92,38 @@ def test_llm_service_achat_does_not_block_event_loop(monkeypatch):
 
     assert still_tickable is True
     assert response == "ok"
+
+
+def test_llm_service_achat_uses_short_ttl_cache(monkeypatch):
+    class FakeResponse:
+        content = "cached-ok"
+
+    class FakeClient:
+        calls = 0
+
+        def invoke(self, messages):
+            self.calls += 1
+            return FakeResponse()
+
+    fake_client = FakeClient()
+    service = LLMService()
+    service._settings = SimpleNamespace(
+        llm_provider="ollama",
+        llm_model="qwen3:14b",
+        llm_cache_enabled=True,
+        llm_cache_ttl_seconds=300,
+        llm_cache_max_items=16,
+        max_llm_prompt_log_chars=8000,
+    )
+    monkeypatch.setattr(service, "get_client", lambda **kwargs: fake_client)
+
+    async def run():
+        first = await service.achat([{"role": "user", "content": "同一个问题"}])
+        second = await service.achat([{"role": "user", "content": "同一个问题"}])
+        return first, second
+
+    first, second = asyncio.run(run())
+
+    assert first == "cached-ok"
+    assert second == "cached-ok"
+    assert fake_client.calls == 1

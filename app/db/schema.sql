@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS model_config (
     model_name VARCHAR(128) NOT NULL COMMENT '模型名',
     api_key VARCHAR(512) DEFAULT NULL COMMENT 'API Key',
     api_key_enabled TINYINT(1) DEFAULT 0 COMMENT 'API Key是否启用',
+    api_key_expires_at TIMESTAMP NULL DEFAULT NULL COMMENT 'API Key过期时间',
     embedding_dimension INT DEFAULT NULL COMMENT '向量维度',
     status VARCHAR(32) DEFAULT 'active' COMMENT '状态',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -60,6 +61,32 @@ CREATE TABLE IF NOT EXISTS agent_datasource (
     PRIMARY KEY (agent_id, datasource_id),
     INDEX idx_datasource_id (datasource_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体数据源关联';
+
+-- 智能体表级权限；未配置时默认沿用数据源授权，配置后按白名单/黑名单生效
+CREATE TABLE IF NOT EXISTS agent_table_permission (
+    agent_id BIGINT NOT NULL COMMENT '智能体ID',
+    datasource_id BIGINT NOT NULL COMMENT '数据源ID',
+    table_name VARCHAR(256) NOT NULL COMMENT '物理表名',
+    allowed TINYINT(1) DEFAULT 1 COMMENT '是否允许访问',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (agent_id, datasource_id, table_name),
+    INDEX idx_agent_table_permission_ds (datasource_id, table_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体表级权限';
+
+-- 智能体列级权限与脱敏策略；未配置列默认允许且不脱敏
+CREATE TABLE IF NOT EXISTS agent_column_permission (
+    agent_id BIGINT NOT NULL COMMENT '智能体ID',
+    datasource_id BIGINT NOT NULL COMMENT '数据源ID',
+    table_name VARCHAR(256) NOT NULL COMMENT '物理表名',
+    column_name VARCHAR(256) NOT NULL COMMENT '物理字段名',
+    allowed TINYINT(1) DEFAULT 1 COMMENT '是否允许访问',
+    masking_policy VARCHAR(32) DEFAULT 'none' COMMENT 'none/redact/partial/hash',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (agent_id, datasource_id, table_name, column_name),
+    INDEX idx_agent_column_permission_ds (datasource_id, table_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体列级权限与脱敏';
 
 -- 元数据表(表信息)
 CREATE TABLE IF NOT EXISTS meta_table (
@@ -223,6 +250,22 @@ CREATE TABLE IF NOT EXISTS logic_form_template (
     INDEX idx_domain_intent (domain_id, intent_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LogicForm模板';
 
+-- Prompt 模板: 可按智能体、模型配置、语义层覆盖各节点系统提示词
+CREATE TABLE IF NOT EXISTS prompt_template (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    prompt_key VARCHAR(128) NOT NULL COMMENT '模板Key，如 nl2lf_generate.system',
+    name VARCHAR(256) NOT NULL COMMENT '模板名称',
+    description TEXT COMMENT '模板说明',
+    agent_id BIGINT DEFAULT NULL COMMENT '适用智能体',
+    model_config_id BIGINT DEFAULT NULL COMMENT '适用模型配置',
+    semantic_domain_id BIGINT DEFAULT NULL COMMENT '适用语义层',
+    template_text LONGTEXT NOT NULL COMMENT 'Prompt模板正文',
+    status VARCHAR(32) DEFAULT 'active' COMMENT 'active/disabled',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_prompt_scope (prompt_key, agent_id, model_config_id, semantic_domain_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Prompt模板配置';
+
 -- 智能体知识库(文档)
 CREATE TABLE IF NOT EXISTS agent_knowledge (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -251,7 +294,21 @@ CREATE TABLE IF NOT EXISTS chat_history (
     python_result JSON DEFAULT NULL COMMENT 'Python分析结果',
     report_payload JSON DEFAULT NULL COMMENT '结构化分析报告',
     sql_text TEXT DEFAULT NULL COMMENT '兼容字段: 生成的SQL',
-    sql_result TEXT DEFAULT NULL COMMENT 'SQL执行结果(JSON)',
+    sql_result LONGTEXT DEFAULT NULL COMMENT 'SQL执行结果(JSON)',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_session (agent_id, session_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='对话历史';
+
+-- 用户反馈回流
+CREATE TABLE IF NOT EXISTS user_feedback (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    agent_id BIGINT NOT NULL COMMENT '智能体ID',
+    session_id VARCHAR(64) DEFAULT NULL COMMENT '会话ID',
+    trace_id VARCHAR(64) DEFAULT NULL COMMENT '链路ID',
+    rating VARCHAR(32) NOT NULL COMMENT 'positive/negative/neutral',
+    comment TEXT COMMENT '反馈内容',
+    payload JSON DEFAULT NULL COMMENT '上下文快照',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_feedback_agent_session (agent_id, session_id),
+    INDEX idx_feedback_trace (trace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户反馈';

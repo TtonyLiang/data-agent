@@ -70,3 +70,111 @@ async def test_list_all_domains_orders_by_id(monkeypatch):
     await SemanticRuntimeService().list_all_domains()
 
     assert db.queries[0][0] == "SELECT * FROM semantic_domain ORDER BY id ASC"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_diff_reports_asset_changes(monkeypatch):
+    service = SemanticRuntimeService()
+
+    async def fake_get_snapshot(domain_id, snapshot_id):
+        return {
+            "id": snapshot_id,
+            "name": "调整前",
+            "description": "",
+            "created_at": "2026-06-18",
+            "snapshot_json": {
+                "domain": {
+                    "id": domain_id,
+                    "agent_id": 1,
+                    "datasource_id": 1,
+                    "domain_key": "loan_risk",
+                    "name": "贷款风控",
+                    "description": "old",
+                    "status": "active",
+                },
+                "assets": {
+                    "metric": [
+                        {"id": 1, "domain_id": domain_id, "metric_key": "application_count", "name": "申请笔数"}
+                    ],
+                    "mapping": [],
+                    "concept": [],
+                    "relation": [],
+                    "rule": [],
+                    "template": [],
+                },
+            },
+        }
+
+    async def fake_export_domain_bundle(domain_id):
+        return {
+            "domain": {
+                "id": domain_id,
+                "agent_id": 1,
+                "datasource_id": 1,
+                "domain_key": "loan_risk",
+                "name": "贷款风控",
+                "description": "new",
+                "status": "active",
+            },
+            "assets": {
+                "metric": [
+                    {"id": 1, "domain_id": domain_id, "metric_key": "application_count", "name": "申请数量"},
+                    {"id": 2, "domain_id": domain_id, "metric_key": "approval_rate", "name": "审批通过率"},
+                ],
+                "mapping": [],
+                "concept": [],
+                "relation": [],
+                "rule": [],
+                "template": [],
+            },
+        }
+
+    monkeypatch.setattr(service, "get_snapshot", fake_get_snapshot)
+    monkeypatch.setattr(service, "export_domain_bundle", fake_export_domain_bundle)
+
+    diff = await service.diff_snapshot(9, 3)
+
+    assert diff["summary"]["domain_changed"] is True
+    assert diff["summary"]["added"] == 1
+    assert diff["summary"]["changed"] == 1
+    assert diff["assets"]["metric"]["added"] == ["approval_rate"]
+    assert diff["assets"]["metric"]["changed"][0]["key"] == "application_count"
+
+
+@pytest.mark.asyncio
+async def test_rollback_snapshot_replaces_current_assets(monkeypatch):
+    service = SemanticRuntimeService()
+    db = RecordingDB({"SELECT * FROM semantic_domain WHERE id": [{"id": 9, "agent_id": 1, "domain_key": "loan_risk", "name": "贷款风控"}]})
+    imported = {}
+
+    async def fake_get_snapshot(domain_id, snapshot_id):
+        return {
+            "id": snapshot_id,
+            "snapshot_json": {
+                "domain": {
+                    "datasource_id": 5,
+                    "name": "贷款风控快照",
+                    "description": "snapshot",
+                    "status": "active",
+                },
+                "assets": {"metric": [{"metric_key": "application_count", "name": "申请笔数"}]},
+                "asset_counts": {"metric": 1},
+            },
+        }
+
+    async def fake_import_assets(domain_id, assets):
+        imported["domain_id"] = domain_id
+        imported["assets"] = assets
+
+    monkeypatch.setattr(semantic_runtime, "get_management_db", lambda: db)
+    monkeypatch.setattr(service, "get_snapshot", fake_get_snapshot)
+    monkeypatch.setattr(service, "_import_assets", fake_import_assets)
+
+    result = await service.rollback_snapshot(9, 3)
+
+    statements = [sql for sql, _ in db.queries]
+    assert any(sql.startswith("UPDATE semantic_domain") for sql in statements)
+    assert any("DELETE FROM semantic_metric" in sql for sql in statements)
+    assert imported["domain_id"] == 9
+    assert imported["assets"]["metric"][0]["metric_key"] == "application_count"
+    assert result["message"] == "语义层已回滚到快照"

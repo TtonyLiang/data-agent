@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import asyncio
+import time
 
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_openai import ChatOpenAI
@@ -19,6 +20,7 @@ class LLMService:
     def __init__(self):
         self._settings = get_settings()
         self._clients: dict[str, ChatOpenAI] = {}
+        self._response_cache: dict[str, tuple[float, str]] = {}
 
     def get_client(
         self,
@@ -70,6 +72,41 @@ class LLMService:
     def _api_key_cache_token(self, api_key: str) -> str:
         return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12]
 
+    def _messages_cache_key(self, messages: list[dict[str, str]], kwargs: dict) -> str:
+        payload = {
+            "messages": messages,
+            "provider": kwargs.get("provider") or self._settings.llm_provider,
+            "model": kwargs.get("model") or self._settings.llm_model,
+            "base_url": kwargs.get("base_url") or "",
+            "temperature": kwargs.get("temperature", 0),
+        }
+        return hashlib.sha256(
+            repr(payload).encode("utf-8", errors="ignore")
+        ).hexdigest()
+
+    def _cache_get(self, key: str) -> str | None:
+        if not self._settings.llm_cache_enabled:
+            return None
+        cached = self._response_cache.get(key)
+        if not cached:
+            return None
+        created_at, value = cached
+        if time.monotonic() - created_at > self._settings.llm_cache_ttl_seconds:
+            self._response_cache.pop(key, None)
+            return None
+        return value
+
+    def _cache_put(self, key: str, value: str) -> None:
+        if not self._settings.llm_cache_enabled:
+            return
+        if len(self._response_cache) >= self._settings.llm_cache_max_items:
+            oldest_key = min(
+                self._response_cache,
+                key=lambda item: self._response_cache[item][0],
+            )
+            self._response_cache.pop(oldest_key, None)
+        self._response_cache[key] = (time.monotonic(), value)
+
     async def resolve_agent_chat_kwargs(self, agent_id: int | None) -> dict:
         if not agent_id:
             return {}
@@ -104,6 +141,7 @@ class LLMService:
             f"[{message.get('role', '')}] {message.get('content', '')}"
             for message in messages
         )
+        rendered = truncate_text(rendered, self._settings.max_llm_prompt_log_chars)
         logger.info(
             "LLM request model=%s streaming=%s messages:\n%s",
             model or self._settings.llm_model,
@@ -117,9 +155,16 @@ class LLMService:
             model=kwargs.get("model"),
             streaming=False,
         )
+        cache_key = self._messages_cache_key(messages, kwargs)
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            logger.info("LLM cache hit model=%s", kwargs.get("model") or self._settings.llm_model)
+            return cached
         client = self.get_client(**kwargs, streaming=False)
         resp = client.invoke(self._to_lc_messages(messages))
-        return resp.content
+        content = str(resp.content or "")
+        self._cache_put(cache_key, content)
+        return content
 
     async def achat(self, messages: list[dict[str, str]], **kwargs) -> str:
         self.log_prompt_messages(
@@ -127,10 +172,17 @@ class LLMService:
             model=kwargs.get("model"),
             streaming=False,
         )
+        cache_key = self._messages_cache_key(messages, kwargs)
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            logger.info("LLM cache hit model=%s", kwargs.get("model") or self._settings.llm_model)
+            return cached
         client = self.get_client(**kwargs, streaming=False)
         lc_messages = self._to_lc_messages(messages)
         resp = await asyncio.to_thread(client.invoke, lc_messages)
-        return resp.content
+        content = str(resp.content or "")
+        self._cache_put(cache_key, content)
+        return content
 
     async def achat_stream(self, messages: list[dict[str, str]], **kwargs):
         self.log_prompt_messages(
@@ -160,10 +212,19 @@ class LLMService:
             model=kwargs.get("model"),
             streaming=False,
         )
+        cache_key = self._messages_cache_key(messages, {**kwargs, "_reasoning": True})
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            logger.info("LLM cache hit with reasoning model=%s", kwargs.get("model") or self._settings.llm_model)
+            try:
+                content, reasoning = cached.split("\n---REASONING---\n", 1)
+                return content, reasoning
+            except ValueError:
+                return cached, ""
         client = self.get_client(**kwargs, streaming=False)
         lc_messages = self._to_lc_messages(messages)
         resp = await asyncio.to_thread(client.invoke, lc_messages)
-        content = resp.content or ""
+        content = str(resp.content or "")
         reasoning = ""
         # MiMo 返回 reasoning_content 在 additional_kwargs 中
         if hasattr(resp, "additional_kwargs"):
@@ -171,6 +232,8 @@ class LLMService:
         # 也检查 response_metadata
         if not reasoning and hasattr(resp, "response_metadata"):
             reasoning = resp.response_metadata.get("reasoning_content", "")
+        reasoning = truncate_text(str(reasoning or ""), self._settings.max_reasoning_trace_chars)
+        self._cache_put(cache_key, f"{content}\n---REASONING---\n{reasoning}")
         return content, reasoning
 
     async def achat_stream_with_reasoning(
@@ -213,3 +276,9 @@ def get_llm_service() -> LLMService:
     if _llm_service is None:
         _llm_service = LLMService()
     return _llm_service
+
+
+def truncate_text(text: str, limit: int) -> str:
+    if limit <= 0 or len(text) <= limit:
+        return text
+    return f"{text[:limit]}... [truncated {len(text) - limit} chars]"

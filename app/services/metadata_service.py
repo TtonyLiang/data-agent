@@ -1,5 +1,6 @@
 from app.db.mysql import get_datasource_db, get_management_db
 from app.models.datasource import ColumnMeta, TableMeta
+from app.services.permission_service import get_permission_service
 
 
 class MetadataService:
@@ -132,6 +133,10 @@ class MetadataService:
             table_data["columns"] = [column.model_dump() for column in columns]
             schema.append(table_data)
         return schema
+
+    async def get_authorized_schema(self, datasource_id: int, agent_id: int | None = None) -> list[dict]:
+        schema = await self.get_schema(datasource_id)
+        return await get_permission_service().filter_schema(agent_id, datasource_id, schema)
 
     async def collect_schema(
         self,

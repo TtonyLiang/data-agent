@@ -32,3 +32,13 @@ assert.ok(
   source.includes("return 'Key 缺失'"),
   'ModelConfig should warn when API key is enabled but the stored key is missing',
 )
+
+assert.ok(
+  source.includes('testModelConfig') && source.includes('handleTest'),
+  'ModelConfig should expose a model connection test action',
+)
+
+assert.ok(
+  source.includes('api_key_expires_at') && source.includes('即将过期'),
+  'ModelConfig should expose API key expiration reminders',
+)

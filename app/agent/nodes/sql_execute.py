@@ -1,42 +1,109 @@
 
+import logging
+import time
+
 from app.db.mysql import get_business_db, get_datasource_db
-from app.utils.sql_validator import validate_sql
+from app.services.permission_service import get_permission_service
+from app.utils.sql_validator import normalize_sql_for_execution
+
+
+logger = logging.getLogger(__name__)
+SLOW_QUERY_THRESHOLD_SECONDS = 2.0
 
 
 async def sql_execute_node(state: dict) -> dict:
     """SQL 执行节点."""
     sql = state.get("compiled_sql") or state.get("sql_text", "")
+    agent_id = state.get("agent_id")
     datasource_id = state.get("datasource_id")
     retry_count = state.get("sql_retry_count", 0)
+    trace_id = state.get("trace_id", "")
 
     if not sql:
         return {"sql_result": [], "sql_error": "SQL为空", "final_answer": "未能编译出可执行 SQL。"}
 
-    ok, reason = validate_sql(sql)
-    if not ok:
+    validation = normalize_sql_for_execution(sql)
+    if not validation.ok:
         return {
             "sql_result": [],
-            "sql_error": f"安全拦截: {reason}",
-            "final_answer": f"安全拦截: {reason}",
+            "sql_error": f"安全拦截: {validation.reason}",
+            "final_answer": f"安全拦截: {validation.reason}",
             "sql_retry_count": retry_count + 1,
+        }
+    safe_sql = validation.sql
+    access_ok, access_reason = await get_permission_service().validate_sql_access(agent_id, datasource_id, safe_sql)
+    if not access_ok:
+        return {
+            "sql_result": [],
+            "sql_error": f"权限拦截: {access_reason}",
+            "final_answer": f"权限拦截: {access_reason}",
+            "sql_retry_count": retry_count + 1,
+            "execution_trace": {
+                **dict(state.get("execution_trace") or {}),
+                "trace_id": trace_id,
+                "permission": {
+                    "allowed": False,
+                    "reason": access_reason,
+                },
+            },
         }
 
     try:
         db = await get_datasource_db(datasource_id) if datasource_id else get_business_db()
-        results = await db.execute_query(sql)
+        started_at = time.monotonic()
+        results = await db.execute_query(safe_sql)
+        masked_results, masking_applied = await get_permission_service().mask_rows(agent_id, datasource_id, results)
+        duration_ms = round((time.monotonic() - started_at) * 1000, 2)
+        slow_query = duration_ms >= SLOW_QUERY_THRESHOLD_SECONDS * 1000
+        if slow_query:
+            logger.warning(
+                "slow SQL query trace_id=%s duration_ms=%s rows=%s sql=%s",
+                trace_id,
+                duration_ms,
+                len(masked_results),
+                safe_sql,
+            )
+        execution_trace = dict(state.get("execution_trace") or {})
+        execution_trace.update({
+            "trace_id": trace_id or execution_trace.get("trace_id"),
+            "sql_security": {
+                "normalized": safe_sql != sql.strip(),
+                "limit_injected": "LIMIT" not in sql.upper(),
+                "max_limit": 1000,
+            },
+            "sql_execution": {
+                "duration_ms": duration_ms,
+                "row_count": len(masked_results),
+                "slow_query": slow_query,
+            },
+            "permission": {
+                "allowed": True,
+                "masked_columns": masking_applied,
+            },
+        })
         return {
-            "sql_result": results,
+            "sql_result": masked_results,
             "sql_error": None,
-            "compiled_sql": sql,
-            "sql_text": sql,
-            "final_answer": format_result(results, sql),
+            "compiled_sql": safe_sql,
+            "sql_text": safe_sql,
+            "execution_trace": execution_trace,
+            "final_answer": format_result(masked_results, safe_sql),
         }
     except Exception as e:
+        execution_trace = dict(state.get("execution_trace") or {})
+        execution_trace.update({
+            "trace_id": trace_id or execution_trace.get("trace_id"),
+            "sql_execution": {
+                "error_type": e.__class__.__name__,
+                "error": str(e),
+            },
+        })
         return {
             "sql_result": [],
             "sql_error": str(e),
             "final_answer": f"SQL执行失败: {e}",
             "sql_retry_count": retry_count + 1,
+            "execution_trace": execution_trace,
         }
 
 

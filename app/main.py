@@ -5,12 +5,16 @@ import time
 import uuid
 from collections.abc import Iterator
 from contextlib import suppress
+from copy import deepcopy
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from app.agent.graph import AgentState, build_mvp_graph
+from app.agent.nodes.phase3 import planner_node, python_analyze_node, python_generate_node, report_generator_node
+from app.agent.nodes.sql_execute import sql_execute_node
 from app.config import get_settings
 from app.db.mysql import get_management_db
 from app.db.migrations import run_management_migrations
@@ -33,6 +37,39 @@ CUSTOM_STREAM_NODES = {
     "python_analyze",
     "report_generator",
 }
+
+
+def new_trace_id() -> str:
+    return f"trc_{uuid.uuid4().hex[:12]}"
+
+
+def merge_execution_trace(trace: dict | None, trace_id: str, started_at: float | None = None) -> dict:
+    merged = dict(trace or {})
+    merged["trace_id"] = trace_id
+    if started_at is not None:
+        merged["total_duration_ms"] = round((time.monotonic() - started_at) * 1000, 2)
+    return merged
+
+
+def classify_error(exc: Exception, node: str = "") -> dict[str, str]:
+    detail = str(exc).lower()
+    error_type = exc.__class__.__name__.lower()
+    if "permission" in detail or "forbidden" in detail or isinstance(exc, HTTPException):
+        category = "permission"
+        severity = "warning"
+    elif "sql" in node or "sql" in detail:
+        category = "sql"
+        severity = "error"
+    elif "timeout" in detail or "timed out" in detail or "timeout" in error_type:
+        category = "timeout"
+        severity = "warning"
+    elif "api_key" in detail or "unauthorized" in detail or "model" in detail or "llm" in detail:
+        category = "llm"
+        severity = "error"
+    else:
+        category = "runtime"
+        severity = "error"
+    return {"category": category, "severity": severity}
 
 app.add_middleware(
     CORSMiddleware,
@@ -74,6 +111,10 @@ async def chat(request: dict):
     agent_id = request.get("agent_id", 1)
     datasource_id = request.get("datasource_id")
     session_id = request.get("session_id", str(uuid.uuid4()))
+    trace_id = request.get("trace_id") or new_trace_id()
+    require_sql_confirmation = bool(request.get("require_sql_confirmation"))
+    enable_low_confidence_clarification = bool(request.get("enable_low_confidence_clarification"))
+    started_at = time.monotonic()
 
     await validate_datasource_access(agent_id, datasource_id)
 
@@ -86,10 +127,15 @@ async def chat(request: dict):
         "agent_id": agent_id,
         "session_id": session_id,
         "datasource_id": datasource_id,
+        "trace_id": trace_id,
+        "require_sql_confirmation": require_sql_confirmation,
+        "enable_low_confidence_clarification": enable_low_confidence_clarification,
         "chat_history": history,
     }
 
+    logger.info("chat request started trace_id=%s session_id=%s agent_id=%s datasource_id=%s", trace_id, session_id, agent_id, datasource_id)
     result = await graph.ainvoke(state)
+    execution_trace = merge_execution_trace(result.get("execution_trace"), trace_id, started_at)
 
     # 保存本轮对话
     answer = result.get("final_answer", "")
@@ -104,7 +150,7 @@ async def chat(request: dict):
         sql_result,
         logic_form=result.get("logic_form"),
         compiled_sql=sql,
-        execution_trace=result.get("execution_trace"),
+        execution_trace=execution_trace,
         plan_payload=result.get("plan"),
         semantic_check=result.get("semantic_check"),
         python_result=result.get("python_result"),
@@ -113,6 +159,7 @@ async def chat(request: dict):
 
     return {
         "session_id": session_id,
+        "trace_id": trace_id,
         "intent": result.get("intent"),
         "sql": sql,
         "compiled_sql": sql,
@@ -123,6 +170,9 @@ async def chat(request: dict):
         "semantic_check": result.get("semantic_check"),
         "python_result": result.get("python_result"),
         "report_payload": result.get("report_payload"),
+        "human_confirmation": result.get("human_confirmation"),
+        "clarification": result.get("clarification"),
+        "execution_trace": execution_trace,
     }
 
 
@@ -133,6 +183,9 @@ async def chat_stream(request: dict):
     agent_id = request.get("agent_id", 1)
     datasource_id = request.get("datasource_id")
     session_id = request.get("session_id", str(uuid.uuid4()))
+    trace_id = request.get("trace_id") or new_trace_id()
+    require_sql_confirmation = bool(request.get("require_sql_confirmation"))
+    enable_low_confidence_clarification = bool(request.get("enable_low_confidence_clarification"))
 
     await validate_datasource_access(agent_id, datasource_id)
 
@@ -144,11 +197,13 @@ async def chat_stream(request: dict):
         "semantic_enhance": "语义增强",
         "semantic_runtime_recall": "知识召回",
         "schema_recall": "数据定位",
+        "clarification": "低置信度追问",
         "nl2lf_generate": "LogicForm 生成",
         "lf_validate": "语义校验",
         "lf_to_sql_compile": "SQL 编译",
         "nl2sql_fallback": "NL2SQL 兜底",
         "semantic_check": "语义一致性检查",
+        "sql_confirmation": "执行确认",
         "lf_repair": "LF 修复",
         "sql_execute": "SQL 执行",
         "planner": "分析计划",
@@ -158,12 +213,16 @@ async def chat_stream(request: dict):
     }
 
     async def event_generator():
+        stream_started_at = time.monotonic()
         graph = get_graph()
         state: AgentState = {
             "question": question,
             "agent_id": agent_id,
             "session_id": session_id,
             "datasource_id": datasource_id,
+            "trace_id": trace_id,
+            "require_sql_confirmation": require_sql_confirmation,
+            "enable_low_confidence_clarification": enable_low_confidence_clarification,
             "chat_history": history,
         }
 
@@ -177,7 +236,17 @@ async def chat_stream(request: dict):
         node_started_at: dict[str, float] = {}
         reasoning_trace: list[dict] = []
 
+        def emit(event: dict) -> dict:
+            return sse_event(event, trace_id=trace_id)
+
         try:
+            logger.info(
+                "chat stream started trace_id=%s session_id=%s agent_id=%s datasource_id=%s",
+                trace_id,
+                session_id,
+                agent_id,
+                datasource_id,
+            )
             event_queue: asyncio.Queue[dict] = asyncio.Queue()
             producer_task = asyncio.create_task(pump_graph_events(graph, state, event_queue))
 
@@ -199,7 +268,7 @@ async def chat_stream(request: dict):
                                 NODE_LABELS.get(current_node, current_node),
                             )
                             append_trace_event(step, progress)
-                            yield sse_event({
+                            yield emit({
                                 "event": "node_progress",
                                 "data": json.dumps({
                                     "node": current_node,
@@ -224,7 +293,7 @@ async def chat_stream(request: dict):
                         node_started_at[node] = time.monotonic()
                         step = ensure_trace_step(reasoning_trace, node, NODE_LABELS[node])
                         append_trace_event(step, f"开始{NODE_LABELS[node]}。")
-                        yield sse_event({
+                        yield emit({
                             "event": "node_start",
                             "data": json.dumps({
                                 "node": node,
@@ -248,7 +317,7 @@ async def chat_stream(request: dict):
                                         node_token_buffers.get(current_node, "") + content
                                     )
                                     append_trace_stream_text(reasoning_trace, current_node, NODE_LABELS.get(current_node, ""), content)
-                                    yield sse_event({
+                                    yield emit({
                                         "event": "token",
                                         "data": json.dumps({
                                             "node": current_node,
@@ -272,7 +341,7 @@ async def chat_stream(request: dict):
                                     NODE_LABELS.get(token_node, token_node),
                                     content,
                                 )
-                                yield sse_event({
+                                yield emit({
                                     "event": "reasoning",
                                     "data": json.dumps({
                                         "node": token_node,
@@ -290,7 +359,7 @@ async def chat_stream(request: dict):
                                     NODE_LABELS.get(token_node, token_node),
                                     content,
                                 )
-                                yield sse_event({
+                                yield emit({
                                     "event": "token",
                                     "data": json.dumps({
                                         "node": token_node,
@@ -308,7 +377,7 @@ async def chat_stream(request: dict):
                             rc = msg.additional_kwargs.get("reasoning_content", "")
                             if rc and not reasoning_buffer:
                                 append_trace_reasoning(reasoning_trace, current_node, NODE_LABELS.get(current_node, ""), rc)
-                                yield sse_event({
+                                yield emit({
                                     "event": "reasoning",
                                     "data": json.dumps({
                                         "node": current_node,
@@ -325,6 +394,7 @@ async def chat_stream(request: dict):
                             node_started_at=node_started_at,
                             progress_counters=progress_counters,
                             reasoning_trace=reasoning_trace,
+                            trace_id=trace_id,
                         ):
                             yield pending_event
                         if node in CUSTOM_STREAM_NODES and not custom_stream_seen.get(node):
@@ -339,7 +409,7 @@ async def chat_stream(request: dict):
                                     NODE_LABELS[node],
                                     pending,
                                 )
-                                yield sse_event({
+                                yield emit({
                                     "event": "token",
                                     "data": json.dumps({
                                         "node": node,
@@ -351,7 +421,7 @@ async def chat_stream(request: dict):
                         # 提取节点关键输出
                         node_output = _extract_node_output(node, output)
                         complete_trace_step(reasoning_trace, node, NODE_LABELS[node], node_output)
-                        yield sse_event({
+                        yield emit({
                             "event": "node_complete",
                             "data": json.dumps({
                                 "node": node,
@@ -370,13 +440,16 @@ async def chat_stream(request: dict):
                         await producer_task
         except Exception as exc:
             logger.exception("chat stream failed")
-            yield sse_event({
+            error_info = classify_error(exc, current_node)
+            yield emit({
                 "event": "error",
                 "data": json.dumps({
                     "session_id": session_id,
                     "node": current_node,
                     "label": NODE_LABELS.get(current_node, current_node),
                     "error_type": exc.__class__.__name__,
+                    "error_category": error_info["category"],
+                    "severity": error_info["severity"],
                     "detail": truncate_error_detail(str(exc) or exc.__class__.__name__),
                     "message": format_stream_error_message(
                         exc,
@@ -390,22 +463,24 @@ async def chat_stream(request: dict):
         answer = final_result.get("final_answer", "")
         sql = final_result.get("compiled_sql") or final_result.get("sql_text", "")
         sql_result = final_result.get("sql_result", [])
+        execution_trace = merge_execution_trace(final_result.get("execution_trace"), trace_id, stream_started_at)
+        final_result["execution_trace"] = execution_trace
 
-        yield sse_event({
+        yield emit({
             "event": "answer_start",
             "data": json.dumps({
                 "session_id": session_id,
             }, ensure_ascii=False),
         })
         for delta in chunk_text(answer):
-            yield sse_event({
+            yield emit({
                 "event": "answer_delta",
                 "data": json.dumps({
                     "session_id": session_id,
                     "delta": delta,
                 }, ensure_ascii=False),
             })
-        yield sse_event({
+        yield emit({
             "event": "answer_complete",
             "data": json.dumps({
                 "session_id": session_id,
@@ -413,24 +488,27 @@ async def chat_stream(request: dict):
             }, ensure_ascii=False),
         })
 
-        await save_turn(
-            agent_id,
-            session_id,
-            question,
-            answer,
-            sql,
-            sql_result,
-            logic_form=final_result.get("logic_form"),
-            compiled_sql=sql,
-            execution_trace=final_result.get("execution_trace"),
-            plan_payload=final_result.get("plan"),
-            semantic_check=final_result.get("semantic_check"),
-            python_result=final_result.get("python_result"),
-            report_payload=final_result.get("report_payload"),
-            reasoning_trace=reasoning_trace,
-        )
+        try:
+            await save_turn(
+                agent_id,
+                session_id,
+                question,
+                answer,
+                sql,
+                sql_result,
+                logic_form=final_result.get("logic_form"),
+                compiled_sql=sql,
+                execution_trace=execution_trace,
+                plan_payload=final_result.get("plan"),
+                semantic_check=final_result.get("semantic_check"),
+                python_result=final_result.get("python_result"),
+                report_payload=final_result.get("report_payload"),
+                reasoning_trace=reasoning_trace,
+            )
+        except Exception:
+            logger.exception("chat stream failed to persist history")
 
-        yield sse_event({
+        yield emit({
             "event": "result",
             "data": json.dumps({
                 "session_id": session_id,
@@ -444,12 +522,106 @@ async def chat_stream(request: dict):
                 "semantic_check": final_result.get("semantic_check"),
                 "python_result": final_result.get("python_result"),
                 "report_payload": final_result.get("report_payload"),
+                "human_confirmation": final_result.get("human_confirmation"),
+                "clarification": final_result.get("clarification"),
+                "execution_trace": execution_trace,
                 "reasoning_trace": reasoning_trace,
             }, ensure_ascii=False),
         })
-        yield sse_event({"event": "done", "data": "{}"})
+        yield emit({"event": "done", "data": "{}"})
 
     return EventSourceResponse(event_generator())
+
+
+@app.post("/api/chat/confirm-sql")
+async def confirm_sql_execution(request: dict):
+    """Execute a previously generated SQL after explicit human confirmation."""
+    agent_id = request.get("agent_id", 1)
+    datasource_id = request.get("datasource_id")
+    session_id = request.get("session_id", str(uuid.uuid4()))
+    trace_id = request.get("trace_id") or new_trace_id()
+    question = request.get("question") or "确认执行 SQL"
+    sql = request.get("sql") or request.get("compiled_sql") or ""
+    started_at = time.monotonic()
+
+    if not sql:
+        raise HTTPException(status_code=400, detail="缺少待确认执行的 SQL")
+
+    await validate_datasource_access(agent_id, datasource_id)
+
+    state: AgentState = {
+        "question": question,
+        "enhanced_question": request.get("enhanced_question", ""),
+        "agent_id": agent_id,
+        "session_id": session_id,
+        "datasource_id": datasource_id,
+        "trace_id": trace_id,
+        "compiled_sql": sql,
+        "sql_text": sql,
+        "logic_form": request.get("logic_form") or {},
+        "semantic_runtime": request.get("semantic_runtime") or {},
+        "execution_trace": {
+            "trace_id": trace_id,
+            "human_confirmation": {
+                "required": True,
+                "status": "confirmed",
+                "sql": sql,
+            },
+        },
+    }
+
+    state.update(await sql_execute_node(state))
+    if not state.get("sql_error"):
+        state.update(await planner_node(state))
+        state.update(await python_generate_node(state))
+        state.update(await python_analyze_node(state))
+        state.update(await report_generator_node(state))
+
+    answer = state.get("final_answer", "")
+    safe_sql = state.get("compiled_sql") or state.get("sql_text") or sql
+    sql_result = state.get("sql_result", [])
+    execution_trace = merge_execution_trace(state.get("execution_trace"), trace_id, started_at)
+    state["execution_trace"] = execution_trace
+
+    try:
+        await save_turn(
+            agent_id,
+            session_id,
+            question,
+            answer,
+            safe_sql,
+            sql_result,
+            logic_form=state.get("logic_form"),
+            compiled_sql=safe_sql,
+            execution_trace=execution_trace,
+            plan_payload=state.get("plan"),
+            semantic_check=state.get("semantic_check"),
+            python_result=state.get("python_result"),
+            report_payload=state.get("report_payload"),
+        )
+    except Exception:
+        logger.exception("confirm-sql failed to persist history")
+
+    return {
+        "session_id": session_id,
+        "trace_id": trace_id,
+        "intent": "data_query",
+        "sql": safe_sql,
+        "compiled_sql": safe_sql,
+        "logic_form": state.get("logic_form"),
+        "answer": answer,
+        "sql_result": sql_result,
+        "plan": state.get("plan"),
+        "semantic_check": state.get("semantic_check"),
+        "python_result": state.get("python_result"),
+        "report_payload": state.get("report_payload"),
+        "human_confirmation": {
+            "required": True,
+            "status": "confirmed",
+            "sql": safe_sql,
+        },
+        "execution_trace": execution_trace,
+    }
 
 
 async def pump_graph_events(graph, state: AgentState, event_queue: asyncio.Queue[dict]) -> None:
@@ -462,8 +634,25 @@ async def pump_graph_events(graph, state: AgentState, event_queue: asyncio.Queue
         await event_queue.put({"kind": "done"})
 
 
-def sse_event(event: dict) -> dict:
+def sse_event(event: dict, trace_id: str | None = None) -> dict:
+    if trace_id:
+        event = attach_trace_id(event, trace_id)
     log_sse_event(event)
+    return event
+
+
+def attach_trace_id(event: dict, trace_id: str) -> dict:
+    data = event.get("data", "{}")
+    try:
+        payload = json.loads(data) if isinstance(data, str) else data
+    except json.JSONDecodeError:
+        payload = {}
+    if isinstance(payload, dict):
+        payload.setdefault("trace_id", trace_id)
+        return {
+            **event,
+            "data": json.dumps(payload, ensure_ascii=False),
+        }
     return event
 
 
@@ -474,6 +663,7 @@ async def hold_node_for_display(
     node_started_at: dict[str, float],
     progress_counters: dict[str, int],
     reasoning_trace: list[dict],
+    trace_id: str | None = None,
 ):
     if MIN_NODE_DISPLAY_SECONDS <= 0:
         return
@@ -501,7 +691,7 @@ async def hold_node_for_display(
             "label": node_labels.get(node, node),
             "message": progress,
         }, ensure_ascii=False),
-    })
+    }, trace_id=trace_id)
     await asyncio.sleep(remaining)
 
 
@@ -521,6 +711,7 @@ def log_sse_event(event: dict) -> None:
 def compact_stream_log_payload(payload):
     if not isinstance(payload, dict):
         return payload
+    settings = get_settings()
     compacted = dict(payload)
     sql_result = compacted.get("sql_result")
     if isinstance(sql_result, list):
@@ -539,7 +730,17 @@ def compact_stream_log_payload(payload):
             "row_count": report_payload.get("row_count"),
             "status": report_payload.get("status"),
         }
-    return compacted
+    return truncate_log_values(compacted, settings.max_sse_log_value_chars)
+
+
+def truncate_log_values(value, limit: int):
+    if isinstance(value, dict):
+        return {key: truncate_log_values(item, limit) for key, item in value.items()}
+    if isinstance(value, list):
+        return [truncate_log_values(item, limit) for item in value[:20]]
+    if isinstance(value, str) and limit > 0 and len(value) > limit:
+        return f"{value[:limit]}... [truncated {len(value) - limit} chars]"
+    return value
 
 
 def format_stream_error_message(exc: Exception, label: str = "") -> str:
@@ -587,14 +788,25 @@ def append_trace_reasoning(trace: list[dict], node: str, label: str, delta: str)
     if not node:
         return
     step = ensure_trace_step(trace, node, label or node)
-    step["reasoning"] = f"{step.get('reasoning', '')}{delta}"
+    limit = get_settings().max_reasoning_trace_chars
+    step["reasoning"] = append_limited_text(step.get("reasoning", ""), delta, limit)
 
 
 def append_trace_stream_text(trace: list[dict], node: str, label: str, delta: str) -> None:
     if not node:
         return
     step = ensure_trace_step(trace, node, label or node)
-    step["streamText"] = f"{step.get('streamText', '')}{delta}"
+    limit = get_settings().max_stream_text_trace_chars
+    step["streamText"] = append_limited_text(step.get("streamText", ""), delta, limit)
+
+
+def append_limited_text(current: str, delta: str, limit: int) -> str:
+    text = f"{current or ''}{delta or ''}"
+    if limit <= 0 or len(text) <= limit:
+        return text
+    suffix = f"\n...[已截断，保留最近 {limit} 字符]"
+    keep = max(0, limit - len(suffix))
+    return f"{text[-keep:]}{suffix}" if keep else suffix
 
 
 def append_trace_event(step: dict, message: str) -> None:
@@ -636,6 +848,9 @@ def summarize_trace_step(node: str, output: dict) -> str:
         if scope.get("fallback_used"):
             return f"使用已采集表结构兜底 · {tables} 张表 {columns} 个字段"
         return f"定位 {tables} 张候选表 · {columns} 个候选字段"
+    if node == "clarification":
+        clarification = output.get("clarification") or output
+        return str(clarification.get("message") or "需要补充问题信息")
     if node == "nl2lf_generate":
         logic_form = output.get("logic_form") or {}
         metrics = logic_form.get("metrics", []) if isinstance(logic_form, dict) else []
@@ -657,6 +872,9 @@ def summarize_trace_step(node: str, output: dict) -> str:
     if node == "semantic_check":
         check = output.get("semantic_check") or output
         return "一致性通过" if check.get("valid") else "一致性未通过"
+    if node == "sql_confirmation":
+        confirmation = output.get("human_confirmation") or {}
+        return str(confirmation.get("message") or "等待用户确认执行 SQL")
     if node == "sql_execute":
         error = output.get("error")
         return f"错误: {error}" if error else f"{output.get('row_count', 0)} 条结果"
@@ -686,11 +904,13 @@ def node_progress_message(node: str, index: int = 0) -> str:
         "semantic_enhance": ["正在补全省略的指标、维度和 TopN 口径..."],
         "semantic_runtime_recall": ["正在检索知识库、匹配语义资产...", "正在整理可用指标、维度和规则..."],
         "schema_recall": ["正在定位相关数据表、字段和关联关系...", "正在根据业务口径缩小候选 schema..."],
+        "clarification": ["正在判断是否需要补充查询条件..."],
         "nl2lf_generate": ["正在调用大模型生成 LogicForm...", "正在把自然语言映射为指标、维度和过滤条件...", "正在等待模型流式返回结构化 JSON..."],
         "lf_validate": ["正在校验指标、维度、过滤和时间口径...", "正在确认语义资产能否编译执行..."],
         "lf_to_sql_compile": ["正在把 LogicForm 编译成受控 SQL...", "正在解析表字段映射和关联路径..."],
         "nl2sql_fallback": ["语义层未命中，正在调用大模型生成兜底 SQL...", "正在使用数据定位候选表约束 SQL 生成..."],
         "semantic_check": ["正在执行 SQL 前语义一致性检查...", "正在检查指标、维度和 SQL 是否一致..."],
+        "sql_confirmation": ["正在等待用户确认是否执行 SQL..."],
         "lf_repair": ["正在根据错误尝试修复 LogicForm...", "正在调整失败的指标或维度槽位..."],
         "sql_execute": ["正在执行 SQL 查询并等待数据库返回...", "数据库仍在处理查询结果..."],
         "planner": ["正在生成后续分析计划...", "正在规划统计、解读和报告结构..."],
@@ -783,6 +1003,14 @@ def _extract_node_output(node: str, output: dict) -> dict:
             "schema_scope": scope,
             "fallback_used": scope.get("fallback_used", False),
         }
+    elif node == "clarification":
+        clarification = output.get("clarification") or {}
+        return {
+            "required": clarification.get("required", True),
+            "reason": clarification.get("reason", ""),
+            "question": clarification.get("question", ""),
+            "message": clarification.get("message", output.get("final_answer", "")),
+        }
     elif node == "nl2lf_generate":
         logic_form = output.get("logic_form") or {}
         return {
@@ -825,11 +1053,21 @@ def _extract_node_output(node: str, output: dict) -> dict:
             "warnings": check.get("warnings", []),
             "checked_items": check.get("checked_items", {}),
         }
+    elif node == "sql_confirmation":
+        confirmation = output.get("human_confirmation") or {}
+        return {
+            "required": confirmation.get("required", True),
+            "status": confirmation.get("status", "pending"),
+            "message": confirmation.get("message", "SQL 已生成，等待用户确认后执行。"),
+            "sql": confirmation.get("sql", output.get("compiled_sql", "")),
+        }
     elif node == "lf_repair":
         return {"execution_trace": output.get("execution_trace", {})}
     elif node == "sql_execute":
         result = output.get("sql_result", [])
         error = output.get("sql_error")
+        trace = output.get("execution_trace") or {}
+        sql_execution = trace.get("sql_execution") or {}
         sample = result[:3] if isinstance(result, list) else []
         columns = list(sample[0].keys()) if sample else []
         return {
@@ -837,6 +1075,8 @@ def _extract_node_output(node: str, output: dict) -> dict:
             "error": error,
             "columns": columns,
             "sample_rows": sample,
+            "duration_ms": sql_execution.get("duration_ms"),
+            "slow_query": sql_execution.get("slow_query", False),
         }
     elif node == "planner":
         plan = output.get("plan", {})
@@ -998,45 +1238,170 @@ async def save_turn(
 ):
     """保存一轮对话到 chat_history."""
     db = get_management_db()
-    # 保存用户消息
-    await db.execute_query(
-        "INSERT INTO chat_history (agent_id, session_id, role, content) "
-        "VALUES (:aid, :sid, 'user', :content)",
-        {"aid": agent_id, "sid": session_id, "content": question},
+    try:
+        await db.execute_query(
+            "INSERT INTO chat_history (agent_id, session_id, role, content) "
+            "VALUES (:aid, :sid, 'user', :content)",
+            {"aid": agent_id, "sid": session_id, "content": question},
+        )
+    except Exception:
+        logger.exception("failed to persist user chat history")
+
+    assistant_params = build_assistant_history_params(
+        agent_id=agent_id,
+        session_id=session_id,
+        answer=answer,
+        sql=sql,
+        sql_result=sql_result,
+        logic_form=logic_form,
+        compiled_sql=compiled_sql,
+        execution_trace=execution_trace,
+        plan_payload=plan_payload,
+        semantic_check=semantic_check,
+        python_result=python_result,
+        report_payload=report_payload,
+        reasoning_trace=reasoning_trace,
     )
-    # 保存助手消息
+
+    try:
+        await insert_assistant_turn(db, assistant_params)
+    except Exception:
+        logger.exception("failed to persist full assistant chat history, retry with compact payload")
+        try:
+            await insert_assistant_turn(db, compact_assistant_history_params(assistant_params))
+        except Exception:
+            logger.exception("failed to persist compact assistant chat history")
+
+
+def build_assistant_history_params(
+    *,
+    agent_id: int,
+    session_id: str,
+    answer: str,
+    sql: str | None,
+    sql_result: list | None,
+    logic_form: dict | None,
+    compiled_sql: str | None,
+    execution_trace: dict | None,
+    plan_payload: dict | None,
+    semantic_check: dict | None,
+    python_result: dict | None,
+    report_payload: dict | None,
+    reasoning_trace: list[dict] | None,
+) -> dict[str, Any]:
+    return {
+        "aid": agent_id,
+        "sid": session_id,
+        "content": answer,
+        "reasoning_trace": json.dumps(reasoning_trace, ensure_ascii=False) if reasoning_trace else None,
+        "logic_form": json.dumps(logic_form, ensure_ascii=False) if logic_form else None,
+        "compiled_sql": compiled_sql or sql or None,
+        "trace": json.dumps(execution_trace, ensure_ascii=False) if execution_trace else None,
+        "sql": sql or compiled_sql or None,
+        "result": json.dumps(sql_result, ensure_ascii=False) if sql_result else None,
+        "plan_payload": json.dumps(plan_payload, ensure_ascii=False) if plan_payload else None,
+        "semantic_check": json.dumps(semantic_check, ensure_ascii=False) if semantic_check else None,
+        "python_result": json.dumps(python_result, ensure_ascii=False) if python_result else None,
+        "report_payload": json.dumps(report_payload, ensure_ascii=False) if report_payload else None,
+    }
+
+
+async def insert_assistant_turn(db, params: dict[str, Any]) -> None:
     await db.execute_query(
         "INSERT INTO chat_history "
         "(agent_id, session_id, role, content, reasoning_trace, logic_form, compiled_sql, execution_trace, "
         "sql_text, sql_result, plan_payload, semantic_check, python_result, report_payload) "
         "VALUES (:aid, :sid, 'assistant', :content, :reasoning_trace, :logic_form, :compiled_sql, :trace, "
         ":sql, :result, :plan_payload, :semantic_check, :python_result, :report_payload)",
-        {
-            "aid": agent_id, "sid": session_id,
-            "content": answer,
-            "reasoning_trace": json.dumps(reasoning_trace, ensure_ascii=False) if reasoning_trace else None,
-            "logic_form": json.dumps(logic_form, ensure_ascii=False) if logic_form else None,
-            "compiled_sql": compiled_sql or sql or None,
-            "trace": json.dumps(execution_trace, ensure_ascii=False) if execution_trace else None,
-            "sql": sql or compiled_sql or None,
-            "result": json.dumps(sql_result, ensure_ascii=False) if sql_result else None,
-            "plan_payload": json.dumps(plan_payload, ensure_ascii=False) if plan_payload else None,
-            "semantic_check": json.dumps(semantic_check, ensure_ascii=False) if semantic_check else None,
-            "python_result": json.dumps(python_result, ensure_ascii=False) if python_result else None,
-            "report_payload": json.dumps(report_payload, ensure_ascii=False) if report_payload else None,
-        },
+        params,
     )
+
+
+def compact_assistant_history_params(params: dict[str, Any]) -> dict[str, Any]:
+    compacted = dict(params)
+    compacted["result"] = compact_json_text(compacted.get("result"), max_chars=120000)
+    compacted["reasoning_trace"] = compact_json_text(compacted.get("reasoning_trace"), max_chars=120000)
+    compacted["trace"] = compact_json_text(compacted.get("trace"), max_chars=60000)
+    compacted["plan_payload"] = compact_json_text(compacted.get("plan_payload"), max_chars=60000)
+    compacted["semantic_check"] = compact_json_text(compacted.get("semantic_check"), max_chars=60000)
+    compacted["python_result"] = compact_json_text(compacted.get("python_result"), max_chars=60000)
+    compacted["report_payload"] = compact_report_payload_text(compacted.get("report_payload"), max_chars=120000)
+    return compacted
+
+
+def compact_json_text(value: Any, max_chars: int) -> Any:
+    if not isinstance(value, str) or max_chars <= 0 or len(value) <= max_chars:
+        return value
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return f"{value[:max_chars]}... [truncated {len(value) - max_chars} chars]"
+    compacted = compact_history_value(parsed)
+    compacted_text = json.dumps(compacted, ensure_ascii=False)
+    if len(compacted_text) <= max_chars:
+        return compacted_text
+    return f"{compacted_text[:max_chars]}... [truncated {len(compacted_text) - max_chars} chars]"
+
+
+def compact_report_payload_text(value: Any, max_chars: int) -> Any:
+    if not isinstance(value, str) or max_chars <= 0 or len(value) <= max_chars:
+        return value
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return compact_json_text(value, max_chars)
+    compacted = deepcopy(parsed) if isinstance(parsed, dict) else parsed
+    if isinstance(compacted, dict):
+        markdown = compacted.get("markdown")
+        if isinstance(markdown, str) and len(markdown) > 12000:
+            compacted["markdown"] = f"{markdown[:12000]}... [truncated {len(markdown) - 12000} chars]"
+            compacted["body"] = compacted["markdown"]
+    compacted_text = json.dumps(compacted, ensure_ascii=False)
+    if len(compacted_text) <= max_chars:
+        return compacted_text
+    return compact_json_text(compacted_text, max_chars)
+
+
+def compact_history_value(value: Any) -> Any:
+    if isinstance(value, list):
+        if value and all(isinstance(item, dict) for item in value):
+            limit = 120 if len(value) > 120 else len(value)
+            compacted_rows = value[:limit]
+            if len(value) > limit:
+                return {
+                    "row_count": len(value),
+                    "truncated": True,
+                    "preview_rows": compacted_rows,
+                }
+            return compacted_rows
+        return value[:50]
+    if isinstance(value, dict):
+        compacted = dict(value)
+        for key in ("sql_result", "rows", "preview_rows"):
+            inner = compacted.get(key)
+            if isinstance(inner, list) and inner and all(isinstance(item, dict) for item in inner):
+                limit = 120 if len(inner) > 120 else len(inner)
+                compacted[key] = inner[:limit]
+                if len(inner) > limit:
+                    compacted[f"{key}_row_count"] = len(inner)
+                    compacted[f"{key}_truncated"] = True
+        return compacted
+    return value
 
 
 # 注册子路由
 from app.api.agent import router as agent_router
 from app.api.datasource import router as ds_router
+from app.api.feedback import router as feedback_router
 from app.api.model_config import router as model_config_router
+from app.api.prompt import router as prompt_router
 from app.api.semantic import router as semantic_router
 
 app.include_router(agent_router, prefix="/api/agent", tags=["智能体"])
 app.include_router(ds_router, prefix="/api/datasource", tags=["数据源"])
+app.include_router(feedback_router, prefix="/api/feedback", tags=["反馈"])
 app.include_router(model_config_router, prefix="/api/model-config", tags=["模型配置"])
+app.include_router(prompt_router, prefix="/api/prompt", tags=["Prompt配置"])
 app.include_router(semantic_router, prefix="/api/semantic", tags=["知识召回"])
 
 

@@ -112,6 +112,28 @@ class SemanticEnhanceStreamGraph:
         }
 
 
+class ClarificationStreamGraph:
+    async def astream_events(self, state, version):
+        assert state["enable_low_confidence_clarification"] is True
+        yield {"event": "on_chain_start", "name": "clarification", "data": {}}
+        yield {
+            "event": "on_chain_end",
+            "name": "clarification",
+            "data": {
+                "output": {
+                    "clarification": {
+                        "required": True,
+                        "reason": "low_schema_confidence",
+                        "question": state["question"],
+                        "message": "请补充指标口径或业务对象后再查询。",
+                    },
+                    "final_answer": "请补充指标口径或业务对象后再查询。",
+                    "sql_result": [],
+                }
+            },
+        }
+
+
 class TokenStreamGraph:
     async def astream_events(self, state, version):
         class Chunk:
@@ -204,6 +226,7 @@ async def test_chat_stream_emits_final_answer_deltas_and_saves_only_final(monkey
                 "sql": sql,
                 "logic_form": kwargs.get("logic_form"),
                 "sql_result": sql_result,
+                "execution_trace": kwargs.get("execution_trace"),
                 "reasoning_trace": kwargs.get("reasoning_trace"),
             }
         )
@@ -222,6 +245,7 @@ async def test_chat_stream_emits_final_answer_deltas_and_saves_only_final(monkey
             "agent_id": 1,
             "datasource_id": 1,
             "session_id": "session-1",
+            "trace_id": "trace-test-1",
         }
     )
 
@@ -252,6 +276,11 @@ async def test_chat_stream_emits_final_answer_deltas_and_saves_only_final(monkey
 
     result_event = next(event for event in events if event["event"] == "result")
     result = json.loads(result_event["data"])
+    trace_ids = {json.loads(event["data"]).get("trace_id") for event in events if event.get("data")}
+    assert trace_ids == {"trace-test-1"}
+    assert result["trace_id"] == "trace-test-1"
+    assert result["execution_trace"]["trace_id"] == "trace-test-1"
+    assert result["execution_trace"]["total_duration_ms"] >= 0
     assert result["answer"] == answer
     assert result["sql"] == "SELECT 1 AS m1_plus_rate"
 
@@ -260,6 +289,7 @@ async def test_chat_stream_emits_final_answer_deltas_and_saves_only_final(monkey
     assert saved_turns[0]["question"] == "近三个月M1+逾期率是多少"
     assert saved_turns[0]["answer"] == "近三个月M1+逾期率为12.34%。"
     assert saved_turns[0]["sql"] == "SELECT 1 AS m1_plus_rate"
+    assert saved_turns[0]["execution_trace"]["trace_id"] == "trace-test-1"
     assert saved_turns[0]["logic_form"] == {"metrics": ["m1_plus_rate"], "dimensions": []}
     assert saved_turns[0]["sql_result"] == [{"m1_plus_rate": 0.1234}]
     trace = saved_turns[0]["reasoning_trace"]
@@ -417,6 +447,42 @@ async def test_chat_stream_exposes_semantic_enhance_node(monkeypatch):
     assert "node_complete" in event_names
     assert result["reasoning_trace"][0]["node"] == "semantic_enhance"
     assert result["reasoning_trace"][0]["output"]["enhanced_question"].startswith("查询贷款申请")
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_exposes_low_confidence_clarification(monkeypatch):
+    async def fake_load_history(agent_id, session_id, limit=5):
+        return []
+
+    async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
+        return None
+
+    async def fake_validate_datasource_access(agent_id, datasource_id):
+        return None
+
+    monkeypatch.setattr(main, "get_graph", lambda: ClarificationStreamGraph())
+    monkeypatch.setattr(main, "load_history", fake_load_history)
+    monkeypatch.setattr(main, "save_turn", fake_save_turn)
+    monkeypatch.setattr(main, "validate_datasource_access", fake_validate_datasource_access)
+
+    response = await main.chat_stream(
+        {
+            "question": "这个呢",
+            "agent_id": 1,
+            "datasource_id": 1,
+            "session_id": "session-clarification",
+            "enable_low_confidence_clarification": True,
+        }
+    )
+
+    events = [item async for item in response.body_iterator]
+    result = json.loads(next(event for event in events if event["event"] == "result")["data"])
+    complete = json.loads(next(event for event in events if event["event"] == "node_complete")["data"])
+
+    assert complete["node"] == "clarification"
+    assert result["clarification"]["required"] is True
+    assert result["reasoning_trace"][0]["node"] == "clarification"
+    assert result["answer"] == "请补充指标口径或业务对象后再查询。"
 
 
 @pytest.mark.asyncio
@@ -592,4 +658,39 @@ async def test_chat_stream_returns_error_event_when_graph_fails(monkeypatch, cap
     assert error_payload["label"] == "SQL 编译"
     assert error_payload["error_type"] == "RuntimeError"
     assert error_payload["detail"] == "model connection dropped"
+    assert "chat stream failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_still_emits_done_when_save_turn_fails(monkeypatch, caplog):
+    async def fake_load_history(agent_id, session_id, limit=5):
+        return []
+
+    async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
+        raise RuntimeError("history write failed")
+
+    async def fake_validate_datasource_access(agent_id, datasource_id):
+        return None
+
+    monkeypatch.setattr(main, "get_graph", lambda: FakeStreamGraph())
+    monkeypatch.setattr(main, "load_history", fake_load_history)
+    monkeypatch.setattr(main, "save_turn", fake_save_turn)
+    monkeypatch.setattr(main, "validate_datasource_access", fake_validate_datasource_access)
+
+    response = await main.chat_stream(
+        {
+            "question": "近三个月M1+逾期率是多少",
+            "agent_id": 1,
+            "datasource_id": 1,
+            "session_id": "session-save-fail",
+        }
+    )
+
+    with caplog.at_level(logging.ERROR, logger="app.main"):
+        events = [item async for item in response.body_iterator]
+
+    event_names = [event["event"] for event in events]
+    assert "result" in event_names
+    assert event_names[-1] == "done"
+    assert "history write failed" not in next(event["data"] for event in events if event["event"] == "result")
     assert "chat stream failed" in caplog.text

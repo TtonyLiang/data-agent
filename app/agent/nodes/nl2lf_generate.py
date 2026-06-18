@@ -5,6 +5,7 @@ from langchain_core.callbacks.manager import adispatch_custom_event
 
 from app.models.knowledge import LogicFilter, LogicForm, LogicSort
 from app.services.llm_service import get_llm_service
+from app.services.prompt_service import get_prompt_service
 
 
 NL2LF_PROMPT = """你是 Data Agent 的语义解析器。请把用户问题转换为 LogicForm JSON，禁止生成 SQL。
@@ -41,8 +42,16 @@ async def nl2lf_generate_node(state: dict) -> dict:
     try:
         llm = get_llm_service()
         llm_kwargs = await llm.resolve_agent_chat_kwargs(state.get("agent_id"))
+        domain = runtime.get("domain", {}) if isinstance(runtime, dict) else {}
+        system_prompt = await get_prompt_service().resolve(
+            "nl2lf_generate.system",
+            NL2LF_PROMPT,
+            agent_id=state.get("agent_id"),
+            semantic_domain_id=domain.get("id") if isinstance(domain, dict) else None,
+            variables={"runtime_context": runtime_context},
+        )
         messages = [
-            {"role": "system", "content": NL2LF_PROMPT.format(runtime_context=runtime_context)},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": build_user_prompt(question, history, original_question)},
         ]
         response_parts: list[str] = []
@@ -90,13 +99,19 @@ def normalize_logic_form(
     asks_overdue = "逾期" in question or "m1" in compact or "overdue" in compact
     high_pd_segment = "高pd" in compact or ("高" in question and "pd" in compact)
     asks_application_count = is_application_count_question(context_text)
+    asks_trend = asks_trend_question(context_text)
 
     if asks_balance and asks_overdue:
         metrics = ["outstanding_balance", "m1_plus_rate"]
 
     if asks_application_count:
         metrics = ["application_count"]
-        if mentions_region(context_text):
+        if asks_trend:
+            dimensions = []
+            if not time_range:
+                time_range = {"type": "relative", "period": "recent_3_months"}
+            logic_form = logic_form.model_copy(update={"grain": "month"})
+        elif mentions_region(context_text):
             dimensions = ["application_region"]
         filters = normalize_application_count_filters(filters)
         if asks_ranking(context_compact):
@@ -126,6 +141,7 @@ def normalize_logic_form(
             "dimensions": dimensions,
             "filters": filters,
             "time_range": time_range,
+            "grain": "month" if asks_application_count and asks_trend else logic_form.grain,
             "sort": sort,
             "limit": limit,
         }
@@ -183,6 +199,11 @@ def mentions_region(text: str) -> bool:
 
 def asks_ranking(compact_text: str) -> bool:
     return any(token in compact_text for token in ("最多", "排名", "排行", "top", "前"))
+
+
+def asks_trend_question(text: str) -> bool:
+    compact = text.lower().replace(" ", "")
+    return any(token in compact for token in ("变化", "趋势", "走势", "波动", "按月", "按日", "同比", "环比", "trend"))
 
 
 def extract_top_limit(compact_text: str) -> int | None:
@@ -319,6 +340,7 @@ def fallback_logic_form(question: str) -> LogicForm:
     sort = []
     limit = None
     time_range = None
+    grain = None
 
     if "本月" in compact:
         time_range = {"type": "relative", "period": "this_month"}
@@ -336,7 +358,12 @@ def fallback_logic_form(question: str) -> LogicForm:
 
     if is_application_count_question(question):
         metrics = ["application_count"]
-        if mentions_region(question):
+        if asks_trend_question(question):
+            dimensions = []
+            grain = "month"
+            if not time_range:
+                time_range = {"type": "relative", "period": "recent_3_months"}
+        elif mentions_region(question):
             dimensions = ["application_region"]
         sort = [{"field": "application_count", "direction": "desc"}] if asks_ranking(compact) else []
         limit = extract_top_limit(compact) or limit
@@ -374,6 +401,7 @@ def fallback_logic_form(question: str) -> LogicForm:
         dimensions=dimensions,
         filters=filters,
         time_range=time_range,
+        grain=grain,
         sort=sort,
         limit=limit,
     )

@@ -37,8 +37,9 @@
         </el-table-column>
         <el-table-column prop="embedding_dimension" label="维度" width="100" />
         <el-table-column prop="status" label="状态" width="100" />
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
+            <el-button size="small" :loading="testingConfigId === row.id" @click="handleTest(row)">测试</el-button>
             <el-button size="small" @click="openDetail(row)">详情</el-button>
             <el-button size="small" @click="openEdit(row)">编辑</el-button>
             <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
@@ -55,6 +56,7 @@
         <dt>Base URL</dt><dd>{{ detailConfig.base_url }}</dd>
         <dt>模型</dt><dd>{{ detailConfig.model_name }}</dd>
         <dt>API Key</dt><dd>{{ apiKeyTagText(detailConfig) }}</dd>
+        <dt>Key 过期时间</dt><dd>{{ detailConfig.api_key_expires_at || '-' }}</dd>
         <dt>向量维度</dt><dd>{{ detailConfig.embedding_dimension || '-' }}</dd>
         <dt>状态</dt><dd>{{ detailConfig.status }}</dd>
       </dl>
@@ -95,6 +97,15 @@
             {{ editingApiKeyConfigured ? '已配置 Key；直接保存会保留原 Key，输入新 Key 会覆盖。' : '当前未配置 Key，可在这里输入后保存。' }}
           </p>
         </el-form-item>
+        <el-form-item label="Key 过期时间">
+          <el-date-picker
+            v-model="form.api_key_expires_at"
+            type="datetime"
+            value-format="YYYY-MM-DDTHH:mm:ss"
+            placeholder="可选，用于过期提醒"
+            clearable
+          />
+        </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="form.status">
             <el-option label="active" value="active" />
@@ -118,6 +129,7 @@ import {
   createModelConfig,
   deleteModelConfig,
   fetchModelConfigs,
+  testModelConfig,
   updateModelConfig,
   type ModelConfigItem,
   type ModelConfigRequest,
@@ -134,6 +146,7 @@ const showDetail = ref(false)
 const detailConfig = ref<ModelConfigItem | null>(null)
 const editingId = ref<number | null>(null)
 const editingApiKeyConfigured = ref(false)
+const testingConfigId = ref<number | null>(null)
 const form = ref<ModelConfigRequest>(defaultForm('chat'))
 const MASKED_API_KEY = '********'
 
@@ -155,6 +168,7 @@ function defaultForm(modelType: 'chat' | 'embedding'): ModelConfigRequest {
     model_name: modelType === 'chat' ? 'qwen3:14b' : 'embedding-3',
     api_key: '',
     api_key_enabled: false,
+    api_key_expires_at: null,
     embedding_dimension: modelType === 'embedding' ? 1024 : null,
     status: 'active',
   }
@@ -192,6 +206,7 @@ function openEdit(config: ModelConfigItem) {
     model_name: config.model_name,
     api_key: editingApiKeyConfigured.value ? MASKED_API_KEY : '',
     api_key_enabled: Boolean(config.api_key_enabled),
+    api_key_expires_at: config.api_key_expires_at || null,
     embedding_dimension: config.embedding_dimension || null,
     status: config.status || 'active',
   }
@@ -203,12 +218,16 @@ function hasConfiguredApiKey(config: ModelConfigItem) {
 }
 
 function apiKeyTagType(config: ModelConfigItem) {
+  if (config.api_key_expired) return 'danger'
+  if (config.api_key_expires_soon) return 'warning'
   if (hasConfiguredApiKey(config) && config.api_key_enabled) return 'success'
   if (config.api_key_enabled && !hasConfiguredApiKey(config)) return 'warning'
   return 'info'
 }
 
 function apiKeyTagText(config: ModelConfigItem) {
+  if (config.api_key_expired) return '已过期'
+  if (config.api_key_expires_soon) return '即将过期'
   if (hasConfiguredApiKey(config) && config.api_key_enabled) return '已配置'
   if (config.api_key_enabled && !hasConfiguredApiKey(config)) return 'Key 缺失'
   if (hasConfiguredApiKey(config)) return '未启用'
@@ -250,6 +269,23 @@ async function handleSubmit() {
     await loadConfigs()
   } catch {
     ElMessage.error(editingId.value ? '更新失败' : '创建失败')
+  }
+}
+
+async function handleTest(config: ModelConfigItem) {
+  testingConfigId.value = config.id
+  try {
+    const result = await testModelConfig(config.id)
+    const suffix = result.latency_ms !== undefined ? `（${result.latency_ms}ms）` : ''
+    if (result.ok) {
+      ElMessage.success(`${config.name} 连接成功${suffix}`)
+    } else {
+      ElMessage.error(`${config.name} 连接失败：${result.message || '请检查配置'}`)
+    }
+  } catch {
+    ElMessage.error('模型连通性测试失败')
+  } finally {
+    testingConfigId.value = null
   }
 }
 

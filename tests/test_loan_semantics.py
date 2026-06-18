@@ -299,6 +299,32 @@ def test_semantic_enhancement_clarifies_application_count_region_question():
     assert "金额" not in result["enhanced_question"]
 
 
+def test_semantic_enhancement_clarifies_application_count_trend_question():
+    result = deterministic_enhancement("各个贷款申请量变化", [])
+
+    assert result is not None
+    assert result["enhanced_question"] == "查询贷款申请笔数按月份的变化趋势。"
+
+
+def test_application_count_trend_logic_form_compiles_to_monthly_sql():
+    runtime = build_runtime()
+    svc = SemanticRuntimeService()
+    logic_form = fallback_logic_form("各个贷款申请量变化")
+
+    validation = svc.validate_logic_form(logic_form, runtime)
+    compiled = svc.compile_logic_form(logic_form, runtime)
+
+    assert validation.valid
+    assert logic_form.metrics == ["application_count"]
+    assert logic_form.dimensions == []
+    assert logic_form.grain == "month"
+    assert logic_form.time_range is not None
+    assert "DATE_FORMAT(t0.`apply_date`, '%Y-%m') AS `month`" in compiled.sql
+    assert "COUNT(*) AS `application_count`" in compiled.sql
+    assert "GROUP BY DATE_FORMAT(t0.`apply_date`, '%Y-%m')" in compiled.sql
+    assert "product_type" not in compiled.sql
+
+
 def test_high_pd_balance_and_overdue_query_compiles_cross_table_metrics():
     runtime = build_runtime()
     svc = SemanticRuntimeService()

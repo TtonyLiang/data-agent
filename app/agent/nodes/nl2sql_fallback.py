@@ -2,9 +2,11 @@ import json
 
 from langchain_core.callbacks.manager import adispatch_custom_event
 
+from app.config import get_settings
 from app.services.llm_service import get_llm_service
 from app.services.metadata_service import get_metadata_service
-from app.utils.sql_validator import extract_sql_from_llm, validate_sql
+from app.services.prompt_service import get_prompt_service
+from app.utils.sql_validator import extract_sql_from_llm, normalize_sql_for_execution
 
 
 NL2SQL_FALLBACK_PROMPT = """你是 Data Agent 的 NL2SQL 兜底生成器。
@@ -30,7 +32,11 @@ async def nl2sql_fallback_node(state: dict) -> dict:
     if not datasource_id:
         return _failed("缺少数据源，无法执行 NL2SQL 兜底。")
 
-    schema = await get_metadata_service().get_schema(datasource_id)
+    metadata_service = get_metadata_service()
+    if hasattr(metadata_service, "get_authorized_schema"):
+        schema = await metadata_service.get_authorized_schema(datasource_id, state.get("agent_id"))
+    else:
+        schema = await metadata_service.get_schema(datasource_id)
     if not schema:
         return _failed("当前数据源没有已采集 schema，无法执行 NL2SQL 兜底。")
     schema_context = build_schema_context(
@@ -44,12 +50,16 @@ async def nl2sql_fallback_node(state: dict) -> dict:
     prompt = build_fallback_user_prompt(question, state.get("chat_history") or [], original_question)
     llm = get_llm_service()
     llm_kwargs = await llm.resolve_agent_chat_kwargs(state.get("agent_id"))
+    system_prompt = await get_prompt_service().resolve(
+        "nl2sql_fallback.system",
+        NL2SQL_FALLBACK_PROMPT,
+        agent_id=state.get("agent_id"),
+        variables={"schema_context": schema_context},
+    )
     messages = [
         {
             "role": "system",
-            "content": NL2SQL_FALLBACK_PROMPT.format(
-                schema_context=schema_context,
-            ),
+            "content": system_prompt,
         },
         {"role": "user", "content": prompt},
     ]
@@ -67,13 +77,13 @@ async def nl2sql_fallback_node(state: dict) -> dict:
         await emit_node_delta("nl2sql_fallback", content, kind="token")
     response = "".join(response_parts)
     sql = extract_sql_from_response(response)
-    ok, reason = validate_sql(sql)
-    if not ok:
-        return _failed(f"NL2SQL 兜底生成的 SQL 未通过安全校验: {reason}")
+    validation = normalize_sql_for_execution(sql)
+    if not validation.ok:
+        return _failed(f"NL2SQL 兜底生成的 SQL 未通过安全校验: {validation.reason}")
 
     return {
-        "compiled_sql": sql,
-        "sql_text": sql,
+        "compiled_sql": validation.sql,
+        "sql_text": validation.sql,
         "sql_error": None,
         "execution_trace": {
             "compile_strategy": "nl2sql_fallback",
@@ -107,8 +117,11 @@ def build_schema_context(
     if not scoped_schema:
         scoped_schema = schema
 
+    settings = get_settings()
+    max_tables = max(1, settings.nl2sql_schema_context_max_tables)
+    max_columns = max(1, settings.nl2sql_schema_context_max_columns)
     tables = []
-    for table in scoped_schema[:8]:
+    for table in scoped_schema[:max_tables]:
         table_name = str(table.get("table_name") or "")
         preferred_columns = column_names_by_table.get(table_name, set())
         columns = []
@@ -123,7 +136,7 @@ def build_schema_context(
             ]
         else:
             ranked_columns = all_columns
-        for column in ranked_columns[:40]:
+        for column in ranked_columns[:max_columns]:
             columns.append(
                 {
                     "name": column.get("column_name"),

@@ -319,6 +319,71 @@ class SemanticRuntimeService:
             row["asset_counts"] = self._json_load(row.get("asset_counts"))
         return rows
 
+    async def get_snapshot(self, domain_id: int, snapshot_id: int) -> dict[str, Any]:
+        db = get_management_db()
+        rows = await db.execute_query(
+            "SELECT id, domain_id, name, description, snapshot_json, asset_counts, created_at "
+            "FROM semantic_domain_snapshot WHERE domain_id = :domain_id AND id = :id",
+            {"domain_id": domain_id, "id": snapshot_id},
+        )
+        if not rows:
+            raise ValueError("语义层快照不存在")
+        row = rows[0]
+        row["snapshot_json"] = self._json_load(row.get("snapshot_json"))
+        row["asset_counts"] = self._json_load(row.get("asset_counts"))
+        return row
+
+    async def diff_snapshot(self, domain_id: int, snapshot_id: int) -> dict[str, Any]:
+        snapshot = await self.get_snapshot(domain_id, snapshot_id)
+        snapshot_bundle = snapshot.get("snapshot_json") or {}
+        current_bundle = await self.export_domain_bundle(domain_id)
+        return {
+            "snapshot": {
+                "id": snapshot.get("id"),
+                "name": snapshot.get("name"),
+                "description": snapshot.get("description"),
+                "created_at": snapshot.get("created_at"),
+            },
+            "summary": self._diff_summary(current_bundle, snapshot_bundle),
+            "domain": self._diff_domain(current_bundle.get("domain") or {}, snapshot_bundle.get("domain") or {}),
+            "assets": self._diff_assets(current_bundle.get("assets") or {}, snapshot_bundle.get("assets") or {}),
+        }
+
+    async def rollback_snapshot(self, domain_id: int, snapshot_id: int) -> dict[str, Any]:
+        snapshot = await self.get_snapshot(domain_id, snapshot_id)
+        bundle = snapshot.get("snapshot_json") or {}
+        domain = dict(bundle.get("domain") or {})
+        if not domain:
+            raise ValueError("快照缺少 domain，无法回滚")
+        if await self.get_domain(domain_id) is None:
+            raise ValueError("语义领域不存在")
+
+        db = get_management_db()
+        await db.execute_query(
+            "UPDATE semantic_domain SET datasource_id = :datasource_id, name = :name, "
+            "description = :description, status = :status WHERE id = :id",
+            {
+                "id": domain_id,
+                "datasource_id": domain.get("datasource_id"),
+                "name": domain.get("name") or "未命名语义层",
+                "description": domain.get("description") or "",
+                "status": domain.get("status") or "active",
+            },
+        )
+        for table_info in reversed(list(ASSET_TABLES.values())):
+            table = table_info[0]
+            await db.execute_query(
+                f"DELETE FROM {table} WHERE domain_id = :domain_id",
+                {"domain_id": domain_id},
+            )
+        await self._import_assets(domain_id, bundle.get("assets") or {})
+        return {
+            "id": domain_id,
+            "snapshot_id": snapshot_id,
+            "message": "语义层已回滚到快照",
+            "asset_counts": bundle.get("asset_counts") or {},
+        }
+
     async def list_assets(self, domain_id: int, asset_type: str | None = None) -> dict[str, list[dict]]:
         if asset_type:
             return {asset_type: await self._list_asset_type(domain_id, asset_type)}
@@ -452,6 +517,18 @@ class SemanticRuntimeService:
                 errors.append(f"未知指标: {metric_key}")
                 continue
             used_assets.append(f"metric:{metric_key}")
+
+        if logic_form.grain:
+            if logic_form.grain not in {"month", "day"}:
+                errors.append(f"不支持的时间粒度: {logic_form.grain}")
+            elif not logic_form.metrics:
+                errors.append("时间粒度查询缺少指标")
+            else:
+                metrics = [metric_map.get(metric_key) for metric_key in logic_form.metrics if metric_map.get(metric_key)]
+                if metrics and any(not metric.time_field for metric in metrics):
+                    missing = [metric.metric_key for metric in metrics if not metric.time_field]
+                    errors.append(f"以下指标缺少时间字段，无法按时间粒度分析: {', '.join(missing)}")
+                used_assets.append(f"grain:{logic_form.grain}")
             allowed_dimensions = set(metric.dimensions or [])
             for dimension in logic_form.dimensions:
                 if allowed_dimensions and dimension not in allowed_dimensions:
@@ -525,6 +602,22 @@ class SemanticRuntimeService:
 
         select_parts: list[str] = []
         group_parts: list[str] = []
+
+        if logic_form.grain:
+            time_field = metrics[0].time_field
+            if not time_field:
+                raise ValueError("当前指标缺少时间字段，无法按时间粒度分析")
+            time_table, time_column = self._split_qualified(time_field)
+            time_alias = ensure_table(time_table)
+            if logic_form.grain == "day":
+                time_expr = f"DATE_FORMAT({time_alias}.`{time_column}`, '%Y-%m-%d')"
+                time_label = "day"
+            else:
+                time_expr = f"DATE_FORMAT({time_alias}.`{time_column}`, '%Y-%m')"
+                time_label = "month"
+            select_parts.append(f"{time_expr} AS `{time_label}`")
+            group_parts.append(time_expr)
+            used_assets.append(f"grain:{logic_form.grain}")
 
         for dimension in logic_form.dimensions:
             mapping = mapping_map[dimension]
@@ -695,6 +788,77 @@ class SemanticRuntimeService:
             except json.JSONDecodeError:
                 return []
         return value
+
+    def _diff_summary(self, current_bundle: dict[str, Any], snapshot_bundle: dict[str, Any]) -> dict[str, Any]:
+        assets = self._diff_assets(current_bundle.get("assets") or {}, snapshot_bundle.get("assets") or {})
+        added = sum(len(value.get("added", [])) for value in assets.values())
+        removed = sum(len(value.get("removed", [])) for value in assets.values())
+        changed = sum(len(value.get("changed", [])) for value in assets.values())
+        domain_changed = bool(self._diff_domain(current_bundle.get("domain") or {}, snapshot_bundle.get("domain") or {}))
+        return {
+            "domain_changed": domain_changed,
+            "added": added,
+            "removed": removed,
+            "changed": changed,
+            "total_changes": added + removed + changed + (1 if domain_changed else 0),
+        }
+
+    def _diff_domain(self, current: dict[str, Any], snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+        fields = ("agent_id", "datasource_id", "domain_key", "name", "description", "status")
+        changes = []
+        for field in fields:
+            if current.get(field) != snapshot.get(field):
+                changes.append({
+                    "field": field,
+                    "current": current.get(field),
+                    "snapshot": snapshot.get(field),
+                })
+        return changes
+
+    def _diff_assets(self, current: dict[str, list[dict]], snapshot: dict[str, list[dict]]) -> dict[str, dict[str, list[Any]]]:
+        result = {}
+        for asset_type, (_, key_field, _) in ASSET_TABLES.items():
+            current_map = {
+                self._asset_identity(asset_type, item, key_field): self._normalize_asset_for_diff(item)
+                for item in current.get(asset_type, []) or []
+            }
+            snapshot_map = {
+                self._asset_identity(asset_type, item, key_field): self._normalize_asset_for_diff(item)
+                for item in snapshot.get(asset_type, []) or []
+            }
+            current_keys = set(current_map)
+            snapshot_keys = set(snapshot_map)
+            changed = [
+                {
+                    "key": key,
+                    "current": current_map[key],
+                    "snapshot": snapshot_map[key],
+                }
+                for key in sorted(current_keys & snapshot_keys)
+                if current_map[key] != snapshot_map[key]
+            ]
+            result[asset_type] = {
+                "added": sorted(current_keys - snapshot_keys),
+                "removed": sorted(snapshot_keys - current_keys),
+                "changed": changed,
+            }
+        return result
+
+    def _asset_identity(self, asset_type: str, item: dict[str, Any], key_field: str) -> str:
+        if asset_type == "mapping":
+            return "|".join(
+                str(item.get(field) or "")
+                for field in ("asset_type", "asset_key", "table_name", "role")
+            )
+        return str(item.get(key_field) or item.get("id") or "")
+
+    def _normalize_asset_for_diff(self, item: dict[str, Any]) -> dict[str, Any]:
+        ignored = {"id", "domain_id", "created_at", "updated_at"}
+        return {
+            key: item[key]
+            for key in sorted(item)
+            if key not in ignored
+        }
 
     def _find_join_condition(
         self,

@@ -312,8 +312,8 @@
                 <div class="answer-card-header">
                   <div>
                     <span class="answer-kicker">Final Answer</span>
-                    <h3>分析结论</h3>
-                    <p class="answer-subtitle">{{ panelResultTitle(msg) }}</p>
+                    <h3>{{ msg.report_payload ? '深度分析报告' : '分析结论' }}</h3>
+                    <p class="answer-subtitle">{{ msg.report_payload ? reportDisplayTitle(msg.report_payload) : panelResultTitle(msg) }}</p>
                   </div>
                   <div class="answer-badges">
                     <el-tag v-if="msg.intent" size="small" type="info">{{ msg.intent }}</el-tag>
@@ -321,7 +321,135 @@
                     <el-tag v-if="msg.sql_result?.length" size="small" effect="plain">{{ msg.sql_result.length }} 行</el-tag>
                   </div>
                 </div>
-                <div class="answer-body">
+                <div v-if="msg.report_payload" class="answer-body answer-report-body">
+                  <header class="inline-report-head">
+                    <span>{{ reportStatusText(msg.report_payload) }} · {{ reportGenerationText(msg.report_payload) }}</span>
+                    <h4>{{ reportDisplayTitle(msg.report_payload) }}</h4>
+                    <p>{{ reportSummary(msg.report_payload) }}</p>
+                    <div class="report-meta-line">
+                      <span>生成时间：{{ reportGeneratedAt(msg.report_payload) }}</span>
+                      <span>结果行数：{{ reportRowCount(msg.report_payload) }}</span>
+                    </div>
+                  </header>
+                  <section class="inline-report-section report-body-section">
+                    <div class="report-markdown-body inline-report-markdown">
+                      <div
+                        v-for="(block, index) in reportBodyBlocks(msg.report_payload)"
+                        :key="`${msg.id}-inline-report-${index}`"
+                        :class="['report-md-block', `report-md-${block.type}`]"
+                      >
+                        <h2 v-if="block.type === 'heading'">{{ stripInlineMarkdown(block.text) }}</h2>
+                        <h3 v-else-if="block.type === 'subheading'">{{ stripInlineMarkdown(block.text) }}</h3>
+                        <p v-else-if="block.type === 'paragraph'">
+                          <template
+                            v-for="(part, partIndex) in inlineMarkdownParts(block.text)"
+                            :key="`${msg.id}-paragraph-${index}-${partIndex}`"
+                          >
+                            <strong v-if="part.type === 'bold'">{{ part.text }}</strong>
+                            <code v-else-if="part.type === 'code'">{{ part.text }}</code>
+                            <span v-else>{{ part.text }}</span>
+                          </template>
+                        </p>
+                        <ul v-else-if="block.type === 'list'">
+                          <li v-for="item in block.items" :key="item">
+                            <template
+                              v-for="(part, partIndex) in inlineMarkdownParts(item)"
+                              :key="`${msg.id}-list-${index}-${partIndex}`"
+                            >
+                              <strong v-if="part.type === 'bold'">{{ part.text }}</strong>
+                              <code v-else-if="part.type === 'code'">{{ part.text }}</code>
+                              <span v-else>{{ part.text }}</span>
+                            </template>
+                          </li>
+                        </ul>
+                        <pre v-else-if="block.type === 'code'"><code>{{ block.text }}</code></pre>
+                        <div v-else-if="block.type === 'chart'" class="report-chart-card report-md-chart-card">
+                          <div class="report-chart-head">
+                            <h3>{{ block.title }}</h3>
+                            <p>{{ block.subtitle }}</p>
+                          </div>
+                          <div v-if="block.chartKind === 'pie'" class="report-pie-layout">
+                            <div class="report-pie-chart" :style="{ background: pieChartBackground(block.data) }">
+                              <div class="report-pie-hole">
+                                <strong>{{ pieChartTotal(block.data) }}</strong>
+                                <span>总量</span>
+                              </div>
+                            </div>
+                            <div class="report-pie-legend">
+                              <div
+                                v-for="(item, pieIndex) in block.data"
+                                :key="String(item.label)"
+                                class="report-pie-legend-item"
+                              >
+                                <i :style="{ background: chartColorAt(pieIndex) }"></i>
+                                <span>{{ item.label }}</span>
+                                <em>{{ piePercent(item.value, block.data) }}</em>
+                                <strong>{{ formatReportValue(item.value) }}</strong>
+                              </div>
+                            </div>
+                          </div>
+                          <div v-else-if="block.chartKind === 'line'" class="report-line-chart">
+                            <div class="report-line-canvas">
+                              <div class="report-line-grid"></div>
+                              <svg viewBox="0 0 520 220" preserveAspectRatio="none" class="report-line-svg">
+                                <polyline
+                                  :points="lineChartPoints(block.data)"
+                                  fill="none"
+                                  stroke="#0f766e"
+                                  stroke-width="3"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                />
+                                <circle
+                                  v-for="(item, pointIndex) in block.data"
+                                  :key="`${msg.id}-line-${pointIndex}`"
+                                  :cx="linePointPosition(block.data, pointIndex).x"
+                                  :cy="linePointPosition(block.data, pointIndex).y"
+                                  r="4"
+                                  fill="#ea580c"
+                                />
+                              </svg>
+                            </div>
+                            <div class="report-line-labels">
+                              <div v-for="item in block.data" :key="String(item.label)" class="report-line-label">
+                                <span>{{ item.label }}</span>
+                                <strong>{{ formatReportValue(item.value) }}</strong>
+                              </div>
+                            </div>
+                          </div>
+                          <div v-else class="report-bar-chart">
+                            <div
+                              v-for="item in block.data"
+                              :key="String(item.label)"
+                              class="report-bar-row"
+                            >
+                              <span>{{ item.label }}</span>
+                              <div class="report-bar-track">
+                                <i :style="{ width: `${barPercent(item.value, block.data)}%` }"></i>
+                              </div>
+                              <strong>{{ formatReportValue(item.value) }}</strong>
+                            </div>
+                          </div>
+                        </div>
+                        <div v-else-if="block.type === 'table'" class="report-data-table-wrap">
+                          <table class="report-data-table">
+                            <thead>
+                              <tr>
+                                <th v-for="column in block.columns" :key="column">{{ column }}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr v-for="(row, rowIndex) in block.rows" :key="rowIndex">
+                                <td v-for="(cell, cellIndex) in row" :key="cellIndex">{{ cell }}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+                <div v-else class="answer-body">
                   <div class="answer-summary">
                     <div class="summary-mark">
                       <el-icon><CircleCheck /></el-icon>
@@ -347,23 +475,19 @@
                     </div>
                   </div>
                 </div>
-                <div v-if="msg.sql || msg.sql_result?.length || msg.report_payload" class="answer-assets">
+                <div v-if="msg.sql || msg.report_payload" class="answer-assets">
                   <button v-if="msg.sql" class="asset-chip" type="button" @click="activeResultTab = 'sql'">
                     <span>SQL 详情</span>
                     <strong>{{ compactSql(msg.sql) }}</strong>
                   </button>
-                  <button v-if="msg.sql_result?.length" class="asset-chip" type="button" @click="activeResultTab = 'result'">
-                    <span>结果表</span>
-                    <strong>{{ msg.sql_result.length }} 行数据，点击查看</strong>
-                  </button>
                   <button v-if="msg.report_payload" class="asset-chip" type="button" @click="openReport(msg)">
-                    <span>分析报告</span>
-                    <strong>{{ reportTitle(msg.report_payload) }}</strong>
+                    <span>展开查看</span>
+                    <strong>在大视图中查看完整深度分析报告</strong>
                   </button>
                 </div>
               </div>
               <div v-else class="text">{{ msg.content }}</div>
-              <div v-if="msg.role === 'assistant' && msg.sql_result && msg.sql_result.length > 0" class="result-table compact-result">
+              <div v-if="msg.role === 'assistant' && msg.sql_result && msg.sql_result.length > 0 && !msg.report_payload" class="result-table compact-result">
                 <div class="inline-result-header">
                   <span>结果预览</span>
                   <el-button size="small" text @click="activeResultTab = 'result'">查看完整结果</el-button>
@@ -448,7 +572,7 @@
               <span :class="['timeline-dot', step.status]" />
               <div>
                 <strong>{{ displayStepLabel(step) }}</strong>
-                <p>{{ step.summary || statusText(step.status) }}</p>
+                <p>{{ panelStepSummary(step) }}</p>
               </div>
             </div>
           </div>
@@ -475,9 +599,13 @@
             <div class="result-meta-card">
               <div>
                 <strong>{{ latestResultSummary }}</strong>
-                <p>当前显示 {{ latestRowRangeText }}，可通过分页查看完整明细。</p>
+                <p>当前显示 {{ latestRowRangeText }}，表格只渲染当前页；导出会保留完整结果和全部字段。</p>
               </div>
-              <el-tag effect="plain">{{ latestColumns.length }} 列</el-tag>
+              <div class="result-meta-tags">
+                <el-tag effect="plain">{{ latestColumns.length }} 列</el-tag>
+                <el-tag v-if="latestRows.length > resultPageSize" type="success" effect="plain">分页懒渲染</el-tag>
+                <el-tag v-if="displayedLatestColumns.length < latestColumns.length" type="warning" effect="plain">已隐藏 {{ latestColumns.length - displayedLatestColumns.length }} 列</el-tag>
+              </div>
             </div>
             <div class="result-column-tools">
               <el-select
@@ -553,24 +681,25 @@
           </div>
           <div v-if="latestReport" class="report-preview">
             <div class="report-preview-header">
-              <span>分析报告</span>
-              <h3>{{ reportTitle(latestReport) }}</h3>
+              <span>{{ reportGenerationText(latestReport) }}</span>
+              <h3>{{ reportDisplayTitle(latestReport) }}</h3>
               <p>{{ reportSummary(latestReport) }}</p>
             </div>
-            <div class="report-highlight-list">
+            <div class="report-markdown-preview">
               <div
-                v-for="item in reportHighlights(latestReport).slice(0, 4)"
-                :key="`${item.field}-${item.label}`"
-                class="report-highlight"
+                v-for="(block, index) in reportMarkdownBlocks(latestReport).slice(0, 5)"
+                :key="`preview-${index}`"
+                :class="['report-md-block', `report-md-${block.type}`]"
               >
-                <span>{{ item.label }}</span>
-                <strong>{{ formatReportValue(item.value) }}</strong>
-              </div>
-            </div>
-            <div class="report-section-preview">
-              <div v-for="section in reportSections(latestReport).slice(0, 2)" :key="section.title" class="report-mini-section">
-                <strong>{{ section.title }}</strong>
-                <p>{{ section.items.slice(0, 2).join('；') }}</p>
+                <strong v-if="block.type === 'heading'">{{ stripInlineMarkdown(block.text) }}</strong>
+                <p v-else-if="block.type === 'paragraph'">{{ stripInlineMarkdown(block.text) }}</p>
+                <ul v-else-if="block.type === 'list'">
+                  <li v-for="item in block.items" :key="item">{{ stripInlineMarkdown(item) }}</li>
+                </ul>
+                <div v-else-if="block.type === 'chart'" class="report-mini-chart">
+                  <strong>{{ block.title }}</strong>
+                  <span>{{ block.data.length }} 个数据点</span>
+                </div>
               </div>
             </div>
           </div>
@@ -598,13 +727,12 @@
       <template #header>
         <div class="report-dialog-title">
           <span>深度分析报告</span>
-          <h2>{{ expandedReport ? reportTitle(expandedReport) : '' }}</h2>
         </div>
       </template>
       <div v-if="expandedReport" class="report-document">
         <header class="report-paper-head">
-          <span>{{ reportStatusText(expandedReport) }}</span>
-          <h1>{{ reportTitle(expandedReport) }}</h1>
+          <span>{{ reportStatusText(expandedReport) }} · {{ reportGenerationText(expandedReport) }}</span>
+          <h1>{{ reportDisplayTitle(expandedReport) }}</h1>
           <p>{{ reportSummary(expandedReport) }}</p>
           <div class="report-meta-line">
             <span>生成时间：{{ reportGeneratedAt(expandedReport) }}</span>
@@ -612,44 +740,126 @@
           </div>
         </header>
 
-        <section class="report-doc-section">
-          <h2>执行摘要</h2>
-          <div class="report-kpi-table">
+        <section class="report-doc-section report-body-section">
+          <div class="report-markdown-body">
             <div
-              v-for="item in reportExecutivePoints(expandedReport)"
-              :key="item.label"
-              class="report-kpi-cell"
+              v-for="(block, index) in reportBodyBlocks(expandedReport)"
+              :key="`report-md-${index}`"
+              :class="['report-md-block', `report-md-${block.type}`]"
             >
-              <span>{{ item.label }}</span>
-              <strong>{{ formatReportValue(item.value) }}</strong>
+              <h2 v-if="block.type === 'heading'">{{ stripInlineMarkdown(block.text) }}</h2>
+              <h3 v-else-if="block.type === 'subheading'">{{ stripInlineMarkdown(block.text) }}</h3>
+              <p v-else-if="block.type === 'paragraph'">
+                <template
+                  v-for="(part, partIndex) in inlineMarkdownParts(block.text)"
+                  :key="`paragraph-${index}-${partIndex}`"
+                >
+                  <strong v-if="part.type === 'bold'">{{ part.text }}</strong>
+                  <code v-else-if="part.type === 'code'">{{ part.text }}</code>
+                  <span v-else>{{ part.text }}</span>
+                </template>
+              </p>
+              <ul v-else-if="block.type === 'list'">
+                <li v-for="item in block.items" :key="item">
+                  <template
+                    v-for="(part, partIndex) in inlineMarkdownParts(item)"
+                    :key="`list-${index}-${partIndex}`"
+                  >
+                    <strong v-if="part.type === 'bold'">{{ part.text }}</strong>
+                    <code v-else-if="part.type === 'code'">{{ part.text }}</code>
+                    <span v-else>{{ part.text }}</span>
+                  </template>
+                </li>
+              </ul>
+              <pre v-else-if="block.type === 'code'"><code>{{ block.text }}</code></pre>
+              <div v-else-if="block.type === 'chart'" class="report-chart-card report-md-chart-card">
+                <div class="report-chart-head">
+                  <h3>{{ block.title }}</h3>
+                  <p>{{ block.subtitle }}</p>
+                </div>
+                <div v-if="block.chartKind === 'pie'" class="report-pie-layout">
+                  <div class="report-pie-chart" :style="{ background: pieChartBackground(block.data) }">
+                    <div class="report-pie-hole">
+                      <strong>{{ pieChartTotal(block.data) }}</strong>
+                      <span>总量</span>
+                    </div>
+                  </div>
+                  <div class="report-pie-legend">
+                    <div
+                      v-for="(item, pieIndex) in block.data"
+                      :key="String(item.label)"
+                      class="report-pie-legend-item"
+                    >
+                      <i :style="{ background: chartColorAt(pieIndex) }"></i>
+                      <span>{{ item.label }}</span>
+                      <em>{{ piePercent(item.value, block.data) }}</em>
+                      <strong>{{ formatReportValue(item.value) }}</strong>
+                    </div>
+                  </div>
+                </div>
+                <div v-else-if="block.chartKind === 'line'" class="report-line-chart">
+                  <div class="report-line-canvas">
+                    <div class="report-line-grid"></div>
+                    <svg viewBox="0 0 520 220" preserveAspectRatio="none" class="report-line-svg">
+                      <polyline
+                        :points="lineChartPoints(block.data)"
+                        fill="none"
+                        stroke="#0f766e"
+                        stroke-width="3"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                      <circle
+                        v-for="(item, pointIndex) in block.data"
+                        :key="`line-${pointIndex}`"
+                        :cx="linePointPosition(block.data, pointIndex).x"
+                        :cy="linePointPosition(block.data, pointIndex).y"
+                        r="4"
+                        fill="#ea580c"
+                      />
+                    </svg>
+                  </div>
+                  <div class="report-line-labels">
+                    <div v-for="item in block.data" :key="String(item.label)" class="report-line-label">
+                      <span>{{ item.label }}</span>
+                      <strong>{{ formatReportValue(item.value) }}</strong>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="report-bar-chart">
+                  <div
+                    v-for="item in block.data"
+                    :key="String(item.label)"
+                    class="report-bar-row"
+                  >
+                    <span>{{ item.label }}</span>
+                    <div class="report-bar-track">
+                      <i :style="{ width: `${barPercent(item.value, block.data)}%` }"></i>
+                    </div>
+                    <strong>{{ formatReportValue(item.value) }}</strong>
+                  </div>
+                </div>
+              </div>
+              <div v-else-if="block.type === 'table'" class="report-data-table-wrap">
+                <table class="report-data-table">
+                  <thead>
+                    <tr>
+                      <th v-for="column in block.columns" :key="column">{{ column }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(row, rowIndex) in block.rows" :key="rowIndex">
+                      <td v-for="(cell, cellIndex) in row" :key="cellIndex">{{ cell }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-          <ul>
-            <li v-for="item in reportExecutiveBullets(expandedReport)" :key="item">{{ item }}</li>
-          </ul>
-        </section>
-
-        <section class="report-doc-section">
-          <h2>分析背景与用户诉求</h2>
-          <p v-for="item in reportBackground(expandedReport)" :key="item">{{ item }}</p>
-        </section>
-
-        <section class="report-doc-section">
-          <h2>数据分析过程</h2>
-          <article
-            v-for="(step, index) in reportProcessSteps(expandedReport)"
-            :key="`${step.title}-${index}`"
-            class="report-step-block"
-          >
-            <h3>{{ step.title }}</h3>
-            <p>{{ step.text }}</p>
-            <pre v-if="step.result && /select|from|where|group by|order by/i.test(step.result)"><code>{{ step.result }}</code></pre>
-            <p v-else-if="step.result" class="report-step-result">{{ step.result }}</p>
-          </article>
         </section>
 
         <section v-if="reportCharts(expandedReport).length" class="report-doc-section">
-          <h2>结果解读</h2>
+          <h2>图表与数据附件</h2>
           <div
             v-for="chart in reportCharts(expandedReport)"
             :key="chart.title"
@@ -659,7 +869,56 @@
               <h3>{{ chart.title }}</h3>
               <p>{{ chart.subtitle }}</p>
             </div>
-            <div class="report-bar-chart">
+            <div v-if="chart.chartKind === 'pie'" class="report-pie-layout">
+              <div class="report-pie-chart" :style="{ background: pieChartBackground(chart.data) }">
+                <div class="report-pie-hole">
+                  <strong>{{ pieChartTotal(chart.data) }}</strong>
+                  <span>总量</span>
+                </div>
+              </div>
+              <div class="report-pie-legend">
+                <div
+                  v-for="(item, pieIndex) in chart.data"
+                  :key="String(item.label)"
+                  class="report-pie-legend-item"
+                >
+                  <i :style="{ background: chartColorAt(pieIndex) }"></i>
+                  <span>{{ item.label }}</span>
+                  <em>{{ piePercent(item.value, chart.data) }}</em>
+                  <strong>{{ formatReportValue(item.value) }}</strong>
+                </div>
+              </div>
+            </div>
+            <div v-else-if="chart.chartKind === 'line'" class="report-line-chart">
+              <div class="report-line-canvas">
+                <div class="report-line-grid"></div>
+                <svg viewBox="0 0 520 220" preserveAspectRatio="none" class="report-line-svg">
+                  <polyline
+                    :points="lineChartPoints(chart.data)"
+                    fill="none"
+                    stroke="#0f766e"
+                    stroke-width="3"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                  <circle
+                    v-for="(item, pointIndex) in chart.data"
+                    :key="`line-report-${pointIndex}`"
+                    :cx="linePointPosition(chart.data, pointIndex).x"
+                    :cy="linePointPosition(chart.data, pointIndex).y"
+                    r="4"
+                    fill="#ea580c"
+                  />
+                </svg>
+              </div>
+              <div class="report-line-labels">
+                <div v-for="item in chart.data" :key="String(item.label)" class="report-line-label">
+                  <span>{{ item.label }}</span>
+                  <strong>{{ formatReportValue(item.value) }}</strong>
+                </div>
+              </div>
+            </div>
+            <div v-else class="report-bar-chart">
               <div
                 v-for="item in chart.data"
                 :key="String(item.label)"
@@ -673,16 +932,6 @@
               </div>
             </div>
           </div>
-          <ul>
-            <li v-for="item in reportInterpretation(expandedReport)" :key="item">{{ item }}</li>
-          </ul>
-        </section>
-
-        <section v-else class="report-doc-section">
-          <h2>结果解读</h2>
-          <ul>
-            <li v-for="item in reportInterpretation(expandedReport)" :key="item">{{ item }}</li>
-          </ul>
         </section>
 
         <section v-if="reportTables(expandedReport).length" class="report-doc-section">
@@ -708,16 +957,12 @@
           </div>
         </section>
 
-        <section class="report-doc-section">
-          <h2>建议与后续行动</h2>
+        <section v-if="reportAnalysisSummary(expandedReport).length" class="report-doc-section report-appendix">
+          <h2>分析过程摘要</h2>
+          <p>这里展示统计脚本产出的业务摘要，原始技术 JSON 不在报告正文中直接暴露。</p>
           <ul>
-            <li v-for="item in reportSuggestions(expandedReport)" :key="item">{{ item }}</li>
+            <li v-for="item in reportAnalysisSummary(expandedReport)" :key="item">{{ item }}</li>
           </ul>
-        </section>
-
-        <section v-if="reportPythonResult(expandedReport)" class="report-doc-section report-appendix">
-          <h2>附录：Python 分析结果</h2>
-          <pre><code>{{ formatJson(reportPythonResult(expandedReport)) }}</code></pre>
         </section>
       </div>
     </el-dialog>
@@ -976,8 +1221,19 @@ async function copyLatestSql() {
   }
 }
 
-function downloadResults() {
+async function downloadResults() {
   if (latestRows.value.length === 0) return
+  if (latestRows.value.length > 1000 || displayedLatestColumns.value.length < latestColumns.value.length) {
+    try {
+      await ElMessageBox.confirm(
+        `将导出完整结果：${latestRows.value.length} 行、${latestColumns.value.length} 列。当前页面隐藏列和分页设置不会影响导出内容。`,
+        '导出完整结果',
+        { type: 'info' },
+      )
+    } catch {
+      return
+    }
+  }
   const columns = Object.keys(latestRows.value[0])
   const escapeCsv = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`
   const csv = [
@@ -1099,6 +1355,7 @@ function historyToMessage(item: HistoryItem, sid: string, index: number): ChatMe
         reasoning: step.reasoning || '',
         streamText: step.streamText || '',
         events: step.events || [],
+        progress: '',
         showReasoning: false,
         output: step.output || null,
         summary: step.summary || '',
@@ -1199,6 +1456,7 @@ function stepLeadLine(step: ChatReasoningStep) {
   }
   if (step.node === 'semantic_enhance') {
     const enhanced = String(output.enhanced_question || '').trim()
+    if (!enhanced && step.status === 'running') return '正在理解问题并补全业务口径'
     return enhanced || step.summary
   }
   if (step.node === 'semantic_runtime_recall') return step.summary
@@ -1241,10 +1499,21 @@ function stepLeadLine(step: ChatReasoningStep) {
 function visibleStepEvents(step: ChatReasoningStep) {
   if (step.status !== 'running') return []
   const lead = stepLeadLine(step).trim()
-  return (step.events || [])
+  const events = (step.events || [])
     .map(event => event.replace(/^完成：/, '').trim())
     .filter(event => event && !event.startsWith('开始') && event !== lead)
-    .slice(-2)
+  const volatileEvents = events.filter(isVolatileProgressLine)
+  if (volatileEvents.length) return [volatileEvents[volatileEvents.length - 1]]
+  if (step.progress && step.progress !== lead) return [step.progress]
+  return events.slice(-2)
+}
+
+function isVolatileProgressLine(text: string) {
+  return text.startsWith('正在') && (text.endsWith('...') || text.endsWith('…'))
+}
+
+function panelStepSummary(step: ChatReasoningStep) {
+  return step.summary || step.progress || statusText(step.status)
 }
 
 function semanticAssetLines(step: ChatReasoningStep) {
@@ -1541,15 +1810,77 @@ function openReport(message: ChatMessage) {
   showReportDialog.value = true
 }
 
-function reportTitle(report: Record<string, unknown>) {
+function reportTitle(report: Record<string, unknown>): string {
   return String(report.title || '查询结果分析')
+}
+
+function reportDisplayTitle(report: Record<string, unknown>): string {
+  const markdownTitle = reportMarkdownBlocks(report).find(block => block.type === 'title')
+  if (markdownTitle?.type === 'title' && markdownTitle.text.trim()) {
+    return stripInlineMarkdown(markdownTitle.text.trim())
+  }
+  return humanizeReportTitle(reportTitle(report), report)
+}
+
+function humanizeReportTitle(title: string, report: Record<string, unknown>): string {
+  const cleanTitle = stripInlineMarkdown(title).trim()
+  if (!cleanTitle || cleanTitle === '查询结果分析') return '查询结果分析'
+  const replaced = cleanTitle
+    .replace(/[A-Za-z][A-Za-z0-9_]*/g, token => reportFieldLabel(token, report))
+    .replace(/\s+按\s+/g, '按')
+    .replace(/\s+分析$/g, '分析')
+    .trim()
+  return replaced || '查询结果分析'
+}
+
+function reportFieldLabel(key: string, report?: Record<string, unknown>): string {
+  const label = semanticLabels.value[key] || defaultSemanticLabels()[key]
+  if (label) return label
+  const pythonResult = report ? reportPythonResult(report) : null
+  const candidates: ReportFieldDescriptor[] = [
+    ...fieldDescriptorItems(pythonResult?.metrics),
+    ...fieldDescriptorItems(pythonResult?.dimensions),
+  ]
+  const matched = candidates.find((item: ReportFieldDescriptor) => item.field === key || item.key === key || item.name === key)
+  if (matched?.label) return matched.label
+  return humanizeField(key)
+}
+
+type InlineMarkdownPart = { type: 'text' | 'bold' | 'code'; text: string }
+
+function inlineMarkdownParts(text: string): InlineMarkdownPart[] {
+  const parts: InlineMarkdownPart[] = []
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/g
+  let cursor = 0
+  for (const match of text.matchAll(pattern)) {
+    const index = match.index ?? 0
+    if (index > cursor) parts.push({ type: 'text', text: text.slice(cursor, index) })
+    const raw = match[0]
+    if (raw.startsWith('**')) {
+      parts.push({ type: 'bold', text: raw.slice(2, -2) })
+    } else {
+      parts.push({ type: 'code', text: raw.slice(1, -1) })
+    }
+    cursor = index + raw.length
+  }
+  if (cursor < text.length) parts.push({ type: 'text', text: text.slice(cursor) })
+  return parts.length ? parts : [{ type: 'text', text }]
+}
+
+function stripInlineMarkdown(text: string): string {
+  return inlineMarkdownParts(text).map(part => part.text).join('')
 }
 
 function reportSummary(report: Record<string, unknown>) {
   const text = String(report.summary || '')
-  if (text) return text
+  if (text) return stripInlineMarkdown(text)
+  const markdownText = reportMarkdownText(report)
+  if (markdownText) {
+    const paragraph = reportMarkdownBlocks(report).find(block => block.type === 'paragraph')
+    if (paragraph?.type === 'paragraph' && paragraph.text) return stripInlineMarkdown(paragraph.text)
+  }
   const bullets = reportExecutiveBullets(report)
-  if (bullets.length) return bullets[0]
+  if (bullets.length) return stripInlineMarkdown(bullets[0])
   return '暂无摘要。'
 }
 
@@ -1562,6 +1893,12 @@ function reportStatusText(report: Record<string, unknown>) {
   if (report.status === 'empty') return '空结果'
   if (report.status === 'success') return '分析完成'
   return '报告'
+}
+
+function reportGenerationText(report: Record<string, unknown>) {
+  if (report.generation_source === 'llm_report_generator') return '后端流式报告'
+  if (report.generation_source === 'fallback_template') return '安全模板报告'
+  return '分析报告'
 }
 
 function reportGeneratedAt(report: Record<string, unknown>) {
@@ -1594,6 +1931,222 @@ function reportSections(report: Record<string, unknown>) {
       items: Array.isArray(item.items) ? item.items.map(value => String(value)).filter(Boolean) : [],
     }))
     .filter(section => section.items.length > 0)
+}
+
+type ReportMarkdownBlock =
+  | { type: 'title' | 'heading' | 'subheading' | 'paragraph' | 'code'; text: string }
+  | { type: 'list'; items: string[] }
+  | { type: 'chart'; title: string; subtitle: string; chartKind: 'bar' | 'pie' | 'line'; data: { label: string; value: unknown }[] }
+  | { type: 'table'; columns: string[]; rows: string[][] }
+
+type ReportChartBlock = Extract<ReportMarkdownBlock, { type: 'chart' }>
+
+type ReportFieldDescriptor = { field: string; key: string; name: string; label: string }
+
+function reportMarkdownText(report: Record<string, unknown>) {
+  return String(report.markdown || report.body || report.report || '').trim()
+}
+
+function reportMarkdownBlocks(report: Record<string, unknown>): ReportMarkdownBlock[] {
+  const markdown = reportMarkdownText(report)
+  if (!markdown) {
+    return reportSections(report).map(section => ({
+      type: 'paragraph',
+      text: `${section.title}：${section.items.join('；')}`,
+    }))
+  }
+  const blocks: ReportMarkdownBlock[] = []
+  const lines = markdown.split(/\r?\n/)
+  let paragraph: string[] = []
+  let listItems: string[] = []
+  let codeLines: string[] = []
+  let inCode = false
+  let codeLanguage = ''
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return
+    blocks.push({ type: 'paragraph', text: paragraph.join(' ').trim() })
+    paragraph = []
+  }
+  const flushList = () => {
+    if (!listItems.length) return
+    blocks.push({ type: 'list', items: [...listItems] })
+    listItems = []
+  }
+  const flushCode = () => {
+    if (!codeLines.length) return
+    const code = codeLines.join('\n')
+    const chart = chartFromCodeBlock(code, codeLanguage)
+    if (chart) blocks.push(chart)
+    else blocks.push({ type: 'code', text: code })
+    codeLines = []
+    codeLanguage = ''
+  }
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const rawLine = lines[lineIndex]
+    const line = rawLine.trimEnd()
+    const trimmed = line.trim()
+    if (trimmed.startsWith('```')) {
+      if (inCode) {
+        inCode = false
+        flushCode()
+      } else {
+        flushParagraph()
+        flushList()
+        inCode = true
+        codeLanguage = trimmed.replace(/^```/, '').trim().toLowerCase()
+        codeLines = []
+      }
+      continue
+    }
+    if (inCode) {
+      codeLines.push(line)
+      continue
+    }
+    if (!trimmed) {
+      flushParagraph()
+      flushList()
+      continue
+    }
+    if (isMarkdownTableLine(trimmed)) {
+      flushParagraph()
+      flushList()
+      const tableLines = collectTableLines(lines, lineIndex)
+      if (tableLines.length) {
+        const table = parseMarkdownTable(tableLines)
+        if (table) blocks.push(table)
+        lineIndex += tableLines.length - 1
+      }
+      continue
+    }
+    if (trimmed.startsWith('### ')) {
+      flushParagraph()
+      flushList()
+      blocks.push({ type: 'subheading', text: trimmed.replace(/^###\s+/, '') })
+    } else if (trimmed.startsWith('## ')) {
+      flushParagraph()
+      flushList()
+      blocks.push({ type: 'heading', text: trimmed.replace(/^##\s+/, '') })
+    } else if (trimmed.startsWith('# ')) {
+      flushParagraph()
+      flushList()
+      blocks.push({ type: 'title', text: trimmed.replace(/^#\s+/, '') })
+    } else if (/^[-*]\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed)) {
+      flushParagraph()
+      listItems.push(trimmed.replace(/^[-*]\s+/, '').replace(/^\d+\.\s+/, ''))
+    } else {
+      flushList()
+      paragraph.push(trimmed)
+    }
+  }
+  flushParagraph()
+  flushList()
+  flushCode()
+  return blocks.length ? blocks : [{ type: 'paragraph', text: markdown }]
+}
+
+function reportBodyBlocks(report: Record<string, unknown>) {
+  return reportMarkdownBlocks(report).filter(block => block.type !== 'title')
+}
+
+function isMarkdownTableLine(line: string) {
+  return line.startsWith('|') && line.endsWith('|')
+}
+
+function collectTableLines(lines: string[], start: number) {
+  const tableLines: string[] = []
+  for (let index = start; index < lines.length; index += 1) {
+    const line = lines[index].trim()
+    if (!isMarkdownTableLine(line)) break
+    tableLines.push(line)
+  }
+  return tableLines
+}
+
+function parseMarkdownTable(lines: string[]): ReportMarkdownBlock | null {
+  if (lines.length < 2) return null
+  const columns = splitMarkdownTableRow(lines[0])
+  const bodyLines = lines.slice(1).filter(line => !/^\|\s*[-:|\s]+\s*\|$/.test(line))
+  const rows = bodyLines.map(splitMarkdownTableRow).filter(row => row.length)
+  if (!columns.length || !rows.length) return null
+  return { type: 'table', columns, rows }
+}
+
+function splitMarkdownTableRow(line: string) {
+  return line
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map(cell => cell.trim())
+}
+
+function chartFromCodeBlock(code: string, language = ''): ReportChartBlock | null {
+  const lowerLanguage = language.toLowerCase()
+  if (lowerLanguage && !['json', 'echarts', 'chart'].includes(lowerLanguage)) return null
+  try {
+    const parsed = JSON.parse(code)
+    return chartFromEchartsOption(parsed)
+  } catch {
+    return null
+  }
+}
+
+function chartFromEchartsOption(option: unknown): ReportChartBlock | null {
+  if (!option || typeof option !== 'object' || Array.isArray(option)) return null
+  const record = option as Record<string, unknown>
+  const seriesList = Array.isArray(record.series) ? record.series : []
+  const firstSeries = seriesList.find((item): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item))
+  if (!firstSeries || !Array.isArray(firstSeries.data)) return null
+  const chartKind = echartsSeriesKind(firstSeries)
+  const labels = echartsAxisLabels(record.xAxis)
+  const data = firstSeries.data
+    .map((item, index) => normalizeChartPoint(item, labels[index]))
+    .filter((item): item is { label: string; value: unknown } => !!item)
+  if (!data.length) return null
+  return {
+    type: 'chart',
+    title: echartsText(record.title) || String(firstSeries.name || '图表'),
+    subtitle: echartsText(record.subtitle) || '由报告中的 ECharts 配置自动渲染',
+    chartKind,
+    data,
+  }
+}
+
+function echartsSeriesKind(series: Record<string, unknown>): 'bar' | 'pie' | 'line' {
+  const kind = normalizeChartKind(series.type)
+  return kind === '' ? 'bar' : kind
+}
+
+function echartsAxisLabels(axis: unknown) {
+  const axisRecord = Array.isArray(axis) ? axis[0] : axis
+  if (!axisRecord || typeof axisRecord !== 'object' || Array.isArray(axisRecord)) return []
+  const data = (axisRecord as Record<string, unknown>).data
+  return Array.isArray(data) ? data.map(item => String(item)) : []
+}
+
+function echartsText(value: unknown) {
+  if (typeof value === 'string') return value
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const text = (value as Record<string, unknown>).text
+    if (typeof text === 'string') return text
+  }
+  return ''
+}
+
+function normalizeChartPoint(item: unknown, fallbackLabel?: string): { label: string; value: unknown } | null {
+  if (Array.isArray(item)) {
+    if (item.length < 2) return null
+    return { label: String(item[0]), value: item[1] }
+  }
+  if (item && typeof item === 'object') {
+    const record = item as Record<string, unknown>
+    const label = record.name ?? record.label ?? fallbackLabel
+    const value = record.value ?? record.y
+    if (label === undefined && value === undefined) return null
+    return { label: String(label ?? '-'), value }
+  }
+  return { label: String(fallbackLabel ?? '-'), value: item }
 }
 
 function reportExecutiveBullets(report: Record<string, unknown>) {
@@ -1672,16 +2225,51 @@ function reportCharts(report: Record<string, unknown>) {
   if (!Array.isArray(charts)) return []
   return charts
     .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
-    .map(item => ({
-      title: String(item.title || '图表'),
-      subtitle: String(item.subtitle || ''),
-      data: Array.isArray(item.data)
-        ? item.data
-            .filter((row): row is Record<string, unknown> => !!row && typeof row === 'object')
-            .map(row => ({ label: String(row.label ?? '-'), value: row.value }))
-        : [],
-    }))
+    .map(item => normalizeReportChart(item))
+    .filter((item): item is { title: string; subtitle: string; chartKind: 'bar' | 'pie' | 'line'; data: { label: string; value: unknown }[] } => !!item)
     .filter(item => item.data.length > 0)
+}
+
+function normalizeReportChart(item: Record<string, unknown>): { title: string; subtitle: string; chartKind: 'bar' | 'pie' | 'line'; data: { label: string; value: unknown }[] } | null {
+  const optionChart = chartFromEchartsOption(item.echarts_option || item.option)
+  const explicitKind = normalizeChartKind(item.chart_kind || item.chartKind || item.type)
+  if (optionChart) {
+    return {
+      title: String(item.title || optionChart.title),
+      subtitle: String(item.subtitle || optionChart.subtitle),
+      chartKind: explicitKind === '' ? optionChart.chartKind : explicitKind,
+      data: optionChart.data,
+    }
+  }
+  const rows = Array.isArray(item.data) ? item.data : []
+  const data = rows
+    .map(row => normalizeChartPoint(row))
+    .filter((row): row is { label: string; value: unknown } => !!row)
+  const title = String(item.title || '图表')
+  const subtitle = String(item.subtitle || '')
+  return {
+    title,
+    subtitle,
+    chartKind: explicitKind === '' ? inferChartKind(title, subtitle, data) : explicitKind,
+    data,
+  }
+}
+
+function normalizeChartKind(value: unknown): 'bar' | 'pie' | 'line' | '' {
+  const kind = String(value || '').trim().toLowerCase()
+  if (kind === 'pie' || kind === 'bar' || kind === 'line') return kind
+  return ''
+}
+
+function inferChartKind(title: string, subtitle: string, data: { label: string; value: unknown }[]): 'bar' | 'pie' | 'line' {
+  if (data.length < 2 || data.length > 8) return 'bar'
+  const joined = `${title} ${subtitle}`.toLowerCase()
+  if (/trend|time|timeline|line/.test(joined)) return 'line'
+  if (/趋势|变化|走势|时间|按月|按日|同比|环比/.test(`${title}${subtitle}`)) return 'line'
+  if (/pie|donut|ring|proportion|share|composition/.test(joined)) return 'pie'
+  if (/占比|构成|分布|份额|比例/.test(`${title}${subtitle}`)) return 'pie'
+  if (/数量|数|规模|笔数|金额|总量/.test(`${title}${subtitle}`) && data.length <= 6) return 'pie'
+  return 'bar'
 }
 
 function reportTables(report: Record<string, unknown>) {
@@ -1711,9 +2299,128 @@ function barPercent(value: unknown, rows: { value: unknown }[]) {
   return Math.max(4, Math.min(100, (numeric / max) * 100))
 }
 
-function reportPythonResult(report: Record<string, unknown>) {
+function pieChartTotal(rows: { value: unknown }[]) {
+  const total = rows.reduce((sum, row) => sum + (Number.isFinite(Number(row.value)) ? Number(row.value) : 0), 0)
+  return formatReportValue(total)
+}
+
+function piePercent(value: unknown, rows: { value: unknown }[]) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '0%'
+  const total = rows.reduce((sum, row) => sum + (Number.isFinite(Number(row.value)) ? Number(row.value) : 0), 0)
+  if (!total) return '0%'
+  return `${((numeric / total) * 100).toFixed(1)}%`
+}
+
+function chartColorAt(index: number) {
+  const palette = ['#0f766e', '#ea580c', '#2563eb', '#b45309', '#dc2626', '#64748b', '#0ea5e9', '#7c3aed']
+  return palette[index % palette.length]
+}
+
+function linePointPosition(rows: { value: unknown }[], index: number) {
+  const width = 520
+  const height = 220
+  const left = 20
+  const right = 20
+  const top = 18
+  const bottom = 26
+  const numericValues = rows.map(row => Number(row.value)).filter(Number.isFinite)
+  const max = numericValues.length ? Math.max(...numericValues) : 0
+  const min = numericValues.length ? Math.min(...numericValues) : 0
+  const usableWidth = width - left - right
+  const usableHeight = height - top - bottom
+  const x = rows.length <= 1 ? width / 2 : left + (usableWidth * index) / (rows.length - 1)
+  const value = Number(rows[index]?.value)
+  if (!Number.isFinite(value) || max === min) {
+    return { x, y: top + usableHeight / 2 }
+  }
+  const y = top + usableHeight - ((value - min) / (max - min)) * usableHeight
+  return { x, y }
+}
+
+function lineChartPoints(rows: { value: unknown }[]) {
+  return rows.map((_, index) => {
+    const point = linePointPosition(rows, index)
+    return `${point.x},${point.y}`
+  }).join(' ')
+}
+
+function pieChartBackground(rows: { value: unknown }[]) {
+  const total = rows.reduce((sum, row) => sum + (Number.isFinite(Number(row.value)) ? Number(row.value) : 0), 0)
+  if (!total) return '#e9eef8'
+  let offset = 0
+  const segments = rows.map((row, index) => {
+    const numeric = Number.isFinite(Number(row.value)) ? Number(row.value) : 0
+    const percent = (numeric / total) * 100
+    const start = offset
+    offset += percent
+    return `${chartColorAt(index)} ${start}% ${offset}%`
+  })
+  return `conic-gradient(${segments.join(', ')})`
+}
+
+function reportPythonResult(report: Record<string, unknown>): Record<string, unknown> | null {
   const value = report.python_result
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function reportAnalysisSummary(report: Record<string, unknown>): string[] {
+  const result = reportPythonResult(report)
+  if (!result) return []
+  const lines: string[] = []
+  const mode = String(result.analysis_mode || result.mode || '')
+  if (mode) lines.push(`分析模式：${analysisModeText(mode)}`)
+  const rowCount = result.row_count ?? report.row_count
+  if (rowCount !== undefined && rowCount !== null && rowCount !== '') lines.push(`参与分析的数据行数：${rowCount}`)
+  const metrics = fieldDescriptorItems(result.metrics)
+  if (metrics.length) lines.push(`识别指标：${metrics.map(item => item.label || item.name || item.field).filter(Boolean).join('、')}`)
+  const dimensions = fieldDescriptorItems(result.dimensions)
+  if (dimensions.length) lines.push(`识别维度：${dimensions.map(item => item.label || item.name || item.field).filter(Boolean).join('、')}`)
+  const computedItems = Array.isArray(result.computed_items) ? result.computed_items : []
+  computedItems.slice(0, 3).forEach((item) => {
+    if (item && typeof item === 'object' && !Array.isArray(item)) {
+      const record = item as Record<string, unknown>
+      const label = String(record.label || record.name || record.title || '')
+      const value = record.value
+      if (label) lines.push(`${label}：${formatReportValue(value)}`)
+    } else if (item !== undefined && item !== null) {
+      lines.push(String(item))
+    }
+  })
+  const insights = Array.isArray(result.insights) ? result.insights.map((item: unknown) => stripInlineMarkdown(String(item))).filter(Boolean) : []
+  insights.slice(0, 3).forEach((item: string) => lines.push(item))
+  return Array.from(new Set(lines)).slice(0, 8)
+}
+
+function fieldDescriptorItems(value: unknown): ReportFieldDescriptor[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item: unknown): ReportFieldDescriptor | null => {
+      if (typeof item === 'string') return { field: item, key: item, name: item, label: reportFieldLabel(item) }
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        const record = item as Record<string, unknown>
+        const field = String(record.field || record.key || record.name || '')
+        return {
+          field,
+          key: String(record.key || field),
+          name: String(record.name || field),
+          label: String(record.label || record.title || (field ? reportFieldLabel(field) : '')),
+        }
+      }
+      return null
+    })
+    .filter((item): item is { field: string; key: string; name: string; label: string } => !!item)
+}
+
+function analysisModeText(mode: string) {
+  const labels: Record<string, string> = {
+    ranking: '排名分析',
+    trend: '趋势分析',
+    compare: '对比分析',
+    distribution: '分布分析',
+    summary: '汇总分析',
+  }
+  return labels[mode] || mode
 }
 
 function formatReportValue(value: unknown) {
@@ -2376,6 +3083,51 @@ onUnmounted(() => {
   font-size: 15px;
 }
 
+.answer-report-body {
+  padding: 0;
+}
+
+.inline-report-head {
+  padding: 16px 18px 10px;
+  border-bottom: 1px solid var(--wq-border);
+  background: #fff;
+}
+
+.inline-report-head > span {
+  color: var(--wq-primary);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.inline-report-head h4 {
+  margin: 8px 0 0;
+  color: var(--wq-text);
+  font-size: 22px;
+  line-height: 1.35;
+  font-weight: 800;
+}
+
+.inline-report-head p {
+  margin: 10px 0 0;
+  color: var(--wq-muted);
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.inline-report-section {
+  border-top: 0;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.inline-report-markdown {
+  max-width: none;
+  margin: 0;
+}
+
 .answer-summary {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr);
@@ -2459,7 +3211,7 @@ onUnmounted(() => {
 
 .answer-assets {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 10px;
   padding: 0 18px 18px;
 }
@@ -3107,6 +3859,14 @@ onUnmounted(() => {
   line-height: 1.5;
 }
 
+.result-meta-tags {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+}
+
 .result-column-tools {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) auto;
@@ -3255,6 +4015,52 @@ onUnmounted(() => {
   gap: 12px;
 }
 
+.report-markdown-preview {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.report-markdown-preview .report-md-heading strong {
+  color: var(--wq-text);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.report-markdown-preview p,
+.report-markdown-preview li {
+  color: #475467;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.report-mini-chart {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #dbe6f5;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.report-mini-chart strong {
+  min-width: 0;
+  color: var(--wq-text);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-mini-chart span {
+  color: var(--wq-subtle);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .report-mini-section,
 .report-section {
   padding: 14px;
@@ -3372,7 +4178,7 @@ onUnmounted(() => {
 }
 
 .report-paper-head {
-  padding: 20px 22px;
+  padding: 16px 18px;
 }
 
 .report-paper-head > span {
@@ -3409,7 +4215,84 @@ onUnmounted(() => {
 }
 
 .report-doc-section {
-  padding: 18px 20px;
+  padding: 14px 16px;
+}
+
+.report-body-section {
+  padding: 16px 18px;
+}
+
+.report-markdown-body {
+  max-width: 1040px;
+  margin: 0 auto;
+}
+
+.report-md-block + .report-md-block {
+  margin-top: 12px;
+}
+
+.report-md-title h1 {
+  color: var(--wq-text);
+  font-size: 26px;
+  line-height: 1.35;
+  font-weight: 820;
+}
+
+.report-md-heading h2 {
+  margin-top: 22px;
+  padding-top: 6px;
+  color: var(--wq-primary);
+  font-size: 19px;
+  line-height: 1.45;
+  font-weight: 800;
+}
+
+.report-md-subheading h3 {
+  margin-top: 16px;
+  color: #344054;
+  font-size: 15px;
+  line-height: 1.45;
+  font-weight: 740;
+}
+
+.report-md-paragraph p {
+  color: #344054;
+  font-size: 14px;
+  line-height: 1.9;
+}
+
+.report-md-paragraph code,
+.report-md-list code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: #eef4ff;
+  color: var(--wq-primary);
+  font-size: 12px;
+}
+
+.report-md-list ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.report-md-list li {
+  color: #344054;
+  font-size: 14px;
+  line-height: 1.85;
+  margin: 4px 0;
+}
+
+.report-md-code pre {
+  max-height: 360px;
+  overflow: auto;
+  padding: 14px;
+  border-radius: 8px;
+  background: #101828;
+  color: #e6edf7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .report-doc-section h2 {
@@ -3475,6 +4358,10 @@ onUnmounted(() => {
   background: #fbfdff;
 }
 
+.report-md-chart-card {
+  margin: 18px 0;
+}
+
 .report-step-block p,
 .report-step-result {
   margin-top: 8px;
@@ -3504,6 +4391,148 @@ onUnmounted(() => {
   display: grid;
   gap: 10px;
   margin-top: 14px;
+}
+
+.report-pie-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 22px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.report-pie-chart {
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
+}
+
+.report-pie-hole {
+  width: 108px;
+  height: 108px;
+  border-radius: 50%;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+}
+
+.report-pie-hole strong {
+  color: var(--wq-text);
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.report-pie-hole span {
+  color: var(--wq-subtle);
+  font-size: 12px;
+}
+
+.report-pie-legend {
+  display: grid;
+  gap: 10px;
+}
+
+.report-pie-legend-item {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #e4eaf5;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.report-pie-legend-item i {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+}
+
+.report-pie-legend-item span,
+.report-pie-legend-item strong,
+.report-pie-legend-item em {
+  font-size: 13px;
+  font-style: normal;
+}
+
+.report-pie-legend-item span {
+  color: #344054;
+}
+
+.report-pie-legend-item em {
+  color: var(--wq-subtle);
+}
+
+.report-pie-legend-item strong {
+  color: var(--wq-text);
+}
+
+.report-line-chart {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.report-line-canvas {
+  position: relative;
+  min-height: 240px;
+  padding: 12px 8px 8px;
+  border: 1px solid #dbe6f5;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f6f9ff 100%);
+}
+
+.report-line-grid {
+  position: absolute;
+  inset: 12px 8px 8px;
+  border-radius: 8px;
+  background-image:
+    linear-gradient(to right, rgba(148, 163, 184, 0.12) 1px, transparent 1px),
+    linear-gradient(to top, rgba(148, 163, 184, 0.12) 1px, transparent 1px);
+  background-size: 52px 52px, 100% 52px;
+  pointer-events: none;
+}
+
+.report-line-svg {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 220px;
+}
+
+.report-line-labels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.report-line-label {
+  padding: 10px 12px;
+  border: 1px solid #e4eaf5;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.report-line-label span,
+.report-line-label strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.report-line-label span {
+  color: var(--wq-subtle);
+}
+
+.report-line-label strong {
+  margin-top: 4px;
+  color: var(--wq-text);
 }
 
 .report-bar-row {
@@ -3586,6 +4615,21 @@ onUnmounted(() => {
   .workspace-toolbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .report-pie-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .report-pie-chart {
+    width: 180px;
+    height: 180px;
+    margin: 0 auto;
+  }
+
+  .report-pie-hole {
+    width: 92px;
+    height: 92px;
   }
 
   .chat-controls {

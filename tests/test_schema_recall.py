@@ -56,8 +56,10 @@ async def test_schema_recall_matches_question_and_semantic_terms(monkeypatch):
 
     assert result["relevant_tables"][0]["table_name"] == "loan_application_indicator"
     assert "业务指标基础表" in result["relevant_tables"][0]["reason"]
+    assert "业务域匹配: 申请/审批" in result["relevant_tables"][0]["reason"]
     assert any(item["column_name"] == "region" for item in result["relevant_columns"])
     assert result["schema_scope"]["fallback_used"] is False
+    assert "application" in result["schema_scope"]["business_groups"]
 
 
 def test_nl2sql_schema_context_uses_recalled_tables_first():

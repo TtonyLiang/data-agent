@@ -21,6 +21,7 @@ async def run_management_migrations() -> None:
             model_name VARCHAR(128) NOT NULL COMMENT '模型名',
             api_key VARCHAR(512) DEFAULT NULL COMMENT 'API Key',
             api_key_enabled TINYINT(1) DEFAULT 0 COMMENT 'API Key是否启用',
+            api_key_expires_at TIMESTAMP NULL DEFAULT NULL COMMENT 'API Key过期时间',
             embedding_dimension INT DEFAULT NULL COMMENT '向量维度',
             status VARCHAR(32) DEFAULT 'active' COMMENT '状态',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -49,6 +50,62 @@ async def run_management_migrations() -> None:
             INDEX idx_domain_id (domain_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='语义层版本快照'
         """,
+        """
+        CREATE TABLE IF NOT EXISTS agent_table_permission (
+            agent_id BIGINT NOT NULL COMMENT '智能体ID',
+            datasource_id BIGINT NOT NULL COMMENT '数据源ID',
+            table_name VARCHAR(256) NOT NULL COMMENT '物理表名',
+            allowed TINYINT(1) DEFAULT 1 COMMENT '是否允许访问',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (agent_id, datasource_id, table_name),
+            INDEX idx_agent_table_permission_ds (datasource_id, table_name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体表级权限'
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS agent_column_permission (
+            agent_id BIGINT NOT NULL COMMENT '智能体ID',
+            datasource_id BIGINT NOT NULL COMMENT '数据源ID',
+            table_name VARCHAR(256) NOT NULL COMMENT '物理表名',
+            column_name VARCHAR(256) NOT NULL COMMENT '物理字段名',
+            allowed TINYINT(1) DEFAULT 1 COMMENT '是否允许访问',
+            masking_policy VARCHAR(32) DEFAULT 'none' COMMENT 'none/redact/partial/hash',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (agent_id, datasource_id, table_name, column_name),
+            INDEX idx_agent_column_permission_ds (datasource_id, table_name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体列级权限与脱敏'
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS prompt_template (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            prompt_key VARCHAR(128) NOT NULL COMMENT '模板Key，如 nl2lf_generate.system',
+            name VARCHAR(256) NOT NULL COMMENT '模板名称',
+            description TEXT COMMENT '模板说明',
+            agent_id BIGINT DEFAULT NULL COMMENT '适用智能体',
+            model_config_id BIGINT DEFAULT NULL COMMENT '适用模型配置',
+            semantic_domain_id BIGINT DEFAULT NULL COMMENT '适用语义层',
+            template_text LONGTEXT NOT NULL COMMENT 'Prompt模板正文',
+            status VARCHAR(32) DEFAULT 'active' COMMENT 'active/disabled',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_prompt_scope (prompt_key, agent_id, model_config_id, semantic_domain_id, status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Prompt模板配置'
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS user_feedback (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            agent_id BIGINT NOT NULL COMMENT '智能体ID',
+            session_id VARCHAR(64) DEFAULT NULL COMMENT '会话ID',
+            trace_id VARCHAR(64) DEFAULT NULL COMMENT '链路ID',
+            rating VARCHAR(32) NOT NULL COMMENT 'positive/negative/neutral',
+            comment TEXT COMMENT '反馈内容',
+            payload JSON DEFAULT NULL COMMENT '上下文快照',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_feedback_agent_session (agent_id, session_id),
+            INDEX idx_feedback_trace (trace_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户反馈'
+        """,
     ]
     for statement in statements:
         await db.execute_query(statement)
@@ -72,6 +129,11 @@ async def run_management_migrations() -> None:
         "datasource",
         "status",
         "ALTER TABLE datasource ADD COLUMN status VARCHAR(32) DEFAULT 'active' COMMENT '状态'",
+    )
+    await add_column_if_missing(
+        "model_config",
+        "api_key_expires_at",
+        "ALTER TABLE model_config ADD COLUMN api_key_expires_at TIMESTAMP NULL DEFAULT NULL COMMENT 'API Key过期时间' AFTER api_key_enabled",
     )
     await add_column_if_missing(
         "chat_history",
@@ -98,6 +160,12 @@ async def run_management_migrations() -> None:
         "report_payload",
         "ALTER TABLE chat_history ADD COLUMN report_payload JSON DEFAULT NULL COMMENT '结构化分析报告' AFTER python_result",
     )
+    await ensure_column_type(
+        "chat_history",
+        "sql_result",
+        expected_type="longtext",
+        statement="ALTER TABLE chat_history MODIFY COLUMN sql_result LONGTEXT DEFAULT NULL COMMENT 'SQL执行结果(JSON)'",
+    )
     await seed_default_model_configs()
     await backfill_agent_model_configs()
     await backfill_agent_semantic_domains()
@@ -112,6 +180,20 @@ async def add_column_if_missing(table: str, column: str, statement: str) -> None
         {"table": table, "column": column},
     )
     if not exists:
+        await db.execute_query(statement)
+
+
+async def ensure_column_type(table: str, column: str, expected_type: str, statement: str) -> None:
+    db = get_management_db()
+    rows = await db.execute_query(
+        "SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table AND COLUMN_NAME = :column",
+        {"table": table, "column": column},
+    )
+    if not rows:
+        return
+    current = str(rows[0].get("DATA_TYPE") or rows[0].get("data_type") or "").lower()
+    if current != expected_type.lower():
         await db.execute_query(statement)
 
 

@@ -12,8 +12,13 @@ assert.match(
 )
 
 assert.ok(
-  source.includes('answerSummaryLines(msg)'),
-  'ChatView should render final answers through structured summary lines',
+  source.includes('msg.report_payload ? reportDisplayTitle(msg.report_payload) : panelResultTitle(msg)'),
+  'ChatView should switch final answer cards to inline report rendering when a report payload exists',
+)
+
+assert.ok(
+  source.includes('reportBodyBlocks(msg.report_payload)'),
+  'ChatView should render report body blocks directly inside the final answer card',
 )
 
 assert.ok(
@@ -37,6 +42,11 @@ assert.ok(
 )
 
 assert.ok(
+  source.includes('表格只渲染当前页') && source.includes('导出会保留完整结果和全部字段'),
+  'ChatView should make lazy page rendering and full-result export semantics explicit',
+)
+
+assert.ok(
   source.includes('toggleErrorDetail'),
   'ChatView should allow expanding technical error detail',
 )
@@ -49,6 +59,11 @@ assert.ok(
 assert.ok(
   source.includes("step.node === 'semantic_enhance'") && source.includes('语义增强'),
   'ChatView should render semantic enhancement as a first-class analysis step',
+)
+
+assert.ok(
+  source.includes('正在理解问题并补全业务口径') && source.includes('panelStepSummary(step)'),
+  'ChatView should keep the semantic enhancement lead stable while rendering progress separately',
 )
 
 assert.ok(
@@ -69,4 +84,34 @@ assert.ok(
 assert.ok(
   source.includes('reportStreamText(step)') && source.includes('pythonCodeText(step)'),
   'ChatView should stream Phase 3 script, analysis JSON, and report content inline',
+)
+
+assert.ok(
+  source.includes('reportDisplayTitle') && source.includes('humanizeReportTitle'),
+  'ChatView should render human-readable report titles instead of raw metric/dimension keys',
+)
+
+assert.ok(
+  source.includes("msg.sql_result && msg.sql_result.length > 0 && !msg.report_payload"),
+  'ChatView should hide duplicate inline result preview when a deep analysis report already exists',
+)
+
+assert.ok(
+  source.includes('inlineMarkdownParts') && source.includes('stripInlineMarkdown'),
+  'ChatView should render inline markdown safely without showing raw ** markers',
+)
+
+assert.ok(
+  source.includes('chartFromEchartsOption') && source.includes('report-md-chart-card'),
+  'ChatView should convert ECharts report code blocks into visible chart cards',
+)
+
+assert.ok(
+  source.includes('normalizeChartKind') && source.includes("chartKind === 'line'") && source.includes("chartKind === 'pie'"),
+  'ChatView should honor backend-declared chart kinds and render pie/bar/line explicitly',
+)
+
+assert.ok(
+  source.includes('分析过程摘要') && source.includes('reportAnalysisSummary') && !source.includes('附录：Python 分析结果'),
+  'ChatView should show a business-facing analysis summary instead of raw Python JSON appendix',
 )

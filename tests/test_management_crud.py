@@ -3,11 +3,12 @@ import pytest
 from app.api import agent as agent_api
 from app.api import datasource as datasource_api
 from app.api import model_config as model_config_api
+from app.services import model_config_service
 from app.models.agent import AgentCreate
 from app.models import datasource as datasource_model
 from app.models.model_config import ModelConfigCreate, ModelConfigUpdate
 from app.services.datasource_service import DatasourceService
-from app.services.model_config_service import ModelConfigService, _public_model_config
+from app.services.model_config_service import ModelConfigService, _public_model_config, api_key_expiry_flags
 
 
 class RecordingDB:
@@ -333,6 +334,88 @@ def test_public_model_config_exposes_configured_flag_without_api_key():
 
     assert "api_key" not in public
     assert public["api_key_configured"] is True
+
+
+def test_api_key_expiry_flags_mark_expired_and_expiring_soon():
+    assert api_key_expiry_flags("2000-01-01T00:00:00+00:00") == (True, False)
+    assert api_key_expiry_flags("2999-01-01T00:00:00+00:00") == (False, False)
+
+
+@pytest.mark.asyncio
+async def test_model_config_connection_test_requires_key_when_enabled(monkeypatch):
+    class FakeModelConfigDB:
+        async def execute_query(self, sql: str, params: dict | None = None):
+            return [
+                {
+                    "id": params["id"],
+                    "name": "云模型",
+                    "model_type": "chat",
+                    "provider": "openai-compatible",
+                    "base_url": "https://example.com/v1",
+                    "model_name": "model",
+                    "api_key": "",
+                    "api_key_enabled": 1,
+                    "embedding_dimension": None,
+                    "status": "active",
+                }
+            ]
+
+    monkeypatch.setattr(model_config_service, "get_management_db", lambda: FakeModelConfigDB())
+
+    result = await ModelConfigService().test_connection(1)
+
+    assert result["ok"] is False
+    assert "API Key" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_model_config_connection_test_uses_openai_compatible_endpoint(monkeypatch):
+    class FakeModelConfigDB:
+        async def execute_query(self, sql: str, params: dict | None = None):
+            return [
+                {
+                    "id": params["id"],
+                    "name": "云模型",
+                    "model_type": "chat",
+                    "provider": "openai-compatible",
+                    "base_url": "https://example.com/v1",
+                    "model_name": "model",
+                    "api_key": "secret-key",
+                    "api_key_enabled": 1,
+                    "embedding_dimension": None,
+                    "status": "active",
+                }
+            ]
+
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"ok": true}'
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, json, headers):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return FakeResponse()
+
+    monkeypatch.setattr(model_config_service, "get_management_db", lambda: FakeModelConfigDB())
+    monkeypatch.setattr(model_config_service.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await ModelConfigService().test_connection(1)
+
+    assert result["ok"] is True
+    assert calls[0]["url"] == "https://example.com/v1/chat/completions"
+    assert calls[0]["headers"]["Authorization"] == "Bearer secret-key"
+    assert "secret-key" not in str(result)
 
 
 @pytest.mark.asyncio

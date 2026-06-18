@@ -39,11 +39,35 @@ class Settings(BaseSettings):
     embedding_dimension: int = 1024
     rag_top_k: int = 5
     rag_score_threshold: float = 0.3
+    schema_recall_max_tables: int = 6
+    schema_recall_max_columns: int = 24
+    nl2sql_schema_context_max_tables: int = 6
+    nl2sql_schema_context_max_columns: int = 32
+
+    # LLM runtime controls
+    llm_cache_enabled: bool = True
+    llm_cache_ttl_seconds: int = 300
+    llm_cache_max_items: int = 256
+    max_llm_prompt_log_chars: int = 8000
+    max_reasoning_trace_chars: int = 12000
+    max_stream_text_trace_chars: int = 24000
+    max_sse_log_value_chars: int = 1200
 
     # App
     app_host: str = "0.0.0.0"
     app_port: int = 4400
     debug: bool = True
+
+    # Phase 3 Python executor
+    python_executor_backend: str = "local"  # local / worker / container
+    python_worker_url: str = ""
+    allow_local_python_executor_in_production: bool = False
+    python_executor_timeout_seconds: int = 15
+    python_executor_memory_mb: int = 512
+    python_container_image: str = "python:3.12-slim"
+    python_container_cpus: str = "1"
+    python_container_command: str = ""
+    python_firecracker_runner: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

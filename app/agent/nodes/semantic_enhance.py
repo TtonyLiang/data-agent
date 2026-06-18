@@ -7,6 +7,7 @@ from typing import Any
 from langchain_core.callbacks.manager import adispatch_custom_event
 
 from app.services.llm_service import get_llm_service
+from app.services.prompt_service import get_prompt_service
 
 
 SEMANTIC_ENHANCE_PROMPT = """你是智能问数系统中的“语义增强器”。
@@ -38,11 +39,24 @@ async def semantic_enhance_node(state: dict) -> dict:
         return _build_result(question, question, "no_change", [], "原始问题为空，跳过语义增强。")
 
     deterministic = deterministic_enhancement(question, history)
+    if deterministic and should_short_circuit_enhancement(question, deterministic):
+        return _build_result(
+            question,
+            deterministic["enhanced_question"],
+            deterministic.get("rewrite_type", "clarified"),
+            deterministic.get("preserved_constraints", []),
+            deterministic.get("reason", "命中规则增强，跳过大模型调用。"),
+        )
     try:
         llm = get_llm_service()
         llm_kwargs = await llm.resolve_agent_chat_kwargs(state.get("agent_id"))
+        system_prompt = await get_prompt_service().resolve(
+            "semantic_enhance.system",
+            SEMANTIC_ENHANCE_PROMPT,
+            agent_id=state.get("agent_id"),
+        )
         messages = [
-            {"role": "system", "content": SEMANTIC_ENHANCE_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": build_enhancement_user_prompt(question, history)},
         ]
         content, reasoning = await llm.achat_with_reasoning(messages, **llm_kwargs)
@@ -158,6 +172,17 @@ def deterministic_enhancement(question: str, history: list[dict]) -> dict[str, A
     return None
 
 
+def should_short_circuit_enhancement(question: str, deterministic: dict[str, Any]) -> bool:
+    rewrite_type = str(deterministic.get("rewrite_type") or "")
+    constraints = set(deterministic.get("preserved_constraints") or [])
+    if rewrite_type == "followup_resolution":
+        return True
+    if "数量/笔数口径" in constraints and "区域/地区维度" in constraints:
+        return True
+    compact = compact_text(question)
+    return bool("申请" in compact and contains_count_intent(question) and contains_region_intent(question))
+
+
 def guard_enhanced_question(
     question: str,
     history: list[dict],
@@ -194,6 +219,10 @@ def clean_enhanced_question(text: str) -> str:
 def common_business_rewrite(question: str) -> str | None:
     compact = compact_text(question)
     top_limit = extract_top_limit(question)
+    if "申请" in compact and contains_count_intent(question) and contains_trend_intent(question):
+        if contains_product_type_intent(question):
+            return "查询贷款申请按月份统计各贷款产品类型的申请笔数变化趋势。"
+        return "查询贷款申请笔数按月份的变化趋势。"
     if "申请" in compact and contains_count_intent(question) and contains_region_intent(question):
         suffix = f"，取前{number_to_chinese(top_limit)}个区域" if top_limit else ""
         return f"查询贷款申请按申请区域分组的申请笔数，并按申请笔数降序排序{suffix}。"
@@ -325,6 +354,16 @@ def contains_count_intent(text: str) -> bool:
 def contains_region_intent(text: str) -> bool:
     compact = compact_text(text)
     return any(token in compact for token in ("区域", "地区", "region", "area"))
+
+
+def contains_product_type_intent(text: str) -> bool:
+    compact = compact_text(text)
+    return any(token in compact for token in ("产品类型", "贷款产品", "产品", "producttype", "product"))
+
+
+def contains_trend_intent(text: str) -> bool:
+    compact = compact_text(text)
+    return any(token in compact for token in ("变化", "趋势", "走势", "波动", "按月", "按日", "同比", "环比", "trend"))
 
 
 def chinese_number_to_int(text: str) -> int | None:

@@ -9,6 +9,7 @@ class AgentState(TypedDict, total=False):
     agent_id: int
     session_id: str
     datasource_id: int
+    trace_id: str
 
     # 意图识别
     intent: str  # "data_query" | "chat" | "metadata_query"
@@ -47,6 +48,10 @@ class AgentState(TypedDict, total=False):
     sql_result: list[dict[str, Any]]
     sql_error: str | None
     sql_retry_count: int
+    require_sql_confirmation: bool
+    enable_low_confidence_clarification: bool
+    human_confirmation: dict[str, Any]
+    clarification: dict[str, Any]
 
     # Python 分析 (Phase 3)
     python_code: str
@@ -73,6 +78,8 @@ def build_mvp_graph() -> StateGraph:
     SQL 执行失败时自动重试 (最多2次).
     """
     from app.agent.nodes.intent import intent_recognition_node
+    from app.agent.nodes.clarification import clarification_node
+    from app.agent.nodes.human_confirm import sql_confirmation_node
     from app.agent.nodes.lf_repair import lf_repair_node
     from app.agent.nodes.lf_to_sql_compile import lf_to_sql_compile_node
     from app.agent.nodes.lf_validate import lf_validate_node
@@ -96,11 +103,13 @@ def build_mvp_graph() -> StateGraph:
     graph.add_node("semantic_enhance", semantic_enhance_node)
     graph.add_node("semantic_runtime_recall", semantic_runtime_recall_node)
     graph.add_node("schema_recall", schema_recall_node)
+    graph.add_node("clarification", clarification_node)
     graph.add_node("nl2lf_generate", nl2lf_generate_node)
     graph.add_node("lf_validate", lf_validate_node)
     graph.add_node("lf_to_sql_compile", lf_to_sql_compile_node)
     graph.add_node("nl2sql_fallback", nl2sql_fallback_node)
     graph.add_node("semantic_check", semantic_check_node)
+    graph.add_node("sql_confirmation", sql_confirmation_node)
     graph.add_node("lf_repair", lf_repair_node)
     graph.add_node("sql_execute", sql_execute_node)
     graph.add_node("planner", planner_node)
@@ -120,7 +129,15 @@ def build_mvp_graph() -> StateGraph:
     )
     graph.add_edge("semantic_enhance", "semantic_runtime_recall")
     graph.add_edge("semantic_runtime_recall", "schema_recall")
-    graph.add_edge("schema_recall", "nl2lf_generate")
+    graph.add_conditional_edges(
+        "schema_recall",
+        route_after_schema_recall,
+        {
+            "continue": "nl2lf_generate",
+            "clarify": "clarification",
+        },
+    )
+    graph.add_edge("clarification", END)
     graph.add_edge("nl2lf_generate", "lf_validate")
     graph.add_conditional_edges(
         "lf_validate",
@@ -140,9 +157,10 @@ def build_mvp_graph() -> StateGraph:
     )
     graph.add_conditional_edges(
         "nl2sql_fallback",
-        route_after_sql_compile,
+        route_after_nl2sql_fallback_compile,
         {
             "compiled": "sql_execute",
+            "confirm": "sql_confirmation",
             "failed": END,
         },
     )
@@ -151,9 +169,12 @@ def build_mvp_graph() -> StateGraph:
         route_after_semantic_check,
         {
             "valid": "sql_execute",
+            "confirm": "sql_confirmation",
+            "repair": "lf_repair",
             "invalid": END,
         },
     )
+    graph.add_edge("sql_confirmation", END)
     graph.add_conditional_edges(
         "sql_execute",
         route_after_sql_execute,
@@ -183,13 +204,31 @@ def route_after_lf_validate(state: AgentState) -> str:
     return "valid" if validation.get("valid") else "invalid"
 
 
+def route_after_schema_recall(state: AgentState) -> str:
+    if not state.get("enable_low_confidence_clarification"):
+        return "continue"
+    tables = state.get("relevant_tables") or []
+    columns = state.get("relevant_columns") or []
+    return "continue" if tables or columns else "clarify"
+
+
 def route_after_sql_compile(state: AgentState) -> str:
     return "compiled" if state.get("compiled_sql") else "failed"
 
 
 def route_after_semantic_check(state: AgentState) -> str:
     check = state.get("semantic_check") or {}
-    return "valid" if check.get("valid") else "invalid"
+    if not check.get("valid"):
+        if state.get("sql_retry_count", 0) < MAX_SQL_RETRIES:
+            return "repair"
+        return "invalid"
+    return "confirm" if state.get("require_sql_confirmation") else "valid"
+
+
+def route_after_nl2sql_fallback_compile(state: AgentState) -> str:
+    if not state.get("compiled_sql"):
+        return "failed"
+    return "confirm" if state.get("require_sql_confirmation") else "compiled"
 
 
 def route_after_sql_execute(state: AgentState) -> str:

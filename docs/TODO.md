@@ -102,6 +102,17 @@
 - [x] PythonGenerate 节点: 只基于 SQL 结果生成统计、分布、趋势、异常解释代码，不直接访问业务库
 - [x] PythonAnalyze 节点: 汇总 Python 执行结果，转成业务可读解释
 - [x] ReportGenerator 节点: 生成结构化报告，首版输出前端可展示的 JSON 片段
+- [x] Phase 3 提示词库:
+  新增 `app/agent/prompts/phase3_python_generate.system.md`、`phase3_python_analyze.system.md`、`phase3_report_generator.system.md`；
+  参考 DataAgent 风格，但按本项目执行器约定改成使用注入的 `rows` 变量。
+- [x] LLM PythonGenerate + 安全模板兜底:
+  有智能体上下文和 SQL 结果时优先调用大模型生成分析脚本；脚本必须通过 AST/导入/输出约束校验，失败时回退到默认安全模板。
+- [x] 动态图表与分析模式:
+  根据排名、趋势、分布、异常等语义推断分析模式；Python 输出 `insights/charts/tables/echarts_option`，安全模板也能输出排名/趋势图表 payload。
+- [x] 后端流式 Markdown 报告:
+  ReportGenerator 优先调用大模型流式生成不少于 300 字的中文 Markdown 报告；失败时使用增强版安全模板报告，并落地 `report_payload.markdown/body`。
+- [x] 报告展示重构:
+  前端报告主体改为安全 Markdown block 渲染，不使用 `v-html`；固定卡片降级为图表、表格和 Python 输出附件。
 - [x] Python 安全执行器接口: 先定义可插拔执行后端，不写死 Docker
 - [x] 开发执行后端: 受限本地子进程，支持超时、任务级临时目录、导入白名单和尽力 OS 资源限制
 - [x] 报告持久化: chat_history 保存 plan_payload、semantic_check、python_result、report_payload，历史会话可恢复
@@ -115,34 +126,55 @@
   在知识召回后召回候选表、字段和关联提示，作为 LogicForm 和 NL2SQL 兜底的物理 schema grounding 上下文。
 - [x] 多轮追问语义增强:
   “前五呢”“我问的是笔数不是金额”等短追问会结合最近对话补全业务对象、指标、维度和 TopN 口径后再进入召回与生成。
-- [ ] SemanticCheck 自动修复增强: 不一致时进入可解释修复或追问，而不是只阻断
-- [ ] ReportGenerator 图表增强: 增加 ECharts 图表建议和可视化片段
-- [ ] 生产默认执行后端: 轻量隔离进程池或独立 worker 服务，使用 OS 资源限制和任务级临时目录
-- [ ] 高安全执行后端: 按场景选 Docker / containerd / Firecracker 微虚拟机
+- [x] SemanticCheck 自动修复增强:
+  不一致时优先进入 `lf_repair`，可解释地移除不支持维度、未知指标或无法应用的时间范围；超过重试预算后再阻断。
+- [x] ReportGenerator 图表增强:
+  报告 payload 输出图表数据与 `echarts_option`，前端可继续升级为完整 ECharts 渲染。
+- [x] 生产默认执行后端:
+  Python 执行器已抽象为可插拔接口；生产默认推荐 `worker` 后端，本地执行器在非 debug 且未显式允许时会拒绝启动。
+- [x] 高安全执行后端选择:
+  配置层支持 `docker` / `containerd` / `firecracker` 等高隔离后端选择，占位执行器会明确提示需接入对应运行时；当前实现不再写死 Docker。
 
 ---
 
-## Phase 4: 生产化 🔄 进行中
+## Phase 4: 生产化 ✅ 已完成基础闭环
 
 - [x] 多轮对话上下文管理 (chat_history 读写 + 上下文注入 prompt)
 - [x] 前端历史会话侧边栏 (会话列表 + 加载历史 + 删除会话)
 - [x] 基础可观测性: 后端日志、LLM prompt 日志、流式事件日志
 - [x] API Key 基础管理: 密钥脱敏显示、更新不回显
-- [ ] SQL 安全加固: AST 解析、只读查询、limit 注入、危险函数/跨库访问拦截
-- [ ] 权限控制: 智能体级数据源授权、表级/列级权限、脱敏策略
-- [ ] 可观测性增强: trace_id、链路追踪、错误分级、慢查询记录
-- [ ] Prompt 配置管理: 按智能体、模型、语义层配置 prompt 模板
-- [ ] API Key 管理增强: 连通性测试、过期提醒、权限隔离
-- [ ] Human-in-the-loop: SQL 执行前确认、低置信度追问、用户反馈回流
+- [x] SQL 安全加固:
+  单条只读 SELECT 校验、语句分隔拦截、LIMIT 注入/截断、危险关键字/函数拦截、系统库/跨库访问拦截。
+- [x] 权限控制:
+  智能体级数据源授权、表级白/黑名单、列级允许/禁用和 `redact` / `partial` / `hash` 脱敏策略。
+- [x] 可观测性增强:
+  `trace_id` 贯穿同步/流式接口、SSE 事件、执行链路和历史结果；错误分级、慢查询耗时和 SQL 执行记录已落地。
+- [x] Prompt 配置管理:
+  新增 `prompt_template` 表、Prompt API、Prompt 管理页；语义增强、LogicForm 生成和 NL2SQL 兜底支持按智能体、模型、语义层覆盖系统提示词。
+- [x] API Key 管理增强:
+  模型连通性测试、密钥脱敏显示、更新不回显、过期时间与即将过期提醒已落地。
+- [x] Human-in-the-loop:
+  SQL 执行前确认节点、确认后继续执行接口、低置信度追问节点、用户反馈回流 API 和前端反馈 client 已具备基础闭环。
 
 ---
 
-## 已知问题 / 风险
+## 已知问题 / 风险收口 ✅ 已完成
 
-- [ ] 推理模型的 reasoning_content 会消耗额外 token，需要控制日志与前端展示长度
-- [ ] 结果分页已补齐，但超宽表和超大结果集仍需继续优化列管理、懒加载和导出体验
-- [ ] 语义层配置缺少版本化，误改指标口径后缺少快速回滚能力
-- [ ] 采集表过多仍会影响 NL2SQL 兜底质量；当前已通过数据定位和噪音提示收敛，后续可继续做表级权限/业务域分组
-- [ ] Python 分析能力上线前必须完成安全执行器隔离策略，生产禁止无隔离本地执行
-- [ ] LLM 调用耗时仍偏长，需要继续评估意图识别本地规则、语义模板命中和缓存策略
-- [ ] 当前仓库改动较多，提交前仍需做一次变更范围梳理与非本轮改动隔离
+- [x] 推理模型 reasoning_content 控制:
+  LLM prompt 日志、SSE 日志、reasoning trace 和 streamText 都增加长度上限；历史会话恢复保留最近有效内容，避免超长思考过程拖垮日志和前端。
+- [x] 超宽表和超大结果集体验:
+  结果表保持当前页分页渲染、列选择和长文本弹窗；页面明确提示“表格只渲染当前页，导出保留完整结果和全部字段”，导出大结果或隐藏列时二次确认。
+- [x] 语义层快照治理:
+  快照支持详情、差异对比和一键回滚；回滚会覆盖当前语义层领域信息与六类资产，并刷新前端语义资产列表。
+- [x] 采集表噪音控制:
+  数据定位增加业务域分组和排序加权，申请/审批、放款/账户、还款/逾期、催收/回收、客户/风险等业务域会影响候选表字段优先级；
+  NL2SQL 兜底上下文使用可配置表/字段上限，不再默认注入过宽 schema。
+- [x] 高安全 Python 执行器:
+  `local / worker / docker / containerd / firecracker` 后端均接入统一执行器接口；
+  Docker/containerd 通过无网络、CPU/内存/PID 限制和只读工作目录运行，Firecracker 通过外部 runner 接入，生产仍推荐 worker 或高隔离后端。
+- [x] LLM 调用耗时收敛:
+  意图识别已有本地规则；语义增强对 TopN 追问、笔数纠偏、申请区域笔数等确定性场景直接规则短路；
+  非流式 LLM 调用加入短 TTL 内存缓存，降低重复管理台/链路调用耗时。
+- [x] 当前仓库改动范围:
+  本轮收口涉及后端流式/LLM/语义层治理/数据定位/Python 执行器、前端语义层快照和结果表提示、测试与文档；
+  未回滚用户或前序改动，提交前仍建议按功能域拆分 review。

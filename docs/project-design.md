@@ -43,6 +43,7 @@ flowchart LR
 - `ChatView`：问数主界面，负责会话、流式过程、SQL、结果表、报告展示。
 - `AgentList`：智能体管理，绑定数据源、模型和语义层。
 - `ModelConfig`：模型配置，区分大语言模型和向量模型。
+- `PromptConfig`：Prompt 模板配置，按节点、智能体、模型和语义层覆盖系统提示词。
 - `DatasourceConfig`：数据源管理，读取表清单、选择采集表、查看字段详情。
 - `KnowledgeConfig`：语义层配置，维护领域、指标、映射、规则、关系和模板。
 
@@ -100,7 +101,9 @@ flowchart TD
   X --> H
 
   H -->|通过| I["SQL 执行"]
-  H -->|不通过| R["返回可读错误 / 后续可修复或追问"]
+  H -->|不通过且可修复| R1["LF 修复<br/>移除不支持维度/未知指标/无效时间"]
+  H -->|不通过且超过预算| R["返回可读错误 / 追问"]
+  R1 --> F
 
   I --> J["分析计划 Planner"]
   J --> K["PythonGenerate<br/>生成统计脚本"]
@@ -125,8 +128,9 @@ flowchart TD
   G["SQL 编译"] --> G1["不调用大模型<br/>确定性编译"]
   H["NL2SQL 兜底"] --> H1["调用大语言模型"]
   I["SQL 执行"] --> I1["不调用模型"]
-  J["Python 分析"] --> J1["不调用大模型"]
-  K["报告生成"] --> K1["当前不调用大模型<br/>基于结构化结果生成"]
+  J["PythonGenerate"] --> J1["调用大语言模型<br/>失败时安全模板兜底"]
+  K["PythonAnalyze"] --> K1["不调用大模型<br/>执行受限脚本"]
+  L["报告生成"] --> L1["调用大语言模型<br/>流式 Markdown 报告"]
 ```
 
 | 节点 | 是否调用大语言模型 | 说明 |
@@ -140,8 +144,33 @@ flowchart TD
 | SQL 编译 | 否 | 命中语义层后，SQL 由 LogicForm 确定性编译生成 |
 | NL2SQL 兜底 | 是 | 语义层未命中或编译失败时，基于候选 schema 生成只读 SQL |
 | SQL 执行 | 否 | 访问业务库 |
-| Python 分析 | 否 | 只处理 SQL 结果集，不直接访问业务库 |
-| 报告生成 | 当前否 | 当前基于统计结果拼装结构化报告 |
+| PythonGenerate | 是 | 根据用户语义、SQL 结果样例和分析计划生成 Python 分析脚本；脚本需通过安全校验，失败回退默认安全模板 |
+| PythonAnalyze | 否 | 在可插拔安全执行器里执行脚本，只处理 SQL 结果集，不直接访问业务库 |
+| 报告生成 | 是 | 基于 SQL、Python 分析结果和样例数据流式生成 Markdown 报告；失败时回退增强版结构化报告 |
+
+## 6.5 Prompt 管理
+
+Prompt 模板是 Phase 4 的生产化配置能力，用于把节点提示词从代码常量中抽出来，允许针对不同业务场景覆盖。
+
+```mermaid
+flowchart LR
+  UI["Prompt 配置页"] --> API["/api/prompt"]
+  API --> PT[("prompt_template")]
+  NODE["模型调用节点"] --> SERVICE["PromptService.resolve"]
+  SERVICE --> PT
+  SERVICE --> DEFAULT["代码内默认模板"]
+  SERVICE --> LLM["大语言模型调用"]
+```
+
+当前支持的模板 key：
+
+- `semantic_enhance.system`：语义增强系统提示词。
+- `nl2lf_generate.system`：LogicForm 生成系统提示词。
+- `nl2sql_fallback.system`：NL2SQL 兜底系统提示词。
+- `phase3_python_generate.system`：Phase 3 Python 分析脚本生成提示词。
+- `phase3_report_generator.system`：Phase 3 Markdown 报告生成提示词。
+
+匹配优先级按具体程度选择：同时命中智能体、模型和语义层的模板优先于全局模板；模板变量渲染失败时自动回退到代码内默认模板，避免配置错误直接打断问数链路。
 
 ## 6. 语义层与 SQL 生成策略
 
@@ -195,29 +224,31 @@ Phase 3 的目标是把“查出结果”推进到“解释结果并形成报告
 ```mermaid
 flowchart LR
   SQL["SQL 结果集"] --> PLAN["Planner<br/>分析计划"]
-  PLAN --> PYGEN["PythonGenerate<br/>生成统计脚本"]
-  PYGEN --> EXEC["安全执行器<br/>受限本地子进程"]
+  PLAN --> PYGEN["PythonGenerate<br/>LLM 生成脚本 / 安全模板兜底"]
+  PYGEN --> CHECK["脚本安全校验<br/>AST / 导入白名单 / JSON 输出约束"]
+  CHECK --> EXEC["安全执行器<br/>local / worker / container / firecracker"]
   EXEC --> PYANA["PythonAnalyze<br/>统计结果结构化"]
-  PYANA --> REPORT["ReportGenerator<br/>执行摘要 / 背景 / 过程 / 解读 / 建议 / 图表 / 表格"]
-  REPORT --> UI["前端报告 Tab / 展开报告"]
+  PYANA --> REPORT["ReportGenerator<br/>LLM 流式 Markdown 报告 / 兜底报告"]
+  REPORT --> UI["前端报告 Tab / 展开报告<br/>安全 Markdown block 渲染"]
   REPORT --> HISTORY["chat_history.report_payload<br/>历史恢复"]
 ```
 
 ### Python 执行边界
 
-Python 阶段只处理 SQL 返回的结果集，不直接访问业务库。当前开发模式使用受限本地子进程，后续生产模式应替换为轻量隔离进程池或独立 worker 服务，高安全场景再考虑 Docker、containerd 或 Firecracker。
+Python 阶段只处理 SQL 返回的结果集，不直接访问业务库。`PythonGenerate` 优先使用大模型根据用户语义生成脚本，但脚本必须使用执行器注入的 `rows` 变量，并通过 AST、安全调用、导入白名单和 JSON 输出约束；不安全、过短或生成失败时回退默认安全模板。当前开发模式使用受限本地子进程，生产默认推荐独立 worker 或轻量隔离进程池，高安全场景再考虑 Docker、containerd 或 Firecracker。
 
 ### 报告结构
 
 当前报告 payload 的目标结构：
 
-- 执行摘要：行数、核心指标、核心维度、Top 结论。
-- 分析背景与用户诉求：原始问题、指标和维度背景。
-- 数据分析过程：SQL 查询、统计画像、结果整理。
-- 结果解读：极值、均值、Top 差值、空值情况。
-- 建议与后续行动：下钻方向、口径复核、后续分析建议。
-- 图表数据：当前前端可轻量渲染，后续可升级为 ECharts。
-- 结果明细：展示前若干行，完整结果仍在结果表里。
+- `markdown/body`：后端大模型流式生成的 Markdown 正文，正常结果要求不少于 300 个中文字符。
+- `summary`：从 Markdown 正文提取的摘要，用于报告预览和最终回答。
+- `charts`：Python 分析或报告生成得到的 chart data 与 `echarts_option`，支持排名、趋势、结构分布等模式。
+- `tables`：Python 分析输出的衍生结果表或 SQL 结果样例表。
+- `python_result`：脚本执行输出，包含 `insights/charts/tables/metrics/null_counts/analysis_mode`。
+- `generation_source`：标记 `llm_report_generator` 或 `fallback_template`，便于排查报告是否来自模型。
+
+前端不使用 `v-html` 渲染报告正文，而是把 Markdown 拆成标题、段落、列表、代码块和表格等安全 block。固定的 KPI/图表/表格只作为报告附件展示，报告主体以后端流式正文为准。
 
 ## 8. 流式交互设计
 
@@ -280,17 +311,58 @@ sequenceDiagram
 
 - 后端日志写入 `logs/`。
 - LLM prompt 和流式事件会写入后端日志，便于排查模型输入输出。
+- 同步和流式问数都会生成 `trace_id`，贯穿 SSE 事件、执行链路、历史结果和错误响应。
+- SQL 执行会记录耗时、慢查询标识和行数，便于排查数据库侧问题。
 - `chat_history` 保存：
   - 用户问题和最终回答。
   - SQL、LogicForm、SQL 结果。
   - reasoning trace。
   - plan、semantic_check、python_result、report_payload。
 
-## 10. 后续演进方向
+## 10. 生产化控制面
 
-- SemanticCheck 自动修复增强：不一致时进入可解释修复或追问。
-- 报告图表增强：接入 ECharts 图表建议和可视化片段。
-- SQL 安全加固：AST 解析、只读查询、limit 注入、危险函数和跨库访问拦截。
-- 权限控制：智能体级数据源授权、表级/列级权限、脱敏策略。
-- 生产 Python 执行器：独立 worker、资源限制、任务级临时目录和更强隔离。
-- Prompt 管理：按智能体、模型和语义层配置 prompt 模板。
+### SQL 安全
+
+执行前通过 `normalize_sql_for_execution` 做保守校验：
+
+- 只允许单条 `SELECT`。
+- 拦截 `DROP`、`INSERT`、`UPDATE`、`DELETE`、`UNION` 等危险关键字。
+- 拦截 `SLEEP`、`LOAD_FILE`、`BENCHMARK` 等危险函数。
+- 拦截系统库和跨库表引用。
+- 对顶层查询注入或截断 `LIMIT`，默认上限 1000。
+
+### 权限与脱敏
+
+权限分三层：
+
+- 数据源授权：智能体只能访问绑定的数据源。
+- 表级权限：`agent_table_permission` 支持表级允许/拒绝。
+- 列级权限：`agent_column_permission` 支持列级允许/拒绝，以及 `redact`、`partial`、`hash` 脱敏策略。
+
+权限同时作用于数据定位、NL2SQL 兜底上下文和 SQL 执行结果，避免模型看到或返回不该暴露的表字段。
+
+### API Key 与模型连通性
+
+模型配置支持：
+
+- API Key 脱敏显示，保存时不回显明文。
+- 编辑时不修改 Key 会保留原密钥，输入新 Key 才覆盖。
+- `api_key_expires_at`、过期和即将过期提醒。
+- 模型连通性测试：大语言模型走 `/chat/completions`，向量模型走 `/embeddings`。
+
+### Human-in-the-loop
+
+当前 HITL 基础闭环包括：
+
+- SQL 执行前确认：请求携带 `require_sql_confirmation` 时，工作流停在 `sql_confirmation` 节点并返回待确认 SQL。
+- 确认后继续执行：`/api/chat/confirm-sql` 接收已确认 SQL，复用 SQL 安全、权限、脱敏和 Phase 3 报告链路继续执行。
+- 低置信度追问：请求启用 `enable_low_confidence_clarification` 且数据定位没有候选表/字段时，进入追问节点。
+- 用户反馈回流：`/api/feedback` 记录 `agent_id`、`session_id`、`trace_id`、评分、备注和上下文 payload，供后续评估和 Prompt/语义层迭代。
+
+## 11. 后续演进方向
+
+- 语义层快照已支持保存、查看、差异对比与一键回滚，仍建议在生产库上保留操作确认和审计。
+- 高安全 Python 执行器已完成接口和配置选择，Docker/containerd/Firecracker 运行时由部署环境接入，当前代码侧只负责命令封装与隔离参数。
+- Prompt 模板已支持管理和覆盖，后续可增加版本、灰度和命中统计。
+- SQL 安全当前采用保守词法/结构化校验，后续可接入专用 SQL AST 解析库进一步提高复杂 SQL 识别能力。
+- LLM 调用耗时已通过规则短路、Prompt 缓存和长度截断做了一轮收敛，后续主要关注模型服务本身的延迟和命中率。

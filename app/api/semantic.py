@@ -123,6 +123,33 @@ async def list_domain_snapshots(domain_id: int):
     return {"snapshots": await svc.list_snapshots(domain_id)}
 
 
+@router.get("/domains/{domain_id}/snapshots/{snapshot_id}")
+async def get_domain_snapshot(domain_id: int, snapshot_id: int):
+    svc = get_semantic_runtime_service()
+    try:
+        return {"snapshot": await svc.get_snapshot(domain_id, snapshot_id)}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/domains/{domain_id}/snapshots/{snapshot_id}/diff")
+async def diff_domain_snapshot(domain_id: int, snapshot_id: int):
+    svc = get_semantic_runtime_service()
+    try:
+        return await svc.diff_snapshot(domain_id, snapshot_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/domains/{domain_id}/snapshots/{snapshot_id}/rollback")
+async def rollback_domain_snapshot(domain_id: int, snapshot_id: int):
+    svc = get_semantic_runtime_service()
+    try:
+        return await svc.rollback_snapshot(domain_id, snapshot_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/assets/{domain_id}")
 async def list_assets(domain_id: int, asset_type: str | None = Query(default=None, alias="type")):
     svc = get_semantic_runtime_service()

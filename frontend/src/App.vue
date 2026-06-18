@@ -28,6 +28,10 @@
             <el-icon><Setting /></el-icon>
             <span>模型配置</span>
           </el-menu-item>
+          <el-menu-item index="/prompt-config" :disabled="isNavigationDisabled('/prompt-config')">
+            <el-icon><Document /></el-icon>
+            <span>Prompt 配置</span>
+          </el-menu-item>
           <el-menu-item index="/datasource" :disabled="isNavigationDisabled('/datasource')">
             <el-icon><Coin /></el-icon>
             <span>数据源</span>

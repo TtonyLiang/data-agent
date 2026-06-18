@@ -29,6 +29,14 @@ async def update_model_config(config_id: int, config: ModelConfigUpdate):
     }
 
 
+@router.post("/{config_id}/test")
+async def test_model_config(config_id: int):
+    result = await get_model_config_service().test_connection(config_id)
+    if result.get("message") == "模型配置不存在":
+        raise HTTPException(status_code=404, detail="模型配置不存在")
+    return result
+
+
 @router.delete("/{config_id}")
 async def delete_model_config(config_id: int):
     await get_model_config_service().delete(config_id)

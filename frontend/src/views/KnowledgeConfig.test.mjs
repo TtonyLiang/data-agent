@@ -20,6 +20,16 @@ assert.ok(
   'KnowledgeConfig should label loan_application_indicator in Chinese',
 )
 
+assert.ok(
+  source.includes('handleDiffSnapshot') && source.includes('handleRollbackSnapshot'),
+  'KnowledgeConfig should expose snapshot diff and rollback actions',
+)
+
+assert.ok(
+  source.includes('snapshotDiffSummary') && source.includes('快照差异'),
+  'KnowledgeConfig should render snapshot diff details before rollback',
+)
+
 for (const [key, label] of [
   ['application_product_type', '申请产品类型'],
   ['application_region', '申请地区'],
