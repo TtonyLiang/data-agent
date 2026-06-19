@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from app.agent.graph import AgentState, build_mvp_graph
-from app.agent.nodes.phase3 import planner_node, python_analyze_node, python_generate_node, report_generator_node
+from app.agent.nodes.analysis_pipeline import planner_node, python_analyze_node, python_generate_node, report_generator_node
 from app.agent.nodes.sql_execute import sql_execute_node
 from app.config import get_settings
 from app.db.mysql import get_management_db

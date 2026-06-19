@@ -107,6 +107,12 @@
   参考 DataAgent 风格，但按本项目执行器约定改成使用注入的 `rows` 变量。
 - [x] LLM PythonGenerate + 安全模板兜底:
   有智能体上下文和 SQL 结果时优先调用大模型生成分析脚本；脚本必须通过 AST/导入/输出约束校验，失败时回退到默认安全模板。
+- [x] PythonAnalyze ReAct 修复重试:
+  Python 脚本执行失败时不直接进入报告生成；先观察错误、携带失败脚本和 stderr 让大模型重写脚本并再次执行；
+  修复失败后切换安全模板兜底，全部失败才生成带 `analysis_failed` 状态的降级报告。
+- [x] 深度分析模块工程化整理:
+  主实现从开发阶段命名 `phase3.py` 迁到 `analysis_pipeline.py`；
+  兜底 Python 脚本模板外置到 `app/agent/python_templates/`，节点只负责 LLM 生成与模板兜底选择。
 - [x] 动态图表与分析模式:
   根据排名、趋势、分布、异常等语义推断分析模式；Python 输出 `insights/charts/tables/echarts_option`，安全模板也能输出排名/趋势图表 payload。
 - [x] 后端流式 Markdown 报告:

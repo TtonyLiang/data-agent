@@ -76,6 +76,15 @@ ORDER BY `month` ASC, `application_count` DESC
 
 ## 本轮执行范围
 
+当前进度：
+
+- [x] 语义增强已把“各个贷款申请量变化/趋势”优先改写为“按月份统计各贷款产品类型申请笔数变化趋势”
+- [x] LogicForm 已支持 `application_count + application_product_type + grain=month + recent_3_months`
+- [x] SQL 编译已支持 `month + application_product_type` 的稳定分组输出
+- [x] PythonAnalyze 已增加 `multi_series_trend` 模式
+- [x] ReportGenerator / 前端已支持多序列折线图渲染
+- [ ] 真实链路自测与样例问题回归仍需继续完成
+
 ### 1. 语义理解增强
 
 - 把“各个贷款”“各贷款产品”“不同贷款产品”识别为产品类型维度意图

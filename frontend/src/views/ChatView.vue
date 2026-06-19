@@ -366,70 +366,9 @@
                         <div v-else-if="block.type === 'chart'" class="report-chart-card report-md-chart-card">
                           <div class="report-chart-head">
                             <h3>{{ block.title }}</h3>
-                            <p>{{ block.subtitle }}</p>
+                            <p v-if="block.subtitle">{{ block.subtitle }}</p>
                           </div>
-                          <div v-if="block.chartKind === 'pie'" class="report-pie-layout">
-                            <div class="report-pie-chart" :style="{ background: pieChartBackground(block.data) }">
-                              <div class="report-pie-hole">
-                                <strong>{{ pieChartTotal(block.data) }}</strong>
-                                <span>总量</span>
-                              </div>
-                            </div>
-                            <div class="report-pie-legend">
-                              <div
-                                v-for="(item, pieIndex) in block.data"
-                                :key="String(item.label)"
-                                class="report-pie-legend-item"
-                              >
-                                <i :style="{ background: chartColorAt(pieIndex) }"></i>
-                                <span>{{ item.label }}</span>
-                                <em>{{ piePercent(item.value, block.data) }}</em>
-                                <strong>{{ formatReportValue(item.value) }}</strong>
-                              </div>
-                            </div>
-                          </div>
-                          <div v-else-if="block.chartKind === 'line'" class="report-line-chart">
-                            <div class="report-line-canvas">
-                              <div class="report-line-grid"></div>
-                              <svg viewBox="0 0 520 220" preserveAspectRatio="none" class="report-line-svg">
-                                <polyline
-                                  :points="lineChartPoints(block.data)"
-                                  fill="none"
-                                  stroke="#0f766e"
-                                  stroke-width="3"
-                                  stroke-linecap="round"
-                                  stroke-linejoin="round"
-                                />
-                                <circle
-                                  v-for="(item, pointIndex) in block.data"
-                                  :key="`${msg.id}-line-${pointIndex}`"
-                                  :cx="linePointPosition(block.data, pointIndex).x"
-                                  :cy="linePointPosition(block.data, pointIndex).y"
-                                  r="4"
-                                  fill="#ea580c"
-                                />
-                              </svg>
-                            </div>
-                            <div class="report-line-labels">
-                              <div v-for="item in block.data" :key="String(item.label)" class="report-line-label">
-                                <span>{{ item.label }}</span>
-                                <strong>{{ formatReportValue(item.value) }}</strong>
-                              </div>
-                            </div>
-                          </div>
-                          <div v-else class="report-bar-chart">
-                            <div
-                              v-for="item in block.data"
-                              :key="String(item.label)"
-                              class="report-bar-row"
-                            >
-                              <span>{{ item.label }}</span>
-                              <div class="report-bar-track">
-                                <i :style="{ width: `${barPercent(item.value, block.data)}%` }"></i>
-                              </div>
-                              <strong>{{ formatReportValue(item.value) }}</strong>
-                            </div>
-                          </div>
+                          <ReportEChart :chart="block" />
                         </div>
                         <div v-else-if="block.type === 'table'" class="report-data-table-wrap">
                           <table class="report-data-table">
@@ -775,70 +714,9 @@
               <div v-else-if="block.type === 'chart'" class="report-chart-card report-md-chart-card">
                 <div class="report-chart-head">
                   <h3>{{ block.title }}</h3>
-                  <p>{{ block.subtitle }}</p>
+                  <p v-if="block.subtitle">{{ block.subtitle }}</p>
                 </div>
-                <div v-if="block.chartKind === 'pie'" class="report-pie-layout">
-                  <div class="report-pie-chart" :style="{ background: pieChartBackground(block.data) }">
-                    <div class="report-pie-hole">
-                      <strong>{{ pieChartTotal(block.data) }}</strong>
-                      <span>总量</span>
-                    </div>
-                  </div>
-                  <div class="report-pie-legend">
-                    <div
-                      v-for="(item, pieIndex) in block.data"
-                      :key="String(item.label)"
-                      class="report-pie-legend-item"
-                    >
-                      <i :style="{ background: chartColorAt(pieIndex) }"></i>
-                      <span>{{ item.label }}</span>
-                      <em>{{ piePercent(item.value, block.data) }}</em>
-                      <strong>{{ formatReportValue(item.value) }}</strong>
-                    </div>
-                  </div>
-                </div>
-                <div v-else-if="block.chartKind === 'line'" class="report-line-chart">
-                  <div class="report-line-canvas">
-                    <div class="report-line-grid"></div>
-                    <svg viewBox="0 0 520 220" preserveAspectRatio="none" class="report-line-svg">
-                      <polyline
-                        :points="lineChartPoints(block.data)"
-                        fill="none"
-                        stroke="#0f766e"
-                        stroke-width="3"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      />
-                      <circle
-                        v-for="(item, pointIndex) in block.data"
-                        :key="`line-${pointIndex}`"
-                        :cx="linePointPosition(block.data, pointIndex).x"
-                        :cy="linePointPosition(block.data, pointIndex).y"
-                        r="4"
-                        fill="#ea580c"
-                      />
-                    </svg>
-                  </div>
-                  <div class="report-line-labels">
-                    <div v-for="item in block.data" :key="String(item.label)" class="report-line-label">
-                      <span>{{ item.label }}</span>
-                      <strong>{{ formatReportValue(item.value) }}</strong>
-                    </div>
-                  </div>
-                </div>
-                <div v-else class="report-bar-chart">
-                  <div
-                    v-for="item in block.data"
-                    :key="String(item.label)"
-                    class="report-bar-row"
-                  >
-                    <span>{{ item.label }}</span>
-                    <div class="report-bar-track">
-                      <i :style="{ width: `${barPercent(item.value, block.data)}%` }"></i>
-                    </div>
-                    <strong>{{ formatReportValue(item.value) }}</strong>
-                  </div>
-                </div>
+                <ReportEChart :chart="block" />
               </div>
               <div v-else-if="block.type === 'table'" class="report-data-table-wrap">
                 <table class="report-data-table">
@@ -867,70 +745,9 @@
           >
             <div class="report-chart-head">
               <h3>{{ chart.title }}</h3>
-              <p>{{ chart.subtitle }}</p>
+              <p v-if="chart.subtitle">{{ chart.subtitle }}</p>
             </div>
-            <div v-if="chart.chartKind === 'pie'" class="report-pie-layout">
-              <div class="report-pie-chart" :style="{ background: pieChartBackground(chart.data) }">
-                <div class="report-pie-hole">
-                  <strong>{{ pieChartTotal(chart.data) }}</strong>
-                  <span>总量</span>
-                </div>
-              </div>
-              <div class="report-pie-legend">
-                <div
-                  v-for="(item, pieIndex) in chart.data"
-                  :key="String(item.label)"
-                  class="report-pie-legend-item"
-                >
-                  <i :style="{ background: chartColorAt(pieIndex) }"></i>
-                  <span>{{ item.label }}</span>
-                  <em>{{ piePercent(item.value, chart.data) }}</em>
-                  <strong>{{ formatReportValue(item.value) }}</strong>
-                </div>
-              </div>
-            </div>
-            <div v-else-if="chart.chartKind === 'line'" class="report-line-chart">
-              <div class="report-line-canvas">
-                <div class="report-line-grid"></div>
-                <svg viewBox="0 0 520 220" preserveAspectRatio="none" class="report-line-svg">
-                  <polyline
-                    :points="lineChartPoints(chart.data)"
-                    fill="none"
-                    stroke="#0f766e"
-                    stroke-width="3"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                  <circle
-                    v-for="(item, pointIndex) in chart.data"
-                    :key="`line-report-${pointIndex}`"
-                    :cx="linePointPosition(chart.data, pointIndex).x"
-                    :cy="linePointPosition(chart.data, pointIndex).y"
-                    r="4"
-                    fill="#ea580c"
-                  />
-                </svg>
-              </div>
-              <div class="report-line-labels">
-                <div v-for="item in chart.data" :key="String(item.label)" class="report-line-label">
-                  <span>{{ item.label }}</span>
-                  <strong>{{ formatReportValue(item.value) }}</strong>
-                </div>
-              </div>
-            </div>
-            <div v-else class="report-bar-chart">
-              <div
-                v-for="item in chart.data"
-                :key="String(item.label)"
-                class="report-bar-row"
-              >
-                <span>{{ item.label }}</span>
-                <div class="report-bar-track">
-                  <i :style="{ width: `${barPercent(item.value, chart.data)}%` }"></i>
-                </div>
-                <strong>{{ formatReportValue(item.value) }}</strong>
-              </div>
-            </div>
+            <ReportEChart :chart="chart" />
           </div>
         </section>
 
@@ -970,7 +787,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, nextTick, onUnmounted, watch } from 'vue'
+import { computed, ref, onMounted, nextTick, onUnmounted, watch, defineComponent, h, type PropType } from 'vue'
+import * as echarts from 'echarts'
 import { Promotion, Loading, ChatDotRound, Plus, Delete, CircleCheck, Clock, Search, Refresh, Download, DocumentCopy, WarningFilled, ArrowDown, ArrowRight, InfoFilled, FullScreen } from '@element-plus/icons-vue'
 import {
   sendMessageStream, fetchAgents, fetchDatasources, fetchSessions, fetchHistory, deleteSession,
@@ -1017,6 +835,48 @@ const hasUnreadStream = ref(false)
 let abortController: AbortController | null = null
 let activeRunId = 0
 const resultPageSizeOptions = [10, 20, 50, 100]
+
+const ReportEChart = defineComponent({
+  name: 'ReportEChart',
+  props: {
+    chart: {
+      type: Object as PropType<ReportChartBlock>,
+      required: true,
+    },
+  },
+  setup(props) {
+    const chartRef = ref<HTMLElement | null>(null)
+    let chartInstance: echarts.ECharts | null = null
+    let resizeObserver: ResizeObserver | null = null
+    const resize = () => chartInstance?.resize()
+    const renderChart = () => {
+      if (!chartRef.value) return
+      if (!chartInstance) {
+        chartInstance = echarts.init(chartRef.value, undefined, { renderer: 'canvas' })
+      }
+      chartInstance.setOption(buildReportEchartsOption(props.chart), true)
+      resize()
+    }
+    onMounted(() => {
+      nextTick(() => {
+        renderChart()
+        if (chartRef.value && typeof ResizeObserver !== 'undefined') {
+          resizeObserver = new ResizeObserver(resize)
+          resizeObserver.observe(chartRef.value)
+        }
+        window.addEventListener('resize', resize)
+      })
+    })
+    watch(() => props.chart, () => nextTick(renderChart), { deep: true })
+    onUnmounted(() => {
+      window.removeEventListener('resize', resize)
+      resizeObserver?.disconnect()
+      chartInstance?.dispose()
+      chartInstance = null
+    })
+    return () => h('div', { ref: chartRef, class: 'report-echart' })
+  },
+})
 
 const quickQueries = [
   '本月现金贷 M1+逾期率怎么算',
@@ -1936,10 +1796,11 @@ function reportSections(report: Record<string, unknown>) {
 type ReportMarkdownBlock =
   | { type: 'title' | 'heading' | 'subheading' | 'paragraph' | 'code'; text: string }
   | { type: 'list'; items: string[] }
-  | { type: 'chart'; title: string; subtitle: string; chartKind: 'bar' | 'pie' | 'line'; data: { label: string; value: unknown }[] }
+  | { type: 'chart'; title: string; subtitle: string; chartKind: 'bar' | 'pie' | 'line'; data: { label: string; value: unknown }[]; series?: ReportChartSeries[]; xAxis?: string[]; option?: Record<string, unknown> }
   | { type: 'table'; columns: string[]; rows: string[][] }
 
 type ReportChartBlock = Extract<ReportMarkdownBlock, { type: 'chart' }>
+type ReportChartSeries = { name: string; data: { label: string; value: unknown }[] }
 
 type ReportFieldDescriptor = { field: string; key: string; name: string; label: string }
 
@@ -2100,16 +1961,20 @@ function chartFromEchartsOption(option: unknown): ReportChartBlock | null {
   if (!firstSeries || !Array.isArray(firstSeries.data)) return null
   const chartKind = echartsSeriesKind(firstSeries)
   const labels = echartsAxisLabels(record.xAxis)
-  const data = firstSeries.data
+  const series = normalizeEchartsSeries(seriesList, labels)
+  const data = series.length ? series.flatMap(item => item.data) : firstSeries.data
     .map((item, index) => normalizeChartPoint(item, labels[index]))
     .filter((item): item is { label: string; value: unknown } => !!item)
-  if (!data.length) return null
+  if (!data.length && !series.length) return null
   return {
     type: 'chart',
     title: echartsText(record.title) || String(firstSeries.name || '图表'),
-    subtitle: echartsText(record.subtitle) || '由报告中的 ECharts 配置自动渲染',
+    subtitle: echartsText(record.subtitle),
     chartKind,
     data,
+    series: series.length ? series : undefined,
+    xAxis: labels.length ? labels : undefined,
+    option: record,
   }
 }
 
@@ -2147,6 +2012,22 @@ function normalizeChartPoint(item: unknown, fallbackLabel?: string): { label: st
     return { label: String(label ?? '-'), value }
   }
   return { label: String(fallbackLabel ?? '-'), value: item }
+}
+
+function normalizeEchartsSeries(seriesList: Record<string, unknown>[], labels: string[]): ReportChartSeries[] {
+  return seriesList
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item))
+    .map(series => {
+      const rawData = Array.isArray(series.data) ? series.data : []
+      const points = rawData
+        .map((item, index) => normalizeChartPoint(item, labels[index]))
+        .filter((item): item is { label: string; value: unknown } => !!item)
+      return {
+        name: String(series.name || '序列'),
+        data: points,
+      }
+    })
+    .filter(item => item.data.length > 0)
 }
 
 function reportExecutiveBullets(report: Record<string, unknown>) {
@@ -2226,19 +2107,23 @@ function reportCharts(report: Record<string, unknown>) {
   return charts
     .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
     .map(item => normalizeReportChart(item))
-    .filter((item): item is { title: string; subtitle: string; chartKind: 'bar' | 'pie' | 'line'; data: { label: string; value: unknown }[] } => !!item)
+    .filter((item): item is ReportChartBlock => !!item)
     .filter(item => item.data.length > 0)
 }
 
-function normalizeReportChart(item: Record<string, unknown>): { title: string; subtitle: string; chartKind: 'bar' | 'pie' | 'line'; data: { label: string; value: unknown }[] } | null {
+function normalizeReportChart(item: Record<string, unknown>): ReportChartBlock | null {
   const optionChart = chartFromEchartsOption(item.echarts_option || item.option)
   const explicitKind = normalizeChartKind(item.chart_kind || item.chartKind || item.type)
   if (optionChart) {
     return {
+      type: 'chart',
       title: String(item.title || optionChart.title),
       subtitle: String(item.subtitle || optionChart.subtitle),
       chartKind: explicitKind === '' ? optionChart.chartKind : explicitKind,
       data: optionChart.data,
+      series: optionChart.series,
+      xAxis: optionChart.xAxis,
+      option: optionChart.option,
     }
   }
   const rows = Array.isArray(item.data) ? item.data : []
@@ -2248,11 +2133,175 @@ function normalizeReportChart(item: Record<string, unknown>): { title: string; s
   const title = String(item.title || '图表')
   const subtitle = String(item.subtitle || '')
   return {
+    type: 'chart',
     title,
     subtitle,
     chartKind: explicitKind === '' ? inferChartKind(title, subtitle, data) : explicitKind,
     data,
   }
+}
+
+function buildReportEchartsOption(chart: ReportChartBlock): Record<string, unknown> {
+  const base = normalizeEchartsOption(clonePlainObject(chart.option), chart)
+  const kind = chart.chartKind
+  const palette = chartPalette()
+  const common = {
+    color: palette,
+    animationDuration: 650,
+    animationEasing: 'cubicOut',
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: kind === 'pie' ? 'item' : 'axis',
+      confine: true,
+      backgroundColor: 'rgba(15, 23, 42, 0.92)',
+      borderWidth: 0,
+      borderRadius: 8,
+      padding: [8, 10],
+      textStyle: { color: '#fff', fontSize: 12 },
+    },
+    legend: {
+      type: 'scroll',
+      bottom: 0,
+      icon: 'roundRect',
+      itemWidth: 10,
+      itemHeight: 10,
+      textStyle: { color: '#475467', fontSize: 12 },
+      pageIconColor: '#64748b',
+      pageTextStyle: { color: '#64748b' },
+    },
+  }
+  return {
+    ...common,
+    ...base,
+    color: palette,
+    title: undefined,
+    series: prettifySeries(base.series, kind),
+    grid: kind === 'pie' ? undefined : {
+      top: 22,
+      right: 18,
+      bottom: 54,
+      left: 46,
+      containLabel: true,
+      ...(isPlainObject(base.grid) ? base.grid : {}),
+    },
+    xAxis: kind === 'pie' ? undefined : prettifyAxis(base.xAxis, 'x'),
+    yAxis: kind === 'pie' ? undefined : prettifyAxis(base.yAxis, 'y'),
+    tooltip: { ...common.tooltip, ...(isPlainObject(base.tooltip) ? base.tooltip : {}) },
+    legend: { ...common.legend, ...(isPlainObject(base.legend) ? base.legend : {}) },
+  }
+}
+
+function normalizeEchartsOption(option: Record<string, unknown> | null, chart: ReportChartBlock): Record<string, unknown> {
+  if (option && Array.isArray(option.series) && option.series.length) return option
+  if (chart.chartKind === 'pie') {
+    return {
+      series: [{
+        type: 'pie',
+        name: chart.title,
+        data: chart.data.map(item => ({ name: item.label, value: toFiniteNumber(item.value) })),
+      }],
+    }
+  }
+  const series = chart.series?.length
+    ? chart.series.map(item => ({ type: chart.chartKind, name: item.name, data: item.data.map(row => toFiniteNumber(row.value)) }))
+    : [{ type: chart.chartKind, name: chart.title, data: chart.data.map(item => toFiniteNumber(item.value)) }]
+  return {
+    xAxis: { type: 'category', data: chart.xAxis?.length ? chart.xAxis : chart.data.map(item => item.label) },
+    yAxis: { type: 'value' },
+    series,
+  }
+}
+
+function prettifySeries(series: unknown, kind: 'bar' | 'pie' | 'line') {
+  const seriesList = Array.isArray(series) ? series : []
+  if (kind === 'pie') {
+    return seriesList.map((item) => {
+      const record = isPlainObject(item) ? item : {}
+      return {
+        ...record,
+        type: 'pie',
+        radius: ['42%', '68%'],
+        center: ['50%', '45%'],
+        avoidLabelOverlap: true,
+        itemStyle: { borderColor: '#fff', borderWidth: 3, ...(isPlainObject(record.itemStyle) ? record.itemStyle : {}) },
+        label: {
+          color: '#344054',
+          fontSize: 12,
+          formatter: '{b}\n{d}%',
+          ...(isPlainObject(record.label) ? record.label : {}),
+        },
+        labelLine: { length: 14, length2: 8, smooth: true, ...(isPlainObject(record.labelLine) ? record.labelLine : {}) },
+      }
+    })
+  }
+  if (kind === 'line') {
+    return seriesList.map((item) => {
+      const record = isPlainObject(item) ? item : {}
+      return {
+        ...record,
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        symbolSize: 7,
+        lineStyle: { width: 3, ...(isPlainObject(record.lineStyle) ? record.lineStyle : {}) },
+        areaStyle: {
+          opacity: 0.08,
+          ...(isPlainObject(record.areaStyle) ? record.areaStyle : {}),
+        },
+      }
+    })
+  }
+  return seriesList.map((item) => {
+    const record = isPlainObject(item) ? item : {}
+    return {
+      ...record,
+      type: 'bar',
+      barMaxWidth: 38,
+      itemStyle: { borderRadius: [7, 7, 0, 0], ...(isPlainObject(record.itemStyle) ? record.itemStyle : {}) },
+    }
+  })
+}
+
+function prettifyAxis(axis: unknown, direction: 'x' | 'y') {
+  const axisRecord = Array.isArray(axis) ? axis[0] : axis
+  const base = isPlainObject(axisRecord) ? axisRecord : {}
+  return {
+    ...base,
+    axisLine: { lineStyle: { color: '#d0d8e8' }, ...(isPlainObject(base.axisLine) ? base.axisLine : {}) },
+    axisTick: { show: false, ...(isPlainObject(base.axisTick) ? base.axisTick : {}) },
+    axisLabel: {
+      color: '#667085',
+      fontSize: 12,
+      hideOverlap: true,
+      ...(direction === 'x' ? { interval: 0, rotate: 0 } : {}),
+      ...(isPlainObject(base.axisLabel) ? base.axisLabel : {}),
+    },
+    splitLine: direction === 'y'
+      ? { show: true, lineStyle: { color: '#e9eef8', type: 'dashed' }, ...(isPlainObject(base.splitLine) ? base.splitLine : {}) }
+      : { show: false, ...(isPlainObject(base.splitLine) ? base.splitLine : {}) },
+  }
+}
+
+function clonePlainObject(value: unknown): Record<string, unknown> | null {
+  if (!isPlainObject(value)) return null
+  try {
+    return JSON.parse(JSON.stringify(value)) as Record<string, unknown>
+  } catch {
+    return { ...value }
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function toFiniteNumber(value: unknown) {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : 0
+}
+
+function chartPalette() {
+  return ['#2563eb', '#10b981', '#f97316', '#8b5cf6', '#06b6d4', '#ef4444', '#84cc16', '#f59e0b']
 }
 
 function normalizeChartKind(value: unknown): 'bar' | 'pie' | 'line' | '' {
@@ -2297,66 +2346,6 @@ function barPercent(value: unknown, rows: { value: unknown }[]) {
   const max = Math.max(...rows.map(row => Number(row.value)).filter(Number.isFinite), 0)
   if (!max) return 0
   return Math.max(4, Math.min(100, (numeric / max) * 100))
-}
-
-function pieChartTotal(rows: { value: unknown }[]) {
-  const total = rows.reduce((sum, row) => sum + (Number.isFinite(Number(row.value)) ? Number(row.value) : 0), 0)
-  return formatReportValue(total)
-}
-
-function piePercent(value: unknown, rows: { value: unknown }[]) {
-  const numeric = Number(value)
-  if (!Number.isFinite(numeric)) return '0%'
-  const total = rows.reduce((sum, row) => sum + (Number.isFinite(Number(row.value)) ? Number(row.value) : 0), 0)
-  if (!total) return '0%'
-  return `${((numeric / total) * 100).toFixed(1)}%`
-}
-
-function chartColorAt(index: number) {
-  const palette = ['#0f766e', '#ea580c', '#2563eb', '#b45309', '#dc2626', '#64748b', '#0ea5e9', '#7c3aed']
-  return palette[index % palette.length]
-}
-
-function linePointPosition(rows: { value: unknown }[], index: number) {
-  const width = 520
-  const height = 220
-  const left = 20
-  const right = 20
-  const top = 18
-  const bottom = 26
-  const numericValues = rows.map(row => Number(row.value)).filter(Number.isFinite)
-  const max = numericValues.length ? Math.max(...numericValues) : 0
-  const min = numericValues.length ? Math.min(...numericValues) : 0
-  const usableWidth = width - left - right
-  const usableHeight = height - top - bottom
-  const x = rows.length <= 1 ? width / 2 : left + (usableWidth * index) / (rows.length - 1)
-  const value = Number(rows[index]?.value)
-  if (!Number.isFinite(value) || max === min) {
-    return { x, y: top + usableHeight / 2 }
-  }
-  const y = top + usableHeight - ((value - min) / (max - min)) * usableHeight
-  return { x, y }
-}
-
-function lineChartPoints(rows: { value: unknown }[]) {
-  return rows.map((_, index) => {
-    const point = linePointPosition(rows, index)
-    return `${point.x},${point.y}`
-  }).join(' ')
-}
-
-function pieChartBackground(rows: { value: unknown }[]) {
-  const total = rows.reduce((sum, row) => sum + (Number.isFinite(Number(row.value)) ? Number(row.value) : 0), 0)
-  if (!total) return '#e9eef8'
-  let offset = 0
-  const segments = rows.map((row, index) => {
-    const numeric = Number.isFinite(Number(row.value)) ? Number(row.value) : 0
-    const percent = (numeric / total) * 100
-    const start = offset
-    offset += percent
-    return `${chartColorAt(index)} ${start}% ${offset}%`
-  })
-  return `conic-gradient(${segments.join(', ')})`
 }
 
 function reportPythonResult(report: Record<string, unknown>): Record<string, unknown> | null {
@@ -4387,178 +4376,15 @@ onUnmounted(() => {
   color: var(--wq-subtle);
 }
 
-.report-bar-chart {
-  display: grid;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.report-pie-layout {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  gap: 22px;
-  align-items: center;
-  margin-top: 16px;
-}
-
-.report-pie-chart {
-  width: 220px;
-  height: 220px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
-}
-
-.report-pie-hole {
-  width: 108px;
-  height: 108px;
-  border-radius: 50%;
-  background: #fff;
-  display: grid;
-  place-items: center;
-  text-align: center;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
-}
-
-.report-pie-hole strong {
-  color: var(--wq-text);
-  font-size: 22px;
-  line-height: 1.1;
-}
-
-.report-pie-hole span {
-  color: var(--wq-subtle);
-  font-size: 12px;
-}
-
-.report-pie-legend {
-  display: grid;
-  gap: 10px;
-}
-
-.report-pie-legend-item {
-  display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) auto auto;
-  gap: 10px;
-  align-items: center;
-  padding: 10px 12px;
-  border: 1px solid #e4eaf5;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.report-pie-legend-item i {
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-}
-
-.report-pie-legend-item span,
-.report-pie-legend-item strong,
-.report-pie-legend-item em {
-  font-size: 13px;
-  font-style: normal;
-}
-
-.report-pie-legend-item span {
-  color: #344054;
-}
-
-.report-pie-legend-item em {
-  color: var(--wq-subtle);
-}
-
-.report-pie-legend-item strong {
-  color: var(--wq-text);
-}
-
-.report-line-chart {
-  display: grid;
-  gap: 14px;
-  margin-top: 16px;
-}
-
-.report-line-canvas {
-  position: relative;
-  min-height: 240px;
-  padding: 12px 8px 8px;
-  border: 1px solid #dbe6f5;
-  border-radius: 8px;
-  background: linear-gradient(180deg, #fbfdff 0%, #f6f9ff 100%);
-}
-
-.report-line-grid {
-  position: absolute;
-  inset: 12px 8px 8px;
-  border-radius: 8px;
-  background-image:
-    linear-gradient(to right, rgba(148, 163, 184, 0.12) 1px, transparent 1px),
-    linear-gradient(to top, rgba(148, 163, 184, 0.12) 1px, transparent 1px);
-  background-size: 52px 52px, 100% 52px;
-  pointer-events: none;
-}
-
-.report-line-svg {
-  position: relative;
-  z-index: 1;
+.report-echart {
   width: 100%;
-  height: 220px;
-}
-
-.report-line-labels {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 10px;
-}
-
-.report-line-label {
-  padding: 10px 12px;
-  border: 1px solid #e4eaf5;
+  height: 330px;
+  margin-top: 12px;
+  border: 1px solid #edf2f7;
   border-radius: 8px;
-  background: #fff;
-}
-
-.report-line-label span,
-.report-line-label strong {
-  display: block;
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.report-line-label span {
-  color: var(--wq-subtle);
-}
-
-.report-line-label strong {
-  margin-top: 4px;
-  color: var(--wq-text);
-}
-
-.report-bar-row {
-  display: grid;
-  grid-template-columns: 120px minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-}
-
-.report-bar-row span,
-.report-bar-row strong {
-  font-size: 13px;
-}
-
-.report-bar-track {
-  height: 10px;
-  border-radius: 999px;
-  background: #edf2fd;
-  overflow: hidden;
-}
-
-.report-bar-track i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #4f8cff, #7bb5ff);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 251, 255, 0.96)),
+    radial-gradient(circle at 18% 0%, rgba(37, 99, 235, 0.08), transparent 32%);
 }
 
 .report-data-table-wrap {
@@ -4617,19 +4443,8 @@ onUnmounted(() => {
     flex-direction: column;
   }
 
-  .report-pie-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .report-pie-chart {
-    width: 180px;
-    height: 180px;
-    margin: 0 auto;
-  }
-
-  .report-pie-hole {
-    width: 92px;
-    height: 92px;
+  .report-echart {
+    height: 280px;
   }
 
   .chat-controls {

@@ -517,6 +517,10 @@ class SemanticRuntimeService:
                 errors.append(f"未知指标: {metric_key}")
                 continue
             used_assets.append(f"metric:{metric_key}")
+            allowed_dimensions = set(metric.dimensions or [])
+            for dimension in logic_form.dimensions:
+                if allowed_dimensions and dimension not in allowed_dimensions:
+                    errors.append(f"指标 {metric_key} 不支持维度: {dimension}")
 
         if logic_form.grain:
             if logic_form.grain not in {"month", "day"}:
@@ -529,10 +533,6 @@ class SemanticRuntimeService:
                     missing = [metric.metric_key for metric in metrics if not metric.time_field]
                     errors.append(f"以下指标缺少时间字段，无法按时间粒度分析: {', '.join(missing)}")
                 used_assets.append(f"grain:{logic_form.grain}")
-            allowed_dimensions = set(metric.dimensions or [])
-            for dimension in logic_form.dimensions:
-                if allowed_dimensions and dimension not in allowed_dimensions:
-                    errors.append(f"指标 {metric_key} 不支持维度: {dimension}")
 
         for dimension in logic_form.dimensions:
             mapping = mapping_map.get(dimension)
@@ -662,6 +662,10 @@ class SemanticRuntimeService:
                 f"`{sort.field}` {sort.direction.upper()}"
                 for sort in logic_form.sort
             ]
+            sql_parts.append("ORDER BY " + ", ".join(order_parts))
+        elif logic_form.grain:
+            order_parts = [f"`{'day' if logic_form.grain == 'day' else 'month'}` ASC"]
+            order_parts.extend(f"`{dimension}` ASC" for dimension in logic_form.dimensions)
             sql_parts.append("ORDER BY " + ", ".join(order_parts))
         if logic_form.limit:
             sql_parts.append(f"LIMIT {min(max(int(logic_form.limit), 1), 1000)}")

@@ -167,10 +167,16 @@ flowchart LR
 - `semantic_enhance.system`：语义增强系统提示词。
 - `nl2lf_generate.system`：LogicForm 生成系统提示词。
 - `nl2sql_fallback.system`：NL2SQL 兜底系统提示词。
-- `phase3_python_generate.system`：Phase 3 Python 分析脚本生成提示词。
-- `phase3_report_generator.system`：Phase 3 Markdown 报告生成提示词。
+- `phase3_python_generate.system`：深度分析 Python 脚本生成提示词。
+- `phase3_report_generator.system`：深度分析 Markdown 报告生成提示词。
 
 匹配优先级按具体程度选择：同时命中智能体、模型和语义层的模板优先于全局模板；模板变量渲染失败时自动回退到代码内默认模板，避免配置错误直接打断问数链路。
+
+## 6.6 深度分析节点与 Python 模板
+
+深度分析实现位于 `app/agent/nodes/analysis_pipeline.py`，不再使用开发阶段的 `phase3.py` 作为主实现命名；`phase3.py` 仅作为临时兼容导出层。兜底 Python 分析脚本统一放在 `app/agent/python_templates/`，当前包括通用分析模板和多序列趋势模板。节点只负责选择“大模型生成脚本”或“安全模板兜底”，模板本体不再写在节点代码中。
+
+Python 分析执行采用轻量 ReAct 修复闭环：脚本执行失败时，节点先记录错误观察，再携带失败脚本、stderr 和样例数据调用大模型重写脚本；重写脚本通过安全校验后再次执行。若修复仍失败，则切换安全模板兜底；全部失败时才进入报告生成，并将报告状态标记为 `analysis_failed`，报告正文显示“分析执行提示”而不是假装深度分析成功。
 
 ## 6. 语义层与 SQL 生成策略
 

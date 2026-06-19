@@ -107,8 +107,18 @@ assert.ok(
 )
 
 assert.ok(
-  source.includes('normalizeChartKind') && source.includes("chartKind === 'line'") && source.includes("chartKind === 'pie'"),
-  'ChatView should honor backend-declared chart kinds and render pie/bar/line explicitly',
+  source.includes('normalizeChartKind') && source.includes('buildReportEchartsOption') && source.includes('prettifySeries'),
+  'ChatView should honor backend-declared chart kinds and render report charts through ECharts',
+)
+
+assert.ok(
+  source.includes("import * as echarts from 'echarts'") && source.includes('<ReportEChart :chart='),
+  'ChatView should use ECharts instead of hand-written report SVG charts',
+)
+
+assert.ok(
+  !source.includes('由报告中的 ECharts 配置自动渲染'),
+  'ChatView should not show internal ECharts auto-render helper text',
 )
 
 assert.ok(

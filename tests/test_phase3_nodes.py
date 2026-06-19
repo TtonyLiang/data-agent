@@ -1,8 +1,8 @@
 import pytest
 from types import SimpleNamespace
 
-import app.agent.nodes.phase3 as phase3
-from app.agent.nodes.phase3 import (
+import app.agent.nodes.analysis_pipeline as analysis_pipeline
+from app.agent.nodes.analysis_pipeline import (
     infer_analysis_mode,
     planner_node,
     python_analyze_node,
@@ -141,8 +141,8 @@ async def test_python_generate_uses_llm_code_when_safe(monkeypatch):
                 "print(json.dumps(result, ensure_ascii=False))"
             )
 
-    monkeypatch.setattr(phase3, "get_prompt_service", lambda: FakePromptService())
-    monkeypatch.setattr(phase3, "get_llm_service", lambda: FakeLlmService())
+    monkeypatch.setattr(analysis_pipeline, "get_prompt_service", lambda: FakePromptService())
+    monkeypatch.setattr(analysis_pipeline, "get_llm_service", lambda: FakeLlmService())
 
     result = await python_generate_node(
         {
@@ -175,8 +175,8 @@ async def test_python_generate_falls_back_when_llm_code_is_unsafe(monkeypatch):
         async def achat_stream(self, messages, **kwargs):
             yield FakeChunk("import os\nprint(json.dumps({'row_count': len(rows)}))")
 
-    monkeypatch.setattr(phase3, "get_prompt_service", lambda: FakePromptService())
-    monkeypatch.setattr(phase3, "get_llm_service", lambda: FakeLlmService())
+    monkeypatch.setattr(analysis_pipeline, "get_prompt_service", lambda: FakePromptService())
+    monkeypatch.setattr(analysis_pipeline, "get_llm_service", lambda: FakeLlmService())
 
     result = await python_generate_node(
         {
@@ -190,6 +190,92 @@ async def test_python_generate_falls_back_when_llm_code_is_unsafe(monkeypatch):
     assert result["python_result"]["generation_source"] == "safe_template"
     assert result["python_result"]["generation_error"]
     assert "ANALYSIS_MODE = \"trend\"" in result["python_code"]
+
+
+@pytest.mark.asyncio
+async def test_python_analyze_repairs_failed_script_with_llm(monkeypatch):
+    class FakePromptService:
+        async def resolve(self, prompt_key, default_template, **kwargs):
+            return default_template.format(**kwargs["variables"])
+
+    class FakeChunk:
+        def __init__(self, content):
+            self.content = content
+            self.additional_kwargs = {"reasoning_content": ""}
+
+    class FakeLlmService:
+        async def resolve_agent_chat_kwargs(self, agent_id):
+            return {}
+
+        async def achat_stream(self, messages, **kwargs):
+            assert "上一次 Python 分析脚本执行失败" in messages[-1]["content"]
+            yield FakeChunk(
+                "import json\n"
+                "result = {'row_count': len(rows), 'analysis_mode': 'repaired', 'insights': ['修复后成功']}\n"
+                "print(json.dumps(result, ensure_ascii=False))"
+            )
+
+    monkeypatch.setattr(analysis_pipeline, "get_prompt_service", lambda: FakePromptService())
+    monkeypatch.setattr(analysis_pipeline, "get_llm_service", lambda: FakeLlmService())
+
+    result = await python_analyze_node(
+        {
+            "agent_id": 1,
+            "question": "分析申请趋势",
+            "plan": {"mode": "trend"},
+            "sql_result": [{"month": "2026-01", "cnt": 10}],
+            "python_code": "import json\nraise ValueError('boom')\nprint(json.dumps({'row_count': len(rows)}, ensure_ascii=False))",
+        }
+    )
+
+    assert result["python_result"]["status"] == "success"
+    assert result["python_result"]["analysis_mode"] == "repaired"
+    assert result["python_result"]["repair_count"] == 1
+    assert result["python_result"]["repair_attempts"][0]["ok"] is False
+    assert result["python_result"]["repair_attempts"][1]["source"] == "llm_repair"
+    assert "修复后成功" in result["python_result"]["insights"]
+    assert "修复后成功" in result["python_code"]
+
+
+@pytest.mark.asyncio
+async def test_report_marks_analysis_failed_after_python_retries_exhausted(monkeypatch):
+    class FakePromptService:
+        async def resolve(self, prompt_key, default_template, **kwargs):
+            return default_template.format(**kwargs["variables"])
+
+    class FakeChunk:
+        def __init__(self, content):
+            self.content = content
+            self.additional_kwargs = {}
+
+    class FakeLlmService:
+        async def resolve_agent_chat_kwargs(self, agent_id):
+            return {}
+
+        async def achat_stream(self, messages, **kwargs):
+            yield FakeChunk("import json\nraise ValueError('still broken')\nprint(json.dumps({'row_count': len(rows)}))")
+
+    monkeypatch.setattr(analysis_pipeline, "get_prompt_service", lambda: FakePromptService())
+    monkeypatch.setattr(analysis_pipeline, "get_llm_service", lambda: FakeLlmService())
+    monkeypatch.setattr(analysis_pipeline, "_build_analysis_code", lambda mode="profile": "import json\nraise ValueError('template broken')\nprint(json.dumps({'row_count': len(rows)}))")
+
+    state = {
+        "agent_id": 1,
+        "question": "分析申请趋势",
+        "logic_form": {"metrics": ["application_count"], "dimensions": ["month"]},
+        "plan": {"mode": "trend", "mode_label": "趋势分析"},
+        "sql_result": [{"month": "2026-01", "application_count": 10}],
+        "python_code": "import json\nraise ValueError('boom')\nprint(json.dumps({'row_count': len(rows)}))",
+    }
+
+    state.update(await python_analyze_node(state))
+    state.update(await report_generator_node(state))
+
+    assert state["python_result"]["status"] == "failed"
+    assert len(state["python_result"]["repair_attempts"]) >= 2
+    assert state["report_payload"]["status"] == "analysis_failed"
+    assert "重试后仍未成功" in state["report_payload"]["summary"]
+    assert "分析执行提示" in " ".join(section["title"] for section in state["report_payload"]["sections"])
 
 
 @pytest.mark.asyncio
@@ -293,11 +379,71 @@ async def test_distribution_mode_fallback_chart_prefers_pie():
     assert state["report_payload"]["charts"][0]["chart_kind"] == "pie"
 
 
+@pytest.mark.asyncio
+async def test_multi_series_trend_analysis_and_report_are_structured():
+    state = {
+        "question": "各个贷款申请量变化趋势",
+        "enhanced_question": "查询贷款申请按月份统计各贷款产品类型的申请笔数变化趋势。",
+        "logic_form": {
+            "metrics": ["application_count"],
+            "dimensions": ["application_product_type"],
+            "grain": "month",
+            "time_range": {"type": "relative", "period": "recent_3_months"},
+        },
+        "compiled_sql": (
+            "SELECT DATE_FORMAT(apply_date, '%Y-%m') AS month, "
+            "product_type AS application_product_type, COUNT(*) AS application_count "
+            "FROM loan_application_indicator "
+            "GROUP BY DATE_FORMAT(apply_date, '%Y-%m'), product_type "
+            "ORDER BY month ASC, application_product_type ASC"
+        ),
+        "sql_result": [
+            {"month": "2026-01", "application_product_type": "经营贷", "application_count": 80},
+            {"month": "2026-01", "application_product_type": "消费贷", "application_count": 55},
+            {"month": "2026-02", "application_product_type": "经营贷", "application_count": 92},
+            {"month": "2026-02", "application_product_type": "消费贷", "application_count": 61},
+            {"month": "2026-03", "application_product_type": "经营贷", "application_count": 108},
+            {"month": "2026-03", "application_product_type": "消费贷", "application_count": 74},
+        ],
+    }
+
+    state.update(await planner_node(state))
+    state.update(await python_generate_node(state))
+    state.update(await python_analyze_node(state))
+    state.update(await report_generator_node(state))
+
+    assert state["plan"]["mode"] == "multi_series_trend"
+    assert state["plan"]["mode_label"] == "多序列趋势分析"
+    assert state["python_result"]["analysis_mode"] == "multi_series_trend"
+    assert state["python_result"]["series_summary"]
+    assert len(state["python_result"]["series_summary"]) == 2
+    assert any("时间范围覆盖 2026-01 至 2026-03" in item for item in state["python_result"]["insights"])
+    assert state["python_result"]["charts"][0]["type"] == "line"
+    assert len(state["python_result"]["charts"][0]["series"]) == 2
+    assert state["report_payload"]["mode"] == "multi_series_trend"
+    assert state["report_payload"]["title"] == "application_count 按 application_product_type 月度趋势分析"
+    assert "按 application_product_type 拆分" in state["report_payload"]["summary"]
+    assert state["report_payload"]["charts"][0]["chart_kind"] == "line"
+    assert len(state["report_payload"]["charts"][0]["series"]) == 2
+    assert state["report_payload"]["highlights"][1]["label"] == "趋势序列数"
+    assert "增长最快产品类型" in " ".join(state["report_payload"]["suggestions"]["items"])
+
+
 def test_restricted_executor_rejects_unapproved_imports():
     executor = RestrictedLocalPythonExecutor()
 
     with pytest.raises(PythonExecutionError):
         executor.execute("import os\nprint('{}')", [])
+
+
+def test_python_fallback_templates_are_externalized():
+    generic = analysis_pipeline.load_python_template("generic_analysis.py.tpl")
+    trend = analysis_pipeline.load_python_template("multi_series_trend.py.tpl")
+
+    assert 'ANALYSIS_MODE = "__ANALYSIS_MODE__"' in generic
+    assert 'ANALYSIS_MODE = "multi_series_trend"' in trend
+    assert "print(json.dumps(result, ensure_ascii=False))" in generic
+    assert "print(json.dumps(result, ensure_ascii=False))" in trend
 
 
 def test_lf_repair_removes_unsupported_dimension_and_time_range():

@@ -303,7 +303,7 @@ def test_semantic_enhancement_clarifies_application_count_trend_question():
     result = deterministic_enhancement("各个贷款申请量变化", [])
 
     assert result is not None
-    assert result["enhanced_question"] == "查询贷款申请笔数按月份的变化趋势。"
+    assert result["enhanced_question"] == "查询贷款申请按月份统计各贷款产品类型的申请笔数变化趋势。"
 
 
 def test_application_count_trend_logic_form_compiles_to_monthly_sql():
@@ -316,13 +316,33 @@ def test_application_count_trend_logic_form_compiles_to_monthly_sql():
 
     assert validation.valid
     assert logic_form.metrics == ["application_count"]
-    assert logic_form.dimensions == []
+    assert logic_form.dimensions == ["application_product_type"]
     assert logic_form.grain == "month"
     assert logic_form.time_range is not None
     assert "DATE_FORMAT(t0.`apply_date`, '%Y-%m') AS `month`" in compiled.sql
+    assert "t0.`product_type` AS `application_product_type`" in compiled.sql
     assert "COUNT(*) AS `application_count`" in compiled.sql
-    assert "GROUP BY DATE_FORMAT(t0.`apply_date`, '%Y-%m')" in compiled.sql
-    assert "product_type" not in compiled.sql
+    assert "GROUP BY DATE_FORMAT(t0.`apply_date`, '%Y-%m'), t0.`product_type`" in compiled.sql
+    assert "ORDER BY `month` ASC, `application_product_type` ASC" in compiled.sql
+
+
+def test_application_count_trend_normalize_keeps_default_recent_window():
+    logic_form = LogicForm(
+        metrics=["application_count"],
+        dimensions=[],
+        filters=[],
+        time_range=None,
+        grain=None,
+        sort=[],
+        limit=None,
+    )
+
+    normalized = normalize_logic_form("各个贷款申请量变化趋势", logic_form)
+
+    assert normalized.metrics == ["application_count"]
+    assert normalized.dimensions == ["application_product_type"]
+    assert normalized.grain == "month"
+    assert normalized.time_range == {"type": "relative", "period": "recent_3_months"}
 
 
 def test_high_pd_balance_and_overdue_query_compiles_cross_table_metrics():

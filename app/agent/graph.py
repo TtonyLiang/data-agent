@@ -85,7 +85,7 @@ def build_mvp_graph() -> StateGraph:
     from app.agent.nodes.lf_validate import lf_validate_node
     from app.agent.nodes.nl2lf_generate import nl2lf_generate_node
     from app.agent.nodes.nl2sql_fallback import nl2sql_fallback_node
-    from app.agent.nodes.phase3 import (
+    from app.agent.nodes.analysis_pipeline import (
         planner_node,
         python_analyze_node,
         python_generate_node,

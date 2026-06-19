@@ -6,29 +6,12 @@ from typing import Any
 
 from langchain_core.callbacks.manager import adispatch_custom_event
 
+from app.agent.prompts import load_prompt
 from app.services.llm_service import get_llm_service
 from app.services.prompt_service import get_prompt_service
 
 
-SEMANTIC_ENHANCE_PROMPT = """你是智能问数系统中的“语义增强器”。
-
-你的任务是把用户的当前问题改写成更完整、更清晰、更适合后续知识召回、LogicForm 生成和 NL2SQL 兜底理解的自然语言问题。
-
-要求：
-- 保留用户原意，不要扩展不存在的筛选条件。
-- 补全省略的业务对象、指标、维度、排序、TopN、时间范围。
-- 如果当前问题是追问，例如“前五呢”“换成上个月”“我问的是笔数不是金额”，必须结合最近对话补全完整问题。
-- 如果用户问“笔数/多少笔/数量/申请数”，增强后必须明确是数量口径，不要改成金额口径。
-- 只输出 JSON，不要输出 SQL、Markdown 或额外解释。
-
-JSON 格式：
-{{
-  "enhanced_question": "增强后的完整自然语言问题",
-  "rewrite_type": "clarified|followup_resolution|no_change",
-  "preserved_constraints": ["保留下来的关键约束"],
-  "reason": "为什么这样改写"
-}}
-"""
+SEMANTIC_ENHANCE_PROMPT = load_prompt("semantic_enhance.system.md")
 
 
 async def semantic_enhance_node(state: dict) -> dict:
@@ -220,7 +203,9 @@ def common_business_rewrite(question: str) -> str | None:
     compact = compact_text(question)
     top_limit = extract_top_limit(question)
     if "申请" in compact and contains_count_intent(question) and contains_trend_intent(question):
-        if contains_product_type_intent(question):
+        if contains_region_intent(question):
+            return "查询各申请区域按月份的贷款申请笔数变化趋势。"
+        if contains_product_type_intent(question) or contains_bucketed_loan_intent(question):
             return "查询贷款申请按月份统计各贷款产品类型的申请笔数变化趋势。"
         return "查询贷款申请笔数按月份的变化趋势。"
     if "申请" in compact and contains_count_intent(question) and contains_region_intent(question):
@@ -359,6 +344,11 @@ def contains_region_intent(text: str) -> bool:
 def contains_product_type_intent(text: str) -> bool:
     compact = compact_text(text)
     return any(token in compact for token in ("产品类型", "贷款产品", "产品", "producttype", "product"))
+
+
+def contains_bucketed_loan_intent(text: str) -> bool:
+    compact = compact_text(text)
+    return any(token in compact for token in ("各个贷款", "各类贷款", "不同贷款", "每种贷款", "各贷款", "各项贷款"))
 
 
 def contains_trend_intent(text: str) -> bool:

@@ -3,29 +3,13 @@ import re
 
 from langchain_core.callbacks.manager import adispatch_custom_event
 
+from app.agent.prompts import load_prompt
 from app.models.knowledge import LogicFilter, LogicForm, LogicSort
 from app.services.llm_service import get_llm_service
 from app.services.prompt_service import get_prompt_service
 
 
-NL2LF_PROMPT = """你是 Data Agent 的语义解析器。请把用户问题转换为 LogicForm JSON，禁止生成 SQL。
-
-## 当前语义运行时
-{runtime_context}
-
-## 可用字段
-- intent_type: metric_query
-- domain_key: loan_risk
-- metrics: 指标 key 列表
-- dimensions: 维度 key 列表
-- filters: {{"field": "维度或过滤字段key", "operator": "=", "value": "值"}}
-- time_range: {{"type": "relative", "period": "this_month|last_month|last_3_months|recent_3_months"}}
-- grain: month/day/null
-- sort: [{{"field": "指标或维度key", "direction": "asc|desc"}}]
-- limit: 整数或 null
-
-只返回 JSON，不要解释，不要 markdown，不要 SQL。
-"""
+NL2LF_PROMPT = load_prompt("nl2lf_generate.system.md")
 
 
 async def nl2lf_generate_node(state: dict) -> dict:
@@ -94,6 +78,7 @@ def normalize_logic_form(
     sort = list(logic_form.sort)
     time_range = logic_form.time_range
     limit = logic_form.limit
+    grain = logic_form.grain
 
     asks_balance = "余额" in question or "balance" in compact
     asks_overdue = "逾期" in question or "m1" in compact or "overdue" in compact
@@ -106,13 +91,15 @@ def normalize_logic_form(
 
     if asks_application_count:
         metrics = ["application_count"]
+        dimensions = normalize_application_count_dimensions(dimensions)
+        trend_dimension = infer_application_count_dimension(context_text, dimensions)
         if asks_trend:
-            dimensions = []
+            dimensions = [trend_dimension] if trend_dimension else []
             if not time_range:
                 time_range = {"type": "relative", "period": "recent_3_months"}
-            logic_form = logic_form.model_copy(update={"grain": "month"})
-        elif mentions_region(context_text):
-            dimensions = ["application_region"]
+            grain = "month"
+        elif trend_dimension:
+            dimensions = [trend_dimension]
         filters = normalize_application_count_filters(filters)
         if asks_ranking(context_compact):
             sort = [LogicSort(field="application_count", direction="desc")]
@@ -129,7 +116,8 @@ def normalize_logic_form(
     if high_pd_segment:
         dimensions = [item for item in dimensions if item != "risk_grade"]
 
-    if time_range and not has_explicit_time_range(question):
+    preserve_inferred_trend_window = asks_application_count and asks_trend and grain in {"month", "day"}
+    if time_range and not has_explicit_time_range(question) and not preserve_inferred_trend_window:
         time_range = None
 
     allowed_sort_fields = set(metrics + dimensions)
@@ -141,7 +129,7 @@ def normalize_logic_form(
             "dimensions": dimensions,
             "filters": filters,
             "time_range": time_range,
-            "grain": "month" if asks_application_count and asks_trend else logic_form.grain,
+            "grain": grain,
             "sort": sort,
             "limit": limit,
         }
@@ -197,6 +185,16 @@ def mentions_region(text: str) -> bool:
     return any(token in compact for token in ("地区", "区域", "region"))
 
 
+def mentions_product_type(text: str) -> bool:
+    compact = text.lower().replace(" ", "")
+    return any(token in compact for token in ("产品类型", "贷款产品", "产品", "producttype", "product"))
+
+
+def mentions_bucketed_loan(text: str) -> bool:
+    compact = text.lower().replace(" ", "")
+    return any(token in compact for token in ("各个贷款", "各类贷款", "不同贷款", "每种贷款", "各贷款", "各项贷款"))
+
+
 def asks_ranking(compact_text: str) -> bool:
     return any(token in compact_text for token in ("最多", "排名", "排行", "top", "前"))
 
@@ -239,6 +237,28 @@ def normalize_application_count_filters(filters: list[LogicFilter]) -> list[Logi
         else:
             normalized.append(item)
     return normalized
+
+
+def normalize_application_count_dimensions(dimensions: list[str]) -> list[str]:
+    normalized: list[str] = []
+    mapping = {
+        "region": "application_region",
+        "product_type": "application_product_type",
+        "risk_grade": "application_risk_grade",
+    }
+    for item in dimensions:
+        normalized.append(mapping.get(item, item))
+    return normalized
+
+
+def infer_application_count_dimension(text: str, dimensions: list[str]) -> str | None:
+    if "application_product_type" in dimensions or mentions_product_type(text) or mentions_bucketed_loan(text):
+        return "application_product_type"
+    if "application_region" in dimensions or mentions_region(text):
+        return "application_region"
+    if "application_risk_grade" in dimensions:
+        return "application_risk_grade"
+    return None
 
 
 def has_explicit_time_range(question: str) -> bool:
@@ -358,13 +378,14 @@ def fallback_logic_form(question: str) -> LogicForm:
 
     if is_application_count_question(question):
         metrics = ["application_count"]
+        dimension = infer_application_count_dimension(question, dimensions)
         if asks_trend_question(question):
-            dimensions = []
+            dimensions = [dimension] if dimension else []
             grain = "month"
             if not time_range:
                 time_range = {"type": "relative", "period": "recent_3_months"}
-        elif mentions_region(question):
-            dimensions = ["application_region"]
+        elif dimension:
+            dimensions = [dimension]
         sort = [{"field": "application_count", "direction": "desc"}] if asks_ranking(compact) else []
         limit = extract_top_limit(compact) or limit
         filters = [
