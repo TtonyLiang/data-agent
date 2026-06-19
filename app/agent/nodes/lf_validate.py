@@ -1,16 +1,30 @@
+import logging
+
 from app.models.knowledge import LogicForm, SemanticRuntime
 from app.services.semantic_runtime import get_semantic_runtime_service
+from app.utils.logging_helpers import json_for_log, log_node_end, log_node_start
+
+logger = logging.getLogger(__name__)
 
 
 async def lf_validate_node(state: dict) -> dict:
     """校验 LogicForm 是否能被当前语义运行时执行。"""
+    log_node_start(
+        logger, "lf_validate", state, keys=("trace_id", "agent_id", "logic_form", "semantic_error")
+    )
     logic_form_data = state.get("logic_form")
     runtime_data = state.get("semantic_runtime")
     if not logic_form_data or not runtime_data:
-        return {
-            "lf_validation": {"valid": False, "errors": ["缺少 LogicForm 或知识库"], "warnings": []},
+        result = {
+            "lf_validation": {
+                "valid": False,
+                "errors": ["缺少 LogicForm 或知识库"],
+                "warnings": [],
+            },
             "final_answer": state.get("final_answer") or "未能构建可执行的语义查询。",
         }
+        log_node_end(logger, "lf_validate", result)
+        return result
 
     svc = get_semantic_runtime_service()
     logic_form = LogicForm(**logic_form_data)
@@ -19,4 +33,10 @@ async def lf_validate_node(state: dict) -> dict:
     result = {"lf_validation": validation.model_dump()}
     if not validation.valid:
         result["final_answer"] = "语义校验未通过: " + "；".join(validation.errors)
+    logger.info(
+        "lf validation logic_form=%s validation=%s",
+        json_for_log(logic_form.model_dump()),
+        json_for_log(validation.model_dump()),
+    )
+    log_node_end(logger, "lf_validate", result)
     return result

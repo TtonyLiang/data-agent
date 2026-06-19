@@ -7,8 +7,12 @@ import httpx
 
 from app.config import get_settings
 from app.db.mysql import get_management_db
-from app.models.model_config import ModelConfig, ModelConfigCreate, ModelConfigType, ModelConfigUpdate
-
+from app.models.model_config import (
+    ModelConfig,
+    ModelConfigCreate,
+    ModelConfigType,
+    ModelConfigUpdate,
+)
 
 MASKED_API_KEY_CHARS = {"*", "•"}
 
@@ -39,8 +43,10 @@ class ModelConfigService:
         db = get_management_db()
         return await db.execute_insert(
             "INSERT INTO model_config "
-            "(name, model_type, provider, base_url, model_name, api_key, api_key_enabled, api_key_expires_at, embedding_dimension, status) "
-            "VALUES (:name, :model_type, :provider, :base_url, :model_name, :api_key, :api_key_enabled, :api_key_expires_at, :dimension, :status)",
+            "(name, model_type, provider, base_url, model_name, api_key, "
+            "api_key_enabled, api_key_expires_at, embedding_dimension, status) "
+            "VALUES (:name, :model_type, :provider, :base_url, :model_name, "
+            ":api_key, :api_key_enabled, :api_key_expires_at, :dimension, :status)",
             {
                 "name": config.name,
                 "model_type": config.model_type,
@@ -79,7 +85,11 @@ class ModelConfigService:
         existing = await self.get(config_id)
         if existing is None:
             return None
-        api_key = existing.api_key if _should_keep_existing_api_key(config.api_key) else _clean_api_key(config.api_key)
+        api_key = (
+            existing.api_key
+            if _should_keep_existing_api_key(config.api_key)
+            else _clean_api_key(config.api_key)
+        )
         await db.execute_query(
             "UPDATE model_config SET name = :name, model_type = :model_type, provider = :provider, "
             "base_url = :base_url, model_name = :model_name, api_key = :api_key, "
@@ -109,7 +119,8 @@ class ModelConfigService:
             {"id": config_id},
         )
         await db.execute_query(
-            "UPDATE agent SET embedding_model_config_id = NULL WHERE embedding_model_config_id = :id",
+            "UPDATE agent SET embedding_model_config_id = NULL "
+            "WHERE embedding_model_config_id = :id",
             {"id": config_id},
         )
         await db.execute_query("DELETE FROM model_config WHERE id = :id", {"id": config_id})

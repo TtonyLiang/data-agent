@@ -1,29 +1,45 @@
+import logging
+
 from app.db.mysql import get_datasource_db, get_management_db
 from app.models.datasource import ColumnMeta, TableMeta
 from app.services.permission_service import get_permission_service
+from app.utils.logging_helpers import json_for_log
+
+logger = logging.getLogger(__name__)
 
 
 class MetadataService:
     """元数据管理服务：表/字段采集与查询."""
 
     async def get_tables(self, datasource_id: int) -> list[TableMeta]:
+        """Return collected table metadata for a datasource."""
+        logger.info("metadata get_tables datasource_id=%s", datasource_id)
         db = get_management_db()
         rows = await db.execute_query(
             "SELECT * FROM meta_table WHERE datasource_id = :did ORDER BY id",
             {"did": datasource_id},
         )
-        return [TableMeta(**row) for row in rows]
+        result = [TableMeta(**row) for row in rows]
+        logger.info(
+            "metadata get_tables result datasource_id=%s count=%s", datasource_id, len(result)
+        )
+        return result
 
     async def get_columns(self, table_id: int) -> list[ColumnMeta]:
+        """Return collected column metadata for one collected table."""
+        logger.info("metadata get_columns table_id=%s", table_id)
         db = get_management_db()
         rows = await db.execute_query(
             "SELECT * FROM meta_column WHERE table_id = :tid ORDER BY id",
             {"tid": table_id},
         )
-        return [ColumnMeta(**row) for row in rows]
+        result = [ColumnMeta(**row) for row in rows]
+        logger.info("metadata get_columns result table_id=%s count=%s", table_id, len(result))
+        return result
 
     async def list_remote_tables(self, datasource_id: int) -> list[dict]:
         """Return remote table names/comments without collecting columns."""
+        logger.info("metadata list_remote_tables datasource_id=%s", datasource_id)
         biz_db = await get_datasource_db(datasource_id)
         mgmt_db = get_management_db()
         remote_rows = await biz_db.execute_query(
@@ -56,7 +72,7 @@ class MetadataService:
             }
             for row in remote_rows
         ]
-        return sorted(
+        result = sorted(
             catalog,
             key=lambda row: (
                 row["table_id"] is None,
@@ -64,9 +80,17 @@ class MetadataService:
                 row["table_name"],
             ),
         )
+        logger.info(
+            "metadata list_remote_tables result datasource_id=%s count=%s sample=%s",
+            datasource_id,
+            len(result),
+            json_for_log(result[:5]),
+        )
+        return result
 
     async def get_table_summaries(self, datasource_id: int) -> list[dict]:
         """Return collected table list without expanding all columns."""
+        logger.info("metadata get_table_summaries datasource_id=%s", datasource_id)
         db = get_management_db()
         rows = await db.execute_query(
             "SELECT mt.id, mt.datasource_id, mt.table_name, mt.table_comment, "
@@ -78,7 +102,7 @@ class MetadataService:
             "ORDER BY mt.id",
             {"did": datasource_id},
         )
-        return [
+        result = [
             {
                 "id": row["id"],
                 "datasource_id": row["datasource_id"],
@@ -88,8 +112,16 @@ class MetadataService:
             }
             for row in rows
         ]
+        logger.info(
+            "metadata get_table_summaries result datasource_id=%s count=%s",
+            datasource_id,
+            len(result),
+        )
+        return result
 
     async def get_schema_stats(self, datasource_id: int) -> dict:
+        """Return table/column counts and a simple noise-level recommendation."""
+        logger.info("metadata get_schema_stats datasource_id=%s", datasource_id)
         db = get_management_db()
         rows = await db.execute_query(
             "SELECT COUNT(DISTINCT mt.id) AS table_count, COUNT(mc.id) AS column_count "
@@ -101,30 +133,55 @@ class MetadataService:
         row = rows[0] if rows else {}
         table_count = int(row.get("table_count") or 0)
         column_count = int(row.get("column_count") or 0)
-        return {
+        result = {
             "table_count": table_count,
             "column_count": column_count,
             "noise_level": "high" if table_count > 12 or column_count > 600 else "normal",
-            "recommendation": "建议只采集当前智能体会用到的核心事实表和维表，避免过多表结构干扰大模型。" if table_count > 12 or column_count > 600 else "采集规模正常。",
+            "recommendation": (
+                "建议只采集当前智能体会用到的核心事实表和维表，"
+                "避免过多表结构干扰大模型。"
+            )
+            if table_count > 12 or column_count > 600
+            else "采集规模正常。",
         }
+        logger.info(
+            "metadata get_schema_stats result datasource_id=%s stats=%s",
+            datasource_id,
+            json_for_log(result),
+        )
+        return result
 
     async def get_table_detail(self, datasource_id: int, table_id: int) -> dict | None:
+        """Return one collected table with its expanded column list."""
+        logger.info(
+            "metadata get_table_detail datasource_id=%s table_id=%s", datasource_id, table_id
+        )
         db = get_management_db()
         rows = await db.execute_query(
             "SELECT * FROM meta_table WHERE datasource_id = :did AND id = :tid",
             {"did": datasource_id, "tid": table_id},
         )
         if not rows:
+            logger.info(
+                "metadata get_table_detail result datasource_id=%s table_id=%s found=false",
+                datasource_id,
+                table_id,
+            )
             return None
         table = TableMeta(**rows[0])
         table_data = table.model_dump()
-        table_data["columns"] = [
-            column.model_dump() for column in await self.get_columns(table.id)
-        ]
+        table_data["columns"] = [column.model_dump() for column in await self.get_columns(table.id)]
+        logger.info(
+            "metadata get_table_detail result datasource_id=%s table_id=%s column_count=%s",
+            datasource_id,
+            table_id,
+            len(table_data["columns"]),
+        )
         return table_data
 
     async def get_schema(self, datasource_id: int) -> list[dict]:
         """Return collected tables with their columns for a datasource."""
+        logger.info("metadata get_schema datasource_id=%s", datasource_id)
         tables = await self.get_tables(datasource_id)
         schema = []
         for table in tables:
@@ -132,11 +189,32 @@ class MetadataService:
             table_data = table.model_dump()
             table_data["columns"] = [column.model_dump() for column in columns]
             schema.append(table_data)
+        logger.info(
+            "metadata get_schema result datasource_id=%s table_count=%s column_count=%s",
+            datasource_id,
+            len(schema),
+            sum(len(table.get("columns", [])) for table in schema),
+        )
         return schema
 
-    async def get_authorized_schema(self, datasource_id: int, agent_id: int | None = None) -> list[dict]:
+    async def get_authorized_schema(
+        self, datasource_id: int, agent_id: int | None = None
+    ) -> list[dict]:
+        """Return collected schema after applying the agent's permission rules."""
+        logger.info(
+            "metadata get_authorized_schema datasource_id=%s agent_id=%s", datasource_id, agent_id
+        )
         schema = await self.get_schema(datasource_id)
-        return await get_permission_service().filter_schema(agent_id, datasource_id, schema)
+        result = await get_permission_service().filter_schema(agent_id, datasource_id, schema)
+        logger.info(
+            "metadata get_authorized_schema result datasource_id=%s agent_id=%s "
+            "table_count=%s column_count=%s",
+            datasource_id,
+            agent_id,
+            len(result),
+            sum(len(table.get("columns", [])) for table in result),
+        )
+        return result
 
     async def collect_schema(
         self,
@@ -144,6 +222,9 @@ class MetadataService:
         table_names: list[str] | None = None,
     ) -> list[dict]:
         """从业务数据库采集指定表和字段信息；table_names 为空时保持兼容采集全部表."""
+        logger.info(
+            "metadata collect_schema datasource_id=%s table_names=%s", datasource_id, table_names
+        )
         biz_db = await get_datasource_db(datasource_id)
         mgmt_db = get_management_db()
 
@@ -156,6 +237,10 @@ class MetadataService:
         if selected_names:
             tables = [row for row in tables if row["TABLE_NAME"] in selected_names]
         elif table_names is not None:
+            logger.info(
+                "metadata collect_schema result datasource_id=%s count=0 reason=empty_selection",
+                datasource_id,
+            )
             return []
 
         collected = []
@@ -221,24 +306,43 @@ class MetadataService:
                     "is_foreign_key, foreign_key_ref) "
                     "VALUES (:tid, :cn, :ct, :cc, :pk, :fk, :fkr)",
                     {
-                        "tid": table_id, "cn": cname, "ct": ctype,
-                        "cc": ccomment, "pk": is_pk, "fk": is_fk, "fkr": fk_ref,
+                        "tid": table_id,
+                        "cn": cname,
+                        "ct": ctype,
+                        "cc": ccomment,
+                        "pk": is_pk,
+                        "fk": is_fk,
+                        "fkr": fk_ref,
                     },
                 )
 
-            collected.append({
-                "table_name": tname,
-                "table_comment": tcomment,
-                "table_id": table_id,
-                "columns": len(columns),
-            })
+            collected.append(
+                {
+                    "table_name": tname,
+                    "table_comment": tcomment,
+                    "table_id": table_id,
+                    "columns": len(columns),
+                }
+            )
 
+        logger.info(
+            "metadata collect_schema result datasource_id=%s collected=%s",
+            datasource_id,
+            json_for_log(collected),
+        )
         return collected
 
     async def uncollect_schema(self, datasource_id: int, table_names: list[str]) -> list[dict]:
         """Remove collected metadata for selected tables without touching the business database."""
+        logger.info(
+            "metadata uncollect_schema datasource_id=%s table_names=%s", datasource_id, table_names
+        )
         selected_names = [name for name in table_names if name]
         if not selected_names:
+            logger.info(
+                "metadata uncollect_schema result datasource_id=%s count=0 reason=empty_selection",
+                datasource_id,
+            )
             return []
 
         db = get_management_db()
@@ -268,6 +372,11 @@ class MetadataService:
                 }
             )
 
+        logger.info(
+            "metadata uncollect_schema result datasource_id=%s removed=%s",
+            datasource_id,
+            json_for_log(removed),
+        )
         return removed
 
 
@@ -275,6 +384,7 @@ _metadata_service: MetadataService | None = None
 
 
 def get_metadata_service() -> MetadataService:
+    """Return the process-wide metadata service singleton."""
     global _metadata_service
     if _metadata_service is None:
         _metadata_service = MetadataService()

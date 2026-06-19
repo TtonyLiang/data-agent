@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
-from app.models.agent import AgentCreate
 from app.db.mysql import get_management_db
+from app.models.agent import AgentCreate
 from app.services.datasource_service import get_datasource_service
 
 router = APIRouter()
@@ -12,8 +12,10 @@ async def create_agent(agent: AgentCreate):
     db = get_management_db()
     agent_id = await db.execute_insert(
         "INSERT INTO agent "
-        "(name, description, chat_model_config_id, embedding_model_config_id, semantic_domain_id, llm_provider, llm_model) "
-        "VALUES (:name, :desc, :chat_model_config_id, :embedding_model_config_id, :semantic_domain_id, :provider, :model)",
+        "(name, description, chat_model_config_id, embedding_model_config_id, "
+        "semantic_domain_id, llm_provider, llm_model) "
+        "VALUES (:name, :desc, :chat_model_config_id, :embedding_model_config_id, "
+        ":semantic_domain_id, :provider, :model)",
         {
             "name": agent.name,
             "desc": agent.description,

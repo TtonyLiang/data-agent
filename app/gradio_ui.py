@@ -1,5 +1,5 @@
-import httpx
 import gradio as gr
+import httpx
 
 API_BASE = "http://localhost:4400"
 

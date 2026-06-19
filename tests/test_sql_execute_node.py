@@ -21,10 +21,9 @@ class FakePermissionService:
         return self.allowed, self.reason or "OK"
 
     async def mask_rows(self, agent_id, datasource_id, rows):
-        return [
-            {**row, "mobile": "***"} if "mobile" in row else row
-            for row in rows
-        ], {"mobile": "redact"} if rows and "mobile" in rows[0] else {}
+        return [{**row, "mobile": "***"} if "mobile" in row else row for row in rows], {
+            "mobile": "redact"
+        } if rows and "mobile" in rows[0] else {}
 
 
 @pytest.mark.asyncio

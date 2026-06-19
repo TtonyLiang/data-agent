@@ -788,7 +788,10 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted, nextTick, onUnmounted, watch, defineComponent, h, type PropType } from 'vue'
-import * as echarts from 'echarts'
+import * as echarts from 'echarts/core'
+import { BarChart, LineChart, PieChart } from 'echarts/charts'
+import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
 import { Promotion, Loading, ChatDotRound, Plus, Delete, CircleCheck, Clock, Search, Refresh, Download, DocumentCopy, WarningFilled, ArrowDown, ArrowRight, InfoFilled, FullScreen } from '@element-plus/icons-vue'
 import {
   sendMessageStream, fetchAgents, fetchDatasources, fetchSessions, fetchHistory, deleteSession,
@@ -807,6 +810,8 @@ import {
   type ChatReasoningStep,
   type ChatStreamState,
 } from '../stores/chatStream'
+
+echarts.use([BarChart, LineChart, PieChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
 const streamState = ref<ChatStreamState>(createChatStreamState())
 const messages = computed(() => streamState.value.messages)

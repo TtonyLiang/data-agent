@@ -157,7 +157,10 @@ async def list_assets(domain_id: int, asset_type: str | None = Query(default=Non
     if domain is None:
         raise HTTPException(status_code=404, detail="语义领域不存在")
     try:
-        return {"domain": domain.model_dump(), "assets": await svc.list_assets(domain_id, asset_type)}
+        return {
+            "domain": domain.model_dump(),
+            "assets": await svc.list_assets(domain_id, asset_type),
+        }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -242,9 +245,10 @@ async def sync_domain_to_vector(domain_id: int):
     )
     records = []
     for item in runtime.concepts:
+        synonyms = " ".join(item.synonyms)
         records.append(
             {
-                "text": f"{item.name} {item.concept_type} {item.description or ''} {' '.join(item.synonyms)}",
+                "text": f"{item.name} {item.concept_type} {item.description or ''} {synonyms}",
                 "source_type": "semantic_concept",
                 "source_id": item.id or 0,
                 "metadata": {"asset_key": item.concept_key, "asset_type": "concept"},
@@ -269,9 +273,10 @@ async def sync_domain_to_vector(domain_id: int):
             }
         )
     for item in runtime.templates:
+        examples_text = json.dumps(item.examples, ensure_ascii=False)
         records.append(
             {
-                "text": f"{item.name} LogicForm {item.description or ''} {json.dumps(item.examples, ensure_ascii=False)}",
+                "text": f"{item.name} LogicForm {item.description or ''} {examples_text}",
                 "source_type": "logic_form_template",
                 "source_id": item.id or 0,
                 "metadata": {"asset_key": item.template_key, "asset_type": "template"},

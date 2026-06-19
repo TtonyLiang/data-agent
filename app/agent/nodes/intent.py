@@ -1,6 +1,11 @@
+import logging
+
 from app.agent.prompts import load_prompt
 from app.services.llm_service import get_llm_service
 from app.services.prompt_service import get_prompt_service
+from app.utils.logging_helpers import log_node_end, log_node_start, truncate_text
+
+logger = logging.getLogger(__name__)
 
 INTENT_PROMPT = load_prompt("intent_recognition.system.md")
 
@@ -102,6 +107,7 @@ def rule_based_intent_with_history(question: str, history: list[dict] | None = N
 
 
 def recent_history_has_data_context(history: list[dict]) -> bool:
+    """Return true when recent chat turns prove that a short follow-up is data-related."""
     for item in reversed(history[-8:]):
         content = str(item.get("content") or "")
         if item.get("logic_form") or item.get("sql") or rule_based_intent(content) == "data_query":
@@ -111,16 +117,25 @@ def recent_history_has_data_context(history: list[dict]) -> bool:
 
 async def intent_recognition_node(state: dict) -> dict:
     """意图识别节点."""
+    log_node_start(logger, "intent_recognition", state, keys=("trace_id", "agent_id", "question"))
     llm = get_llm_service()
     question = state.get("question", "")
     history = state.get("chat_history") or []
 
     deterministic_intent = rule_based_intent_with_history(question, history)
     if deterministic_intent:
-        return {
+        result = {
             "intent": deterministic_intent,
             "need_analysis": deterministic_intent == "data_query",
         }
+        logger.info(
+            "intent recognized by rules intent=%s question=%s history_count=%s",
+            deterministic_intent,
+            truncate_text(question, 500),
+            len(history),
+        )
+        log_node_end(logger, "intent_recognition", result)
+        return result
 
     system_prompt = await get_prompt_service().resolve(
         "intent_recognition.system",
@@ -134,6 +149,7 @@ async def intent_recognition_node(state: dict) -> dict:
 
     llm_kwargs = await llm.resolve_agent_chat_kwargs(state.get("agent_id"))
     response = await llm.achat(messages, **llm_kwargs)
+    logger.info("intent LLM raw response=%s", truncate_text(response, 1200))
 
     import json
 
@@ -146,4 +162,6 @@ async def intent_recognition_node(state: dict) -> dict:
     if intent == "chat":
         intent = rule_based_intent_with_history(question, history) or intent
 
-    return {"intent": intent, "need_analysis": intent == "data_query"}
+    result = {"intent": intent, "need_analysis": intent == "data_query"}
+    log_node_end(logger, "intent_recognition", result)
+    return result

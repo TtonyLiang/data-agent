@@ -17,8 +17,7 @@ def test_configure_file_logging_creates_backend_log_handler(tmp_path):
     handlers = [
         handler
         for handler in logger.handlers
-        if isinstance(handler, RotatingFileHandler)
-        and handler.baseFilename == str(log_file)
+        if isinstance(handler, RotatingFileHandler) and handler.baseFilename == str(log_file)
     ]
     assert len(handlers) == 1
 

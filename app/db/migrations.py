@@ -89,7 +89,9 @@ async def run_management_migrations() -> None:
             status VARCHAR(32) DEFAULT 'active' COMMENT 'active/disabled',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_prompt_scope (prompt_key, agent_id, model_config_id, semantic_domain_id, status)
+            INDEX idx_prompt_scope (
+                prompt_key, agent_id, model_config_id, semantic_domain_id, status
+            )
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Prompt模板配置'
         """,
         """
@@ -113,17 +115,20 @@ async def run_management_migrations() -> None:
     await add_column_if_missing(
         "agent",
         "chat_model_config_id",
-        "ALTER TABLE agent ADD COLUMN chat_model_config_id BIGINT DEFAULT NULL COMMENT '大语言模型配置ID' AFTER description",
+        "ALTER TABLE agent ADD COLUMN chat_model_config_id BIGINT DEFAULT NULL "
+        "COMMENT '大语言模型配置ID' AFTER description",
     )
     await add_column_if_missing(
         "agent",
         "embedding_model_config_id",
-        "ALTER TABLE agent ADD COLUMN embedding_model_config_id BIGINT DEFAULT NULL COMMENT '向量模型配置ID' AFTER chat_model_config_id",
+        "ALTER TABLE agent ADD COLUMN embedding_model_config_id BIGINT DEFAULT NULL "
+        "COMMENT '向量模型配置ID' AFTER chat_model_config_id",
     )
     await add_column_if_missing(
         "agent",
         "semantic_domain_id",
-        "ALTER TABLE agent ADD COLUMN semantic_domain_id BIGINT DEFAULT NULL COMMENT '默认语义领域ID' AFTER embedding_model_config_id",
+        "ALTER TABLE agent ADD COLUMN semantic_domain_id BIGINT DEFAULT NULL "
+        "COMMENT '默认语义领域ID' AFTER embedding_model_config_id",
     )
     await add_column_if_missing(
         "datasource",
@@ -133,38 +138,47 @@ async def run_management_migrations() -> None:
     await add_column_if_missing(
         "model_config",
         "api_key_expires_at",
-        "ALTER TABLE model_config ADD COLUMN api_key_expires_at TIMESTAMP NULL DEFAULT NULL COMMENT 'API Key过期时间' AFTER api_key_enabled",
+        "ALTER TABLE model_config ADD COLUMN api_key_expires_at TIMESTAMP NULL "
+        "DEFAULT NULL COMMENT 'API Key过期时间' AFTER api_key_enabled",
     )
     await add_column_if_missing(
         "chat_history",
         "reasoning_trace",
-        "ALTER TABLE chat_history ADD COLUMN reasoning_trace JSON DEFAULT NULL COMMENT '流式思考与节点轨迹' AFTER content",
+        "ALTER TABLE chat_history ADD COLUMN reasoning_trace JSON DEFAULT NULL "
+        "COMMENT '流式思考与节点轨迹' AFTER content",
     )
     await add_column_if_missing(
         "chat_history",
         "plan_payload",
-        "ALTER TABLE chat_history ADD COLUMN plan_payload JSON DEFAULT NULL COMMENT 'Phase3分析计划' AFTER execution_trace",
+        "ALTER TABLE chat_history ADD COLUMN plan_payload JSON DEFAULT NULL "
+        "COMMENT 'Phase3分析计划' AFTER execution_trace",
     )
     await add_column_if_missing(
         "chat_history",
         "semantic_check",
-        "ALTER TABLE chat_history ADD COLUMN semantic_check JSON DEFAULT NULL COMMENT 'SQL前语义一致性校验结果' AFTER plan_payload",
+        "ALTER TABLE chat_history ADD COLUMN semantic_check JSON DEFAULT NULL "
+        "COMMENT 'SQL前语义一致性校验结果' AFTER plan_payload",
     )
     await add_column_if_missing(
         "chat_history",
         "python_result",
-        "ALTER TABLE chat_history ADD COLUMN python_result JSON DEFAULT NULL COMMENT 'Python分析结果' AFTER semantic_check",
+        "ALTER TABLE chat_history ADD COLUMN python_result JSON DEFAULT NULL "
+        "COMMENT 'Python分析结果' AFTER semantic_check",
     )
     await add_column_if_missing(
         "chat_history",
         "report_payload",
-        "ALTER TABLE chat_history ADD COLUMN report_payload JSON DEFAULT NULL COMMENT '结构化分析报告' AFTER python_result",
+        "ALTER TABLE chat_history ADD COLUMN report_payload JSON DEFAULT NULL "
+        "COMMENT '结构化分析报告' AFTER python_result",
     )
     await ensure_column_type(
         "chat_history",
         "sql_result",
         expected_type="longtext",
-        statement="ALTER TABLE chat_history MODIFY COLUMN sql_result LONGTEXT DEFAULT NULL COMMENT 'SQL执行结果(JSON)'",
+        statement=(
+            "ALTER TABLE chat_history MODIFY COLUMN sql_result LONGTEXT DEFAULT NULL "
+            "COMMENT 'SQL执行结果(JSON)'"
+        ),
     )
     await seed_default_model_configs()
     await backfill_agent_model_configs()
@@ -206,8 +220,10 @@ async def seed_default_model_configs() -> None:
     if not chat_count:
         await db.execute_insert(
             "INSERT INTO model_config "
-            "(name, model_type, provider, base_url, model_name, api_key, api_key_enabled, status) "
-            "VALUES (:name, 'chat', :provider, :base_url, :model_name, :api_key, :enabled, 'active')",
+            "(name, model_type, provider, base_url, model_name, api_key, "
+            "api_key_enabled, status) "
+            "VALUES (:name, 'chat', :provider, :base_url, :model_name, :api_key, "
+            ":enabled, 'active')",
             {
                 "name": "默认大语言模型",
                 "provider": s.llm_provider,
@@ -223,8 +239,10 @@ async def seed_default_model_configs() -> None:
     if not embedding_count:
         await db.execute_insert(
             "INSERT INTO model_config "
-            "(name, model_type, provider, base_url, model_name, api_key, api_key_enabled, embedding_dimension, status) "
-            "VALUES (:name, 'embedding', :provider, :base_url, :model_name, :api_key, :enabled, :dimension, 'active')",
+            "(name, model_type, provider, base_url, model_name, api_key, "
+            "api_key_enabled, embedding_dimension, status) "
+            "VALUES (:name, 'embedding', :provider, :base_url, :model_name, "
+            ":api_key, :enabled, :dimension, 'active')",
             {
                 "name": "默认向量模型",
                 "provider": "openai-compatible",
@@ -255,7 +273,8 @@ async def backfill_agent_semantic_domains() -> None:
     db = get_management_db()
     await db.execute_query(
         "UPDATE agent a SET semantic_domain_id = "
-        "(SELECT sd.id FROM semantic_domain sd WHERE sd.agent_id = a.id ORDER BY sd.id DESC LIMIT 1) "
+        "(SELECT sd.id FROM semantic_domain sd WHERE sd.agent_id = a.id "
+        "ORDER BY sd.id DESC LIMIT 1) "
         "WHERE a.semantic_domain_id IS NULL"
     )
 

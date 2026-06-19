@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 MAX_SELECT_LIMIT = 1000
 
 FORBIDDEN_KEYWORDS = {
@@ -105,7 +104,7 @@ def normalize_sql_for_execution(sql: str, max_limit: int = MAX_SELECT_LIMIT) -> 
     if semicolons:
         if len(semicolons) > 1 or semicolons[-1] is not meaningful[-1]:
             return SqlValidationResult(False, "只允许单条 SELECT 查询", "")
-        sql_stripped = sql_stripped[:semicolons[-1].start].strip()
+        sql_stripped = sql_stripped[: semicolons[-1].start].strip()
         tokens = tokenize_sql(sql_stripped)
         meaningful = [token for token in tokens if token.kind != "comment"]
 
@@ -190,7 +189,11 @@ def tokenize_sql(sql: str) -> list[SqlToken]:
         if char == "`":
             start = index
             index = consume_backtick_identifier(sql, index)
-            value = sql[start + 1:index - 1].replace("``", "`") if index <= length else sql[start + 1:]
+            value = (
+                sql[start + 1 : index - 1].replace("``", "`")
+                if index <= length
+                else sql[start + 1 :]
+            )
             tokens.append(SqlToken("identifier", value, start, index))
             continue
 
@@ -287,7 +290,9 @@ def find_cross_schema_table_reference(tokens: list[SqlToken]) -> str:
     return ""
 
 
-def enforce_top_level_limit(sql: str, tokens: list[SqlToken], max_limit: int) -> SqlValidationResult:
+def enforce_top_level_limit(
+    sql: str, tokens: list[SqlToken], max_limit: int
+) -> SqlValidationResult:
     limit_index = find_top_level_keyword(tokens, "LIMIT")
     if limit_index is None:
         return SqlValidationResult(True, "OK", f"{sql.rstrip()}\nLIMIT {max_limit}")
@@ -306,7 +311,7 @@ def enforce_top_level_limit(sql: str, tokens: list[SqlToken], max_limit: int) ->
     if count <= max_limit:
         return SqlValidationResult(True, "OK", sql)
 
-    normalized = f"{sql[:limit_token.start].rstrip()}\nLIMIT {max_limit}"
+    normalized = f"{sql[: limit_token.start].rstrip()}\nLIMIT {max_limit}"
     return SqlValidationResult(True, "OK", normalized)
 
 

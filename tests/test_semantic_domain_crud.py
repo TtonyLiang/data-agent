@@ -41,7 +41,9 @@ async def test_upsert_domain_updates_by_id(monkeypatch):
     )
 
     assert domain_id == 9
-    update_sql, update_params = next((sql, params) for sql, params in db.queries if sql.startswith("UPDATE semantic_domain"))
+    update_sql, update_params = next(
+        (sql, params) for sql, params in db.queries if sql.startswith("UPDATE semantic_domain")
+    )
     assert "domain_key = :domain_key" in update_sql
     assert update_params["id"] == 9
     assert update_params["name"] == "贷款风控"
@@ -94,7 +96,12 @@ async def test_snapshot_diff_reports_asset_changes(monkeypatch):
                 },
                 "assets": {
                     "metric": [
-                        {"id": 1, "domain_id": domain_id, "metric_key": "application_count", "name": "申请笔数"}
+                        {
+                            "id": 1,
+                            "domain_id": domain_id,
+                            "metric_key": "application_count",
+                            "name": "申请笔数",
+                        }
                     ],
                     "mapping": [],
                     "concept": [],
@@ -118,8 +125,18 @@ async def test_snapshot_diff_reports_asset_changes(monkeypatch):
             },
             "assets": {
                 "metric": [
-                    {"id": 1, "domain_id": domain_id, "metric_key": "application_count", "name": "申请数量"},
-                    {"id": 2, "domain_id": domain_id, "metric_key": "approval_rate", "name": "审批通过率"},
+                    {
+                        "id": 1,
+                        "domain_id": domain_id,
+                        "metric_key": "application_count",
+                        "name": "申请数量",
+                    },
+                    {
+                        "id": 2,
+                        "domain_id": domain_id,
+                        "metric_key": "approval_rate",
+                        "name": "审批通过率",
+                    },
                 ],
                 "mapping": [],
                 "concept": [],
@@ -144,7 +161,13 @@ async def test_snapshot_diff_reports_asset_changes(monkeypatch):
 @pytest.mark.asyncio
 async def test_rollback_snapshot_replaces_current_assets(monkeypatch):
     service = SemanticRuntimeService()
-    db = RecordingDB({"SELECT * FROM semantic_domain WHERE id": [{"id": 9, "agent_id": 1, "domain_key": "loan_risk", "name": "贷款风控"}]})
+    db = RecordingDB(
+        {
+            "SELECT * FROM semantic_domain WHERE id": [
+                {"id": 9, "agent_id": 1, "domain_key": "loan_risk", "name": "贷款风控"}
+            ]
+        }
+    )
     imported = {}
 
     async def fake_get_snapshot(domain_id, snapshot_id):

@@ -112,8 +112,10 @@ assert.ok(
 )
 
 assert.ok(
-  source.includes("import * as echarts from 'echarts'") && source.includes('<ReportEChart :chart='),
-  'ChatView should use ECharts instead of hand-written report SVG charts',
+  source.includes("import * as echarts from 'echarts/core'") &&
+    source.includes('echarts.use([') &&
+    source.includes('<ReportEChart :chart='),
+  'ChatView should use tree-shaken ECharts instead of hand-written report SVG charts',
 )
 
 assert.ok(

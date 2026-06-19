@@ -17,7 +17,9 @@ class ColumnPolicy:
 class PermissionService:
     """Agent-level table/column permission and result masking service."""
 
-    async def filter_schema(self, agent_id: int | None, datasource_id: int | None, schema: list[dict]) -> list[dict]:
+    async def filter_schema(
+        self, agent_id: int | None, datasource_id: int | None, schema: list[dict]
+    ) -> list[dict]:
         if not agent_id or not datasource_id:
             return schema
         table_permissions = await self.get_table_permissions(agent_id, datasource_id)
@@ -43,7 +45,9 @@ class PermissionService:
             filtered.append(table_data)
         return filtered
 
-    async def validate_sql_access(self, agent_id: int | None, datasource_id: int | None, sql: str) -> tuple[bool, str]:
+    async def validate_sql_access(
+        self, agent_id: int | None, datasource_id: int | None, sql: str
+    ) -> tuple[bool, str]:
         if not agent_id or not datasource_id:
             return True, "OK"
         table_permissions = await self.get_table_permissions(agent_id, datasource_id)
@@ -95,7 +99,9 @@ class PermissionService:
         )
         return {str(row["table_name"]).lower(): bool(row.get("allowed", 1)) for row in rows}
 
-    async def get_column_permissions(self, agent_id: int, datasource_id: int) -> dict[tuple[str, str], ColumnPolicy]:
+    async def get_column_permissions(
+        self, agent_id: int, datasource_id: int
+    ) -> dict[tuple[str, str], ColumnPolicy]:
         rows = await get_management_db().execute_query(
             "SELECT table_name, column_name, allowed, masking_policy FROM agent_column_permission "
             "WHERE agent_id = :aid AND datasource_id = :did",
@@ -106,9 +112,9 @@ class PermissionService:
             policy = str(row.get("masking_policy") or "none").lower()
             if policy not in {"none", "redact", "partial", "hash"}:
                 policy = "redact"
-            policies[
-                (str(row["table_name"]).lower(), str(row["column_name"]).lower())
-            ] = ColumnPolicy(allowed=bool(row.get("allowed", 1)), masking_policy=policy)
+            policies[(str(row["table_name"]).lower(), str(row["column_name"]).lower())] = (
+                ColumnPolicy(allowed=bool(row.get("allowed", 1)), masking_policy=policy)
+            )
         return policies
 
     @staticmethod

@@ -1,20 +1,28 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
 from app.config import get_settings
 from app.services.metadata_service import get_metadata_service
-
+from app.utils.logging_helpers import json_for_log, log_node_end, log_node_start, truncate_text
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+")
+logger = logging.getLogger(__name__)
 
 
 async def schema_recall_node(state: dict) -> dict:
     """Recall collected physical tables/columns for SQL grounding."""
+    log_node_start(
+        logger,
+        "schema_recall",
+        state,
+        keys=("trace_id", "agent_id", "datasource_id", "enhanced_question", "question"),
+    )
     datasource_id = state.get("datasource_id")
     if not datasource_id:
-        return {
+        result = {
             "relevant_tables": [],
             "relevant_columns": [],
             "likely_joins": [],
@@ -23,14 +31,21 @@ async def schema_recall_node(state: dict) -> dict:
                 "message": "缺少数据源，跳过数据定位。",
             },
         }
+        log_node_end(logger, "schema_recall", result)
+        return result
 
     metadata_service = get_metadata_service()
     if hasattr(metadata_service, "get_authorized_schema"):
         schema = await metadata_service.get_authorized_schema(datasource_id, state.get("agent_id"))
     else:
         schema = await metadata_service.get_schema(datasource_id)
+    logger.info(
+        "schema recall loaded schema datasource_id=%s table_count=%s",
+        datasource_id,
+        len(schema or []),
+    )
     if not schema:
-        return {
+        result = {
             "relevant_tables": [],
             "relevant_columns": [],
             "likely_joins": [],
@@ -39,6 +54,8 @@ async def schema_recall_node(state: dict) -> dict:
                 "message": "当前数据源没有已采集表结构。",
             },
         }
+        log_node_end(logger, "schema_recall", result)
+        return result
 
     runtime = state.get("semantic_runtime") or {}
     evidence = state.get("runtime_evidence") or []
@@ -48,6 +65,15 @@ async def schema_recall_node(state: dict) -> dict:
     business_priority = _business_priority(runtime, evidence, question)
     business_groups = _business_groups(question)
     settings = get_settings()
+    logger.info(
+        "schema recall signals question=%s tokens=%s semantic_terms_count=%s "
+        "evidence_count=%s business_groups=%s",
+        truncate_text(question, 600),
+        json_for_log(sorted(tokens)),
+        len(semantic_terms),
+        len(evidence),
+        json_for_log(business_groups),
+    )
 
     table_scores: dict[str, dict[str, Any]] = {}
     column_hits: list[dict[str, Any]] = []
@@ -64,7 +90,9 @@ async def schema_recall_node(state: dict) -> dict:
         table_business = business_priority["tables"].get(table_name, {"score": 0.0, "reasons": []})
         table_score += float(table_business.get("score") or 0)
         table_reasons = [*table_business.get("reasons", []), *table_reasons]
-        group_score, group_reasons = _score_business_groups(table_name, table_comment, business_groups)
+        group_score, group_reasons = _score_business_groups(
+            table_name, table_comment, business_groups
+        )
         table_score += group_score
         table_reasons = [*group_reasons, *table_reasons]
         table_scores[table_name] = {
@@ -100,23 +128,27 @@ async def schema_recall_node(state: dict) -> dict:
             reasons = [*column_group_reasons, *reasons]
             if score > 0:
                 table_scores[table_name]["score"] += min(score, 6)
-                column_hits.append({
-                    "table": table_name,
-                    "table_name": table_name,
-                    "column": column_name,
-                    "column_name": column_name,
-                    "comment": column_comment,
-                    "column_comment": column_comment,
-                    "data_type": column.get("data_type"),
-                    "score": score,
-                    "reason": "、".join(reasons),
-                })
+                column_hits.append(
+                    {
+                        "table": table_name,
+                        "table_name": table_name,
+                        "column": column_name,
+                        "column_name": column_name,
+                        "comment": column_comment,
+                        "column_comment": column_comment,
+                        "data_type": column.get("data_type"),
+                        "score": score,
+                        "reason": "、".join(reasons),
+                    }
+                )
             if column.get("is_foreign_key") and column.get("foreign_key_ref"):
-                joins.append({
-                    "left": f"{table_name}.{column_name}",
-                    "right": column.get("foreign_key_ref"),
-                    "reason": "已采集外键关系",
-                })
+                joins.append(
+                    {
+                        "left": f"{table_name}.{column_name}",
+                        "right": column.get("foreign_key_ref"),
+                        "reason": "已采集外键关系",
+                    }
+                )
 
     matched_tables = sorted(
         table_scores.values(),
@@ -128,19 +160,23 @@ async def schema_recall_node(state: dict) -> dict:
     selected_names = {item["table_name"] for item in selected_tables}
 
     matched_columns = [
-        item for item in sorted(
+        item
+        for item in sorted(
             column_hits,
-            key=lambda item: (-float(item.get("score") or 0), item.get("table_name") or "", item.get("column_name") or ""),
+            key=lambda item: (
+                -float(item.get("score") or 0),
+                item.get("table_name") or "",
+                item.get("column_name") or "",
+            ),
         )
         if item["table_name"] in selected_names
-    ][:max(1, settings.schema_recall_max_columns)]
+    ][: max(1, settings.schema_recall_max_columns)]
 
-    return {
+    result = {
         "relevant_tables": selected_tables,
         "relevant_columns": matched_columns,
         "likely_joins": [
-            item for item in joins
-            if str(item.get("left", "")).split(".", 1)[0] in selected_names
+            item for item in joins if str(item.get("left", "")).split(".", 1)[0] in selected_names
         ][:12],
         "schema_scope": {
             "mode": "semantic_guided" if positive_tables else "collected_schema_fallback",
@@ -151,17 +187,35 @@ async def schema_recall_node(state: dict) -> dict:
             "business_groups": business_groups,
         },
     }
+    logger.info(
+        "schema recall selected tables=%s columns=%s joins=%s scope=%s",
+        json_for_log(selected_tables),
+        json_for_log(matched_columns),
+        json_for_log(result["likely_joins"]),
+        json_for_log(result["schema_scope"]),
+    )
+    log_node_end(
+        logger,
+        "schema_recall",
+        {
+            "table_count": len(selected_tables),
+            "column_count": len(matched_columns),
+            "join_count": len(result["likely_joins"]),
+            "schema_scope": result["schema_scope"],
+        },
+    )
+    return result
 
 
 def _tokens(text: str) -> set[str]:
+    """Split mixed Chinese and identifier text into normalized recall tokens."""
     return {
-        token.lower()
-        for token in TOKEN_RE.findall(text or "")
-        if token and len(token.strip()) > 1
+        token.lower() for token in TOKEN_RE.findall(text or "") if token and len(token.strip()) > 1
     }
 
 
 def _semantic_terms(runtime: dict, evidence: list[dict]) -> set[str]:
+    """Collect searchable terms from recalled semantic runtime assets."""
     terms: set[str] = set()
     for item in evidence:
         metadata = item.get("metadata") or {}
@@ -169,7 +223,14 @@ def _semantic_terms(runtime: dict, evidence: list[dict]) -> set[str]:
             terms.update(_tokens(str(value or "")))
     for group in ("metrics", "mappings", "concepts", "rules"):
         for item in runtime.get(group, []) if isinstance(runtime, dict) else []:
-            for key in ("metric_key", "asset_key", "concept_key", "rule_key", "name", "description"):
+            for key in (
+                "metric_key",
+                "asset_key",
+                "concept_key",
+                "rule_key",
+                "name",
+                "description",
+            ):
                 terms.update(_tokens(str(item.get(key) or "")))
             for value in item.get("synonyms", []) or []:
                 terms.update(_tokens(str(value)))
@@ -177,15 +238,13 @@ def _semantic_terms(runtime: dict, evidence: list[dict]) -> set[str]:
 
 
 def _business_priority(runtime: dict, evidence: list[dict], question: str) -> dict[str, Any]:
+    """Translate matched semantic assets into table and column score boosts."""
     table_boosts: dict[str, dict[str, Any]] = {}
     column_boosts: dict[tuple[str, str], dict[str, Any]] = {}
     if not isinstance(runtime, dict):
         return {"tables": table_boosts, "columns": column_boosts}
 
-    mappings = [
-        item for item in runtime.get("mappings", []) or []
-        if isinstance(item, dict)
-    ]
+    mappings = [item for item in runtime.get("mappings", []) or [] if isinstance(item, dict)]
     mapping_by_asset: dict[str, list[dict[str, Any]]] = {}
     for mapping in mappings:
         asset_key = str(mapping.get("asset_key") or "")
@@ -207,16 +266,31 @@ def _business_priority(runtime: dict, evidence: list[dict], question: str) -> di
         score, reasons = _metric_match(metric, evidence_keys, question_profile)
         if score <= 0 or not base_table:
             continue
-        _add_boost(table_boosts, base_table, score + 40, [f"业务指标基础表: {metric.get('name') or metric_key}", *reasons])
+        _add_boost(
+            table_boosts,
+            base_table,
+            score + 40,
+            [f"业务指标基础表: {metric.get('name') or metric_key}", *reasons],
+        )
         for dim_key in metric.get("dimensions", []) or []:
             for mapping in mapping_by_asset.get(str(dim_key), []):
-                _boost_mapping(mapping, table_boosts, column_boosts, 32, 28, f"指标关联维度: {dim_key}")
+                _boost_mapping(
+                    mapping, table_boosts, column_boosts, 32, 28, f"指标关联维度: {dim_key}"
+                )
 
     for mapping in mappings:
         score, reasons = _mapping_match(mapping, question_profile)
         if score <= 0:
             continue
-        _boost_mapping(mapping, table_boosts, column_boosts, score + 18, score + 10, "问题命中业务字段", reasons)
+        _boost_mapping(
+            mapping,
+            table_boosts,
+            column_boosts,
+            score + 18,
+            score + 10,
+            "问题命中业务字段",
+            reasons,
+        )
 
     for relation in runtime.get("relations", []) or []:
         if not isinstance(relation, dict):
@@ -234,12 +308,20 @@ def _business_priority(runtime: dict, evidence: list[dict], question: str) -> di
             for field in ("left", "right"):
                 table_name, _ = _split_qualified(str(item.get(field) or ""))
                 if table_name:
-                    _add_boost(table_boosts, table_name, min(relation_score, 20), [*relation_reasons, "业务关系关联表"])
+                    _add_boost(
+                        table_boosts,
+                        table_name,
+                        min(relation_score, 20),
+                        [*relation_reasons, "业务关系关联表"],
+                    )
 
     return {"tables": table_boosts, "columns": column_boosts}
 
 
-def _metric_match(metric: dict[str, Any], evidence_keys: set[str], question_profile: dict[str, Any]) -> tuple[float, list[str]]:
+def _metric_match(
+    metric: dict[str, Any], evidence_keys: set[str], question_profile: dict[str, Any]
+) -> tuple[float, list[str]]:
+    """Score how strongly a metric matches the question and recalled evidence."""
     metric_key = str(metric.get("metric_key") or "")
     score, reasons = _asset_match_score(
         metric,
@@ -262,7 +344,9 @@ def _metric_match(metric: dict[str, Any], evidence_keys: set[str], question_prof
     if question_profile["asks_count"] and _looks_like_count_metric(metric):
         score += 36
         reasons.append("问题要求笔数/数量")
-    if question_profile["asks_application"] and _contains_any(metric_text, ("application", "apply", "申请")):
+    if question_profile["asks_application"] and _contains_any(
+        metric_text, ("application", "apply", "申请")
+    ):
         score += 24
         reasons.append("问题聚焦申请业务")
     if question_profile["asks_amount"] and _contains_any(metric_text, ("amount", "金额", "余额")):
@@ -274,20 +358,28 @@ def _metric_match(metric: dict[str, Any], evidence_keys: set[str], question_prof
     return max(score, 0), _unique_reasons(reasons)
 
 
-def _mapping_match(mapping: dict[str, Any], question_profile: dict[str, Any]) -> tuple[float, list[str]]:
+def _mapping_match(
+    mapping: dict[str, Any], question_profile: dict[str, Any]
+) -> tuple[float, list[str]]:
+    """Score how strongly a semantic mapping matches the question profile."""
     score, reasons = _asset_match_score(
         mapping,
         question_profile,
         ("asset_key", "name", "description", "table_name", "column_name"),
     )
     if question_profile["asks_region"] and _contains_any(
-        " ".join(str(mapping.get(key) or "") for key in ("asset_key", "name", "column_name", "column_comment")).lower(),
+        " ".join(
+            str(mapping.get(key) or "")
+            for key in ("asset_key", "name", "column_name", "column_comment")
+        ).lower(),
         ("region", "area", "区域", "地区"),
     ):
         score += 34
         reasons.append("问题要求区域维度")
     if question_profile["asks_application"] and _contains_any(
-        " ".join(str(mapping.get(key) or "") for key in ("asset_key", "name", "table_name")).lower(),
+        " ".join(
+            str(mapping.get(key) or "") for key in ("asset_key", "name", "table_name")
+        ).lower(),
         ("application", "apply", "申请"),
     ):
         score += 18
@@ -296,13 +388,16 @@ def _mapping_match(mapping: dict[str, Any], question_profile: dict[str, Any]) ->
 
 
 def _business_groups(question: str) -> list[str]:
+    """Infer coarse business groups such as application or collection from question text."""
     compact = (question or "").lower().replace(" ", "")
     groups = []
     if any(token in compact for token in ("申请", "进件", "审批")):
         groups.append("application")
     if any(token in compact for token in ("放款", "发放", "借据", "余额", "本金")):
         groups.append("account")
-    if any(token in compact for token in ("还款", "逾期", "m1", "m2", "m3", "dpd", "mob", "vintage")):
+    if any(
+        token in compact for token in ("还款", "逾期", "m1", "m2", "m3", "dpd", "mob", "vintage")
+    ):
         groups.append("repayment")
     if any(token in compact for token in ("催收", "回收", "入催")):
         groups.append("collection")
@@ -312,13 +407,24 @@ def _business_groups(question: str) -> list[str]:
 
 
 def _score_business_groups(name: str, comment: str, groups: list[str]) -> tuple[float, list[str]]:
+    """Boost schema candidates that belong to inferred business groups."""
     if not groups:
         return 0.0, []
     text = f"{name} {comment}".lower()
     group_terms = {
         "application": ("application", "apply", "approval", "申请", "进件", "审批"),
         "account": ("account", "loan", "balance", "disbursement", "放款", "余额", "借据", "本金"),
-        "repayment": ("repayment", "overdue", "dpd", "mob", "vintage", "还款", "逾期", "账龄", "批次"),
+        "repayment": (
+            "repayment",
+            "overdue",
+            "dpd",
+            "mob",
+            "vintage",
+            "还款",
+            "逾期",
+            "账龄",
+            "批次",
+        ),
         "collection": ("collection", "recovery", "催收", "回收", "入催"),
         "customer": ("customer", "segment", "risk", "客户", "客群", "风险"),
     }
@@ -333,6 +439,7 @@ def _score_business_groups(name: str, comment: str, groups: list[str]) -> tuple[
 
 
 def business_group_label(group: str) -> str:
+    """Return a human-readable label for a coarse business group."""
     labels = {
         "application": "申请/审批",
         "account": "放款/账户",
@@ -343,17 +450,25 @@ def business_group_label(group: str) -> str:
     return labels.get(group, group)
 
 
-def _asset_match_score(item: dict[str, Any], question_profile: dict[str, Any], fields: tuple[str, ...]) -> tuple[float, list[str]]:
+def _asset_match_score(
+    item: dict[str, Any], question_profile: dict[str, Any], fields: tuple[str, ...]
+) -> tuple[float, list[str]]:
+    """Score generic semantic assets against question tokens and labels."""
     score = 0.0
     reasons: list[str] = []
     for field in fields:
-        field_score, field_reasons = _match_label(str(item.get(field) or ""), question_profile, "业务资产")
+        field_score, field_reasons = _match_label(
+            str(item.get(field) or ""), question_profile, "业务资产"
+        )
         score += field_score
         reasons.extend(field_reasons)
     return score, _unique_reasons(reasons)
 
 
-def _match_label(label: str, question_profile: dict[str, Any], prefix: str) -> tuple[float, list[str]]:
+def _match_label(
+    label: str, question_profile: dict[str, Any], prefix: str
+) -> tuple[float, list[str]]:
+    """Score one label against compact question text and token sets."""
     compact = _compact(label)
     if not compact or len(compact) <= 1:
         return 0.0, []
@@ -379,6 +494,7 @@ def _boost_mapping(
     reason: str,
     extra_reasons: list[str] | None = None,
 ) -> None:
+    """Apply table and column boosts for a physical semantic mapping."""
     table_name = str(mapping.get("table_name") or "")
     column_name = str(mapping.get("column_name") or "")
     reasons = [reason, *(extra_reasons or [])]
@@ -388,19 +504,25 @@ def _boost_mapping(
         _add_boost(column_boosts, (table_name, column_name), column_score, reasons)
 
 
-def _add_boost(target: dict[Any, dict[str, Any]], key: Any, score: float, reasons: list[str]) -> None:
+def _add_boost(
+    target: dict[Any, dict[str, Any]], key: Any, score: float, reasons: list[str]
+) -> None:
+    """Accumulate a score boost and reasons in a mutable boost map."""
     item = target.setdefault(key, {"score": 0.0, "reasons": []})
     item["score"] += score
     item["reasons"] = _unique_reasons([*item["reasons"], *reasons])[:5]
 
 
 def _question_profile(question: str) -> dict[str, Any]:
+    """Extract reusable intent flags from the current question."""
     compact = _compact(question)
     tokens = _tokens(question)
     return {
         "compact": compact,
         "tokens": tokens,
-        "asks_count": _contains_any(compact, ("多少笔", "几笔", "笔数", "数量", "次数", "count", "top", "排名")),
+        "asks_count": _contains_any(
+            compact, ("多少笔", "几笔", "笔数", "数量", "次数", "count", "top", "排名")
+        ),
         "asks_application": _contains_any(compact, ("申请", "application", "apply")),
         "asks_amount": _contains_any(compact, ("金额", "余额", "amount")),
         "asks_region": _contains_any(compact, ("区域", "地区", "region", "area")),
@@ -408,6 +530,7 @@ def _question_profile(question: str) -> dict[str, Any]:
 
 
 def _looks_like_count_metric(metric: dict[str, Any]) -> bool:
+    """Heuristically decide whether a metric definition represents a count."""
     metric_key = str(metric.get("metric_key") or "").lower()
     metric_name = str(metric.get("name") or "")
     aggregation = str(metric.get("aggregation") or "").lower()
@@ -421,15 +544,18 @@ def _looks_like_count_metric(metric: dict[str, Any]) -> bool:
 
 
 def _contains_any(text: str, values: tuple[str, ...]) -> bool:
+    """Return true when any token is present in text."""
     lowered = text.lower()
     return any(value.lower() in lowered for value in values)
 
 
 def _compact(text: str) -> str:
+    """Lowercase and remove whitespace for keyword matching."""
     return re.sub(r"\s+", "", text or "").lower()
 
 
 def _split_qualified(value: str) -> tuple[str, str]:
+    """Split a table.column reference into table and column parts."""
     if "." not in value:
         return "", ""
     left, right = value.split(".", 1)
@@ -437,6 +563,7 @@ def _split_qualified(value: str) -> tuple[str, str]:
 
 
 def _unique_reasons(reasons: list[str]) -> list[str]:
+    """Deduplicate scoring reasons while preserving order."""
     seen: set[str] = set()
     result: list[str] = []
     for reason in reasons:
@@ -447,7 +574,10 @@ def _unique_reasons(reasons: list[str]) -> list[str]:
     return result
 
 
-def _score_text(values: list[str], tokens: set[str], semantic_terms: set[str]) -> tuple[float, list[str]]:
+def _score_text(
+    values: list[str], tokens: set[str], semantic_terms: set[str]
+) -> tuple[float, list[str]]:
+    """Score raw schema text against question and semantic terms."""
     text = " ".join(value for value in values if value).lower()
     score = 0.0
     reasons: list[str] = []

@@ -12,7 +12,11 @@ class FakeMetadataService:
                 "table_name": "loan_application_indicator",
                 "table_comment": "贷款申请审批指标表",
                 "columns": [
-                    {"column_name": "application_id", "data_type": "bigint", "column_comment": "申请ID"},
+                    {
+                        "column_name": "application_id",
+                        "data_type": "bigint",
+                        "column_comment": "申请ID",
+                    },
                     {"column_name": "region", "data_type": "varchar", "column_comment": "区域"},
                 ],
             }
@@ -30,7 +34,8 @@ class FakeLlmService:
 
         response = (
             '{"sql": "SELECT region AS application_region, COUNT(*) AS application_count '
-            'FROM loan_application_indicator GROUP BY region ORDER BY application_count DESC LIMIT 3"}'
+            "FROM loan_application_indicator GROUP BY region "
+            'ORDER BY application_count DESC LIMIT 3"}'
         )
         yield Chunk(response)
 

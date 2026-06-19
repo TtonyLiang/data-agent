@@ -1,15 +1,39 @@
+import logging
+
 from app.services.embedding_service import get_embedding_service
 from app.services.semantic_runtime import get_semantic_runtime_service
 from app.services.vector_store import get_vector_store
+from app.utils.logging_helpers import (
+    json_for_log,
+    log_node_end,
+    log_node_error,
+    log_node_start,
+    truncate_text,
+)
+
+logger = logging.getLogger(__name__)
 
 
 async def semantic_runtime_recall_node(state: dict) -> dict:
     """召回当前问数需要的语义运行时上下文。"""
+    log_node_start(
+        logger,
+        "semantic_runtime_recall",
+        state,
+        keys=("trace_id", "agent_id", "datasource_id", "enhanced_question", "question"),
+    )
     agent_id = state.get("agent_id", 0)
     datasource_id = state.get("datasource_id")
     question = state.get("enhanced_question") or state.get("question", "")
     svc = get_semantic_runtime_service()
     domain_id = await resolve_runtime_domain_id(agent_id, datasource_id)
+    logger.info(
+        "semantic runtime resolved domain agent_id=%s datasource_id=%s domain_id=%s question=%s",
+        agent_id,
+        datasource_id,
+        domain_id,
+        truncate_text(question, 600),
+    )
 
     try:
         runtime = await svc.build_runtime(
@@ -19,16 +43,20 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
             domain_id=domain_id,
         )
     except Exception as exc:
-        return {
+        log_node_error(logger, "semantic_runtime_recall", exc, state)
+        result = {
             "semantic_runtime": None,
             "runtime_evidence": [],
             "semantic_error": str(exc),
             "final_answer": f"知识召回不可用: {exc}",
         }
+        log_node_end(logger, "semantic_runtime_recall", result)
+        return result
 
     evidence: list[dict] = []
     try:
         query_vector = await get_embedding_service().embed_query(question, agent_id=agent_id)
+        logger.info("semantic runtime embedding generated dims=%s", len(query_vector or []))
         evidence = [
             {
                 "content": item.content,
@@ -39,30 +67,76 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
             }
             for item in get_vector_store().search(agent_id, query_vector)
         ]
-    except Exception:
+        logger.info("semantic runtime vector evidence count=%s", len(evidence))
+    except Exception as exc:
+        logger.exception(
+            "semantic runtime vector recall failed, fallback to keyword evidence: %s", exc
+        )
         evidence = keyword_runtime_evidence(question, runtime.model_dump())
 
     if not evidence:
+        logger.info("semantic runtime vector evidence empty, fallback to keyword evidence")
         evidence = keyword_runtime_evidence(question, runtime.model_dump())
 
-    return {
+    result = {
         "semantic_runtime": runtime.model_dump(),
         "runtime_evidence": evidence[:8],
         "semantic_error": None,
     }
+    runtime_payload = runtime.model_dump()
+    logger.info(
+        "semantic runtime recalled counts=%s evidence=%s",
+        json_for_log(
+            {
+                "concepts": len(runtime_payload.get("concepts", [])),
+                "relations": len(runtime_payload.get("relations", [])),
+                "metrics": len(runtime_payload.get("metrics", [])),
+                "rules": len(runtime_payload.get("rules", [])),
+                "mappings": len(runtime_payload.get("mappings", [])),
+                "templates": len(runtime_payload.get("templates", [])),
+            }
+        ),
+        json_for_log(evidence[:8]),
+    )
+    log_node_end(
+        logger,
+        "semantic_runtime_recall",
+        {
+            "semantic_error": None,
+            "runtime_evidence_count": len(evidence[:8]),
+            "runtime_counts": {
+                "metrics": len(runtime_payload.get("metrics", [])),
+                "mappings": len(runtime_payload.get("mappings", [])),
+            },
+        },
+    )
+    return result
 
 
 async def resolve_runtime_domain_id(agent_id: int, datasource_id: int | None) -> int | None:
     """Prefer the semantic layer explicitly selected on the agent."""
     domain = await get_semantic_runtime_service().get_agent_bound_domain(agent_id)
     if domain is None:
+        logger.info("semantic runtime no agent-bound domain agent_id=%s", agent_id)
         return None
     if datasource_id and domain.datasource_id and domain.datasource_id != datasource_id:
+        logger.info(
+            "semantic runtime agent-bound domain skipped by datasource mismatch "
+            "agent_id=%s domain_id=%s domain_datasource_id=%s request_datasource_id=%s",
+            agent_id,
+            domain.id,
+            domain.datasource_id,
+            datasource_id,
+        )
         return None
+    logger.info(
+        "semantic runtime using agent-bound domain agent_id=%s domain_id=%s", agent_id, domain.id
+    )
     return domain.id
 
 
 def keyword_runtime_evidence(question: str, runtime: dict, limit: int = 8) -> list[dict]:
+    """Build keyword-based semantic evidence when embedding or vector recall is unavailable."""
     normalized = question.lower().replace(" ", "")
     candidates: list[dict] = []
     for asset_type, collection, key_field in (

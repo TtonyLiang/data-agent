@@ -1,5 +1,6 @@
-import pytest
 from types import SimpleNamespace
+
+import pytest
 
 import app.agent.nodes.analysis_pipeline as analysis_pipeline
 from app.agent.nodes.analysis_pipeline import (
@@ -137,7 +138,8 @@ async def test_python_generate_uses_llm_code_when_safe(monkeypatch):
         async def achat_stream(self, messages, **kwargs):
             yield FakeChunk(
                 "import json\n"
-                "result = {'row_count': len(rows), 'analysis_mode': 'custom', 'insights': ['LLM脚本已执行']}\n"
+                "result = {'row_count': len(rows), 'analysis_mode': 'custom', "
+                "'insights': ['LLM脚本已执行']}\n"
                 "print(json.dumps(result, ensure_ascii=False))"
             )
 
@@ -189,7 +191,7 @@ async def test_python_generate_falls_back_when_llm_code_is_unsafe(monkeypatch):
 
     assert result["python_result"]["generation_source"] == "safe_template"
     assert result["python_result"]["generation_error"]
-    assert "ANALYSIS_MODE = \"trend\"" in result["python_code"]
+    assert 'ANALYSIS_MODE = "trend"' in result["python_code"]
 
 
 @pytest.mark.asyncio
@@ -211,7 +213,8 @@ async def test_python_analyze_repairs_failed_script_with_llm(monkeypatch):
             assert "上一次 Python 分析脚本执行失败" in messages[-1]["content"]
             yield FakeChunk(
                 "import json\n"
-                "result = {'row_count': len(rows), 'analysis_mode': 'repaired', 'insights': ['修复后成功']}\n"
+                "result = {'row_count': len(rows), 'analysis_mode': 'repaired', "
+                "'insights': ['修复后成功']}\n"
                 "print(json.dumps(result, ensure_ascii=False))"
             )
 
@@ -224,7 +227,10 @@ async def test_python_analyze_repairs_failed_script_with_llm(monkeypatch):
             "question": "分析申请趋势",
             "plan": {"mode": "trend"},
             "sql_result": [{"month": "2026-01", "cnt": 10}],
-            "python_code": "import json\nraise ValueError('boom')\nprint(json.dumps({'row_count': len(rows)}, ensure_ascii=False))",
+            "python_code": (
+                "import json\nraise ValueError('boom')\n"
+                "print(json.dumps({'row_count': len(rows)}, ensure_ascii=False))"
+            ),
         }
     )
 
@@ -253,11 +259,21 @@ async def test_report_marks_analysis_failed_after_python_retries_exhausted(monke
             return {}
 
         async def achat_stream(self, messages, **kwargs):
-            yield FakeChunk("import json\nraise ValueError('still broken')\nprint(json.dumps({'row_count': len(rows)}))")
+            yield FakeChunk(
+                "import json\nraise ValueError('still broken')\n"
+                "print(json.dumps({'row_count': len(rows)}))"
+            )
 
     monkeypatch.setattr(analysis_pipeline, "get_prompt_service", lambda: FakePromptService())
     monkeypatch.setattr(analysis_pipeline, "get_llm_service", lambda: FakeLlmService())
-    monkeypatch.setattr(analysis_pipeline, "_build_analysis_code", lambda mode="profile": "import json\nraise ValueError('template broken')\nprint(json.dumps({'row_count': len(rows)}))")
+    monkeypatch.setattr(
+        analysis_pipeline,
+        "_build_analysis_code",
+        lambda mode="profile": (
+            "import json\nraise ValueError('template broken')\n"
+            "print(json.dumps({'row_count': len(rows)}))"
+        ),
+    )
 
     state = {
         "agent_id": 1,
@@ -265,7 +281,10 @@ async def test_report_marks_analysis_failed_after_python_retries_exhausted(monke
         "logic_form": {"metrics": ["application_count"], "dimensions": ["month"]},
         "plan": {"mode": "trend", "mode_label": "趋势分析"},
         "sql_result": [{"month": "2026-01", "application_count": 10}],
-        "python_code": "import json\nraise ValueError('boom')\nprint(json.dumps({'row_count': len(rows)}))",
+        "python_code": (
+            "import json\nraise ValueError('boom')\n"
+            "print(json.dumps({'row_count': len(rows)}))"
+        ),
     }
 
     state.update(await python_analyze_node(state))
@@ -275,7 +294,9 @@ async def test_report_marks_analysis_failed_after_python_retries_exhausted(monke
     assert len(state["python_result"]["repair_attempts"]) >= 2
     assert state["report_payload"]["status"] == "analysis_failed"
     assert "重试后仍未成功" in state["report_payload"]["summary"]
-    assert "分析执行提示" in " ".join(section["title"] for section in state["report_payload"]["sections"])
+    assert "分析执行提示" in " ".join(
+        section["title"] for section in state["report_payload"]["sections"]
+    )
 
 
 @pytest.mark.asyncio
@@ -283,7 +304,10 @@ async def test_report_accepts_structured_metric_and_dimension_items():
     state = {
         "question": "贷款排名前三的申请区域是什么，分别申请了多少笔",
         "logic_form": {"metrics": ["application_count"], "dimensions": ["application_region"]},
-        "compiled_sql": "SELECT region AS application_region, COUNT(*) AS application_count FROM loan_application GROUP BY region",
+        "compiled_sql": (
+            "SELECT region AS application_region, COUNT(*) AS application_count "
+            "FROM loan_application GROUP BY region"
+        ),
         "sql_result": [
             {"application_region": "华南", "application_count": 4423},
             {"application_region": "东北", "application_count": 4358},
@@ -320,8 +344,14 @@ async def test_report_accepts_structured_metric_and_dimension_items():
 async def test_report_chart_kind_preserves_python_declared_pie():
     state = {
         "question": "各产品申请占比如何",
-        "logic_form": {"metrics": ["application_count"], "dimensions": ["application_product_type"]},
-        "compiled_sql": "SELECT product_type AS application_product_type, COUNT(*) AS application_count FROM loan_application GROUP BY product_type",
+        "logic_form": {
+            "metrics": ["application_count"],
+            "dimensions": ["application_product_type"],
+        },
+        "compiled_sql": (
+            "SELECT product_type AS application_product_type, COUNT(*) AS application_count "
+            "FROM loan_application GROUP BY product_type"
+        ),
         "sql_result": [
             {"application_product_type": "消费贷", "application_count": 214},
             {"application_product_type": "经营贷", "application_count": 232},
@@ -341,7 +371,15 @@ async def test_report_chart_kind_preserves_python_declared_pie():
                         {"label": "经营贷", "value": 232},
                     ],
                     "echarts_option": {
-                        "series": [{"type": "pie", "data": [{"name": "消费贷", "value": 214}, {"name": "经营贷", "value": 232}]}]
+                        "series": [
+                            {
+                                "type": "pie",
+                                "data": [
+                                    {"name": "消费贷", "value": 214},
+                                    {"name": "经营贷", "value": 232},
+                                ],
+                            }
+                        ]
                     },
                 }
             ],
@@ -359,8 +397,14 @@ async def test_distribution_mode_fallback_chart_prefers_pie():
     state = {
         "question": "各贷款产品申请量占比如何",
         "enhanced_question": "各贷款产品申请量占比如何",
-        "logic_form": {"metrics": ["application_count"], "dimensions": ["application_product_type"]},
-        "compiled_sql": "SELECT product_type AS application_product_type, COUNT(*) AS application_count FROM loan_application GROUP BY product_type",
+        "logic_form": {
+            "metrics": ["application_count"],
+            "dimensions": ["application_product_type"],
+        },
+        "compiled_sql": (
+            "SELECT product_type AS application_product_type, COUNT(*) AS application_count "
+            "FROM loan_application GROUP BY product_type"
+        ),
         "sql_result": [
             {"application_product_type": "经营贷", "application_count": 6031},
             {"application_product_type": "车贷", "application_count": 6014},
@@ -417,11 +461,16 @@ async def test_multi_series_trend_analysis_and_report_are_structured():
     assert state["python_result"]["analysis_mode"] == "multi_series_trend"
     assert state["python_result"]["series_summary"]
     assert len(state["python_result"]["series_summary"]) == 2
-    assert any("时间范围覆盖 2026-01 至 2026-03" in item for item in state["python_result"]["insights"])
+    assert any(
+        "时间范围覆盖 2026-01 至 2026-03" in item for item in state["python_result"]["insights"]
+    )
     assert state["python_result"]["charts"][0]["type"] == "line"
     assert len(state["python_result"]["charts"][0]["series"]) == 2
     assert state["report_payload"]["mode"] == "multi_series_trend"
-    assert state["report_payload"]["title"] == "application_count 按 application_product_type 月度趋势分析"
+    assert (
+        state["report_payload"]["title"]
+        == "application_count 按 application_product_type 月度趋势分析"
+    )
     assert "按 application_product_type 拆分" in state["report_payload"]["summary"]
     assert state["report_payload"]["charts"][0]["chart_kind"] == "line"
     assert len(state["report_payload"]["charts"][0]["series"]) == 2
@@ -509,7 +558,7 @@ def test_docker_python_executor_builds_isolated_command(monkeypatch):
     class FakeProcess:
         returncode = 0
         stdout = '{"row_count": 1}'
-        stderr = ''
+        stderr = ""
 
     def fake_run(command, **kwargs):
         calls.append({"command": command, "kwargs": kwargs})

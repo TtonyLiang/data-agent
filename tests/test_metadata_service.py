@@ -113,7 +113,9 @@ async def test_collect_schema_uses_selected_datasource(monkeypatch):
         {"table_name": "orders", "table_comment": "订单表", "table_id": 7, "columns": 1}
     ]
     assert any("information_schema.TABLES" in sql for sql, _ in selected_db.queries)
-    assert all(params is None or params.get("tn") != "customers" for _, params in selected_db.queries)
+    assert all(
+        params is None or params.get("tn") != "customers" for _, params in selected_db.queries
+    )
 
 
 @pytest.mark.asyncio
@@ -217,10 +219,10 @@ async def test_uncollect_schema_removes_selected_table_metadata(monkeypatch):
 
     result = await MetadataService().uncollect_schema(42, ["orders", "missing_table"])
 
-    assert result == [
-        {"table_name": "orders", "table_comment": "订单表", "table_id": 7}
-    ]
-    assert any(sql == "DELETE FROM meta_column WHERE table_id = :tid" for sql, _ in management_db.queries)
+    assert result == [{"table_name": "orders", "table_comment": "订单表", "table_id": 7}]
+    assert any(
+        sql == "DELETE FROM meta_column WHERE table_id = :tid" for sql, _ in management_db.queries
+    )
     assert any(
         sql == "DELETE FROM meta_table WHERE datasource_id = :did AND id = :tid"
         for sql, _ in management_db.queries

@@ -77,16 +77,10 @@ def test_generated_schema_does_not_include_sensitive_personal_columns():
     specs = seed.build_table_specs()
 
     forbidden_fragments = {"name", "phone", "mobile", "id_card", "email", "address"}
-    column_names = {
-        column.name
-        for spec in specs.values()
-        for column in spec.columns
-    }
+    column_names = {column.name for spec in specs.values() for column in spec.columns}
 
     assert not any(
-        fragment in column
-        for fragment in forbidden_fragments
-        for column in column_names
+        fragment in column for fragment in forbidden_fragments for column in column_names
     )
 
 

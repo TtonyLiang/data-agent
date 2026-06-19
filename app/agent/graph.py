@@ -77,14 +77,6 @@ def build_mvp_graph() -> StateGraph:
     → ReportGenerator → End
     SQL 执行失败时自动重试 (最多2次).
     """
-    from app.agent.nodes.intent import intent_recognition_node
-    from app.agent.nodes.clarification import clarification_node
-    from app.agent.nodes.human_confirm import sql_confirmation_node
-    from app.agent.nodes.lf_repair import lf_repair_node
-    from app.agent.nodes.lf_to_sql_compile import lf_to_sql_compile_node
-    from app.agent.nodes.lf_validate import lf_validate_node
-    from app.agent.nodes.nl2lf_generate import nl2lf_generate_node
-    from app.agent.nodes.nl2sql_fallback import nl2sql_fallback_node
     from app.agent.nodes.analysis_pipeline import (
         planner_node,
         python_analyze_node,
@@ -92,6 +84,14 @@ def build_mvp_graph() -> StateGraph:
         report_generator_node,
         semantic_check_node,
     )
+    from app.agent.nodes.clarification import clarification_node
+    from app.agent.nodes.human_confirm import sql_confirmation_node
+    from app.agent.nodes.intent import intent_recognition_node
+    from app.agent.nodes.lf_repair import lf_repair_node
+    from app.agent.nodes.lf_to_sql_compile import lf_to_sql_compile_node
+    from app.agent.nodes.lf_validate import lf_validate_node
+    from app.agent.nodes.nl2lf_generate import nl2lf_generate_node
+    from app.agent.nodes.nl2sql_fallback import nl2sql_fallback_node
     from app.agent.nodes.schema_recall import schema_recall_node
     from app.agent.nodes.semantic_enhance import semantic_enhance_node
     from app.agent.nodes.semantic_runtime_recall import semantic_runtime_recall_node

@@ -4,7 +4,7 @@ import logging
 import time
 import uuid
 from collections.abc import Iterator
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
 from typing import Any
 
@@ -13,17 +13,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from app.agent.graph import AgentState, build_mvp_graph
-from app.agent.nodes.analysis_pipeline import planner_node, python_analyze_node, python_generate_node, report_generator_node
+from app.agent.nodes.analysis_pipeline import (
+    planner_node,
+    python_analyze_node,
+    python_generate_node,
+    report_generator_node,
+)
 from app.agent.nodes.sql_execute import sql_execute_node
 from app.config import get_settings
-from app.db.mysql import get_management_db
 from app.db.migrations import run_management_migrations
+from app.db.mysql import get_management_db
 from app.logging_config import configure_file_logging
 from app.services.datasource_service import get_datasource_service
 
 configure_file_logging()
-
-app = FastAPI(title="WenQu DataQuery Agent", version="0.1.0")
 
 ANSWER_CHUNK_SIZE = 32
 STREAM_PROGRESS_INTERVAL_SECONDS = 0.5
@@ -39,11 +42,27 @@ CUSTOM_STREAM_NODES = {
 }
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run startup database migrations through FastAPI's lifespan hook."""
+    try:
+        await run_management_migrations()
+    except Exception:
+        logger.exception("management database migration failed")
+        raise
+    yield
+
+
+app = FastAPI(title="WenQu DataQuery Agent", version="0.1.0", lifespan=lifespan)
+
+
 def new_trace_id() -> str:
     return f"trc_{uuid.uuid4().hex[:12]}"
 
 
-def merge_execution_trace(trace: dict | None, trace_id: str, started_at: float | None = None) -> dict:
+def merge_execution_trace(
+    trace: dict | None, trace_id: str, started_at: float | None = None
+) -> dict:
     merged = dict(trace or {})
     merged["trace_id"] = trace_id
     if started_at is not None:
@@ -71,6 +90,7 @@ def classify_error(exc: Exception, node: str = "") -> dict[str, str]:
         severity = "error"
     return {"category": category, "severity": severity}
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -78,15 +98,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def startup_migrations():
-    try:
-        await run_management_migrations()
-    except Exception:
-        logger.exception("management database migration failed")
-        raise
 
 # 编译 LangGraph
 _graph = None
@@ -133,7 +144,13 @@ async def chat(request: dict):
         "chat_history": history,
     }
 
-    logger.info("chat request started trace_id=%s session_id=%s agent_id=%s datasource_id=%s", trace_id, session_id, agent_id, datasource_id)
+    logger.info(
+        "chat request started trace_id=%s session_id=%s agent_id=%s datasource_id=%s",
+        trace_id,
+        session_id,
+        agent_id,
+        datasource_id,
+    )
     result = await graph.ainvoke(state)
     execution_trace = merge_execution_trace(result.get("execution_trace"), trace_id, started_at)
 
@@ -268,14 +285,19 @@ async def chat_stream(request: dict):
                                 NODE_LABELS.get(current_node, current_node),
                             )
                             append_trace_event(step, progress)
-                            yield emit({
-                                "event": "node_progress",
-                                "data": json.dumps({
-                                    "node": current_node,
-                                    "label": NODE_LABELS.get(current_node, current_node),
-                                    "message": progress,
-                                }, ensure_ascii=False),
-                            })
+                            yield emit(
+                                {
+                                    "event": "node_progress",
+                                    "data": json.dumps(
+                                        {
+                                            "node": current_node,
+                                            "label": NODE_LABELS.get(current_node, current_node),
+                                            "message": progress,
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                            )
                         continue
 
                     if queued.get("kind") == "done":
@@ -293,13 +315,18 @@ async def chat_stream(request: dict):
                         node_started_at[node] = time.monotonic()
                         step = ensure_trace_step(reasoning_trace, node, NODE_LABELS[node])
                         append_trace_event(step, f"开始{NODE_LABELS[node]}。")
-                        yield emit({
-                            "event": "node_start",
-                            "data": json.dumps({
-                                "node": node,
-                                "label": NODE_LABELS[node],
-                            }, ensure_ascii=False),
-                        })
+                        yield emit(
+                            {
+                                "event": "node_start",
+                                "data": json.dumps(
+                                    {
+                                        "node": node,
+                                        "label": NODE_LABELS[node],
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                            }
+                        )
 
                     # LLM 流式 token (思考过程 + 内容)
                     elif kind == "on_chat_model_stream":
@@ -316,14 +343,24 @@ async def chat_stream(request: dict):
                                     node_token_buffers[current_node] = (
                                         node_token_buffers.get(current_node, "") + content
                                     )
-                                    append_trace_stream_text(reasoning_trace, current_node, NODE_LABELS.get(current_node, ""), content)
-                                    yield emit({
-                                        "event": "token",
-                                        "data": json.dumps({
-                                            "node": current_node,
-                                            "delta": content,
-                                        }, ensure_ascii=False),
-                                    })
+                                    append_trace_stream_text(
+                                        reasoning_trace,
+                                        current_node,
+                                        NODE_LABELS.get(current_node, ""),
+                                        content,
+                                    )
+                                    yield emit(
+                                        {
+                                            "event": "token",
+                                            "data": json.dumps(
+                                                {
+                                                    "node": current_node,
+                                                    "delta": content,
+                                                },
+                                                ensure_ascii=False,
+                                            ),
+                                        }
+                                    )
 
                     elif kind == "on_custom_event" and node == "wenqu_token":
                         payload = event.get("data", {}) or {}
@@ -341,14 +378,19 @@ async def chat_stream(request: dict):
                                     NODE_LABELS.get(token_node, token_node),
                                     content,
                                 )
-                                yield emit({
-                                    "event": "reasoning",
-                                    "data": json.dumps({
-                                        "node": token_node,
-                                        "label": NODE_LABELS.get(token_node, token_node),
-                                        "delta": content,
-                                    }, ensure_ascii=False),
-                                })
+                                yield emit(
+                                    {
+                                        "event": "reasoning",
+                                        "data": json.dumps(
+                                            {
+                                                "node": token_node,
+                                                "label": NODE_LABELS.get(token_node, token_node),
+                                                "delta": content,
+                                            },
+                                            ensure_ascii=False,
+                                        ),
+                                    }
+                                )
                             else:
                                 node_token_buffers[token_node] = (
                                     node_token_buffers.get(token_node, "") + content
@@ -359,14 +401,19 @@ async def chat_stream(request: dict):
                                     NODE_LABELS.get(token_node, token_node),
                                     content,
                                 )
-                                yield emit({
-                                    "event": "token",
-                                    "data": json.dumps({
-                                        "node": token_node,
-                                        "label": NODE_LABELS.get(token_node, token_node),
-                                        "delta": content,
-                                    }, ensure_ascii=False),
-                                })
+                                yield emit(
+                                    {
+                                        "event": "token",
+                                        "data": json.dumps(
+                                            {
+                                                "node": token_node,
+                                                "label": NODE_LABELS.get(token_node, token_node),
+                                                "delta": content,
+                                            },
+                                            ensure_ascii=False,
+                                        ),
+                                    }
+                                )
 
                     # LLM 调用结束 — 检查 reasoning_content
                     elif kind == "on_chat_model_end":
@@ -376,15 +423,25 @@ async def chat_stream(request: dict):
                         if msg and hasattr(msg, "additional_kwargs"):
                             rc = msg.additional_kwargs.get("reasoning_content", "")
                             if rc and not reasoning_buffer:
-                                append_trace_reasoning(reasoning_trace, current_node, NODE_LABELS.get(current_node, ""), rc)
-                                yield emit({
-                                    "event": "reasoning",
-                                    "data": json.dumps({
-                                        "node": current_node,
-                                        "label": NODE_LABELS.get(current_node, ""),
-                                        "delta": rc,
-                                    }, ensure_ascii=False),
-                                })
+                                append_trace_reasoning(
+                                    reasoning_trace,
+                                    current_node,
+                                    NODE_LABELS.get(current_node, ""),
+                                    rc,
+                                )
+                                yield emit(
+                                    {
+                                        "event": "reasoning",
+                                        "data": json.dumps(
+                                            {
+                                                "node": current_node,
+                                                "label": NODE_LABELS.get(current_node, ""),
+                                                "delta": rc,
+                                            },
+                                            ensure_ascii=False,
+                                        ),
+                                    }
+                                )
 
                     # 节点结束
                     elif kind == "on_chain_end" and node in NODE_LABELS:
@@ -409,26 +466,36 @@ async def chat_stream(request: dict):
                                     NODE_LABELS[node],
                                     pending,
                                 )
-                                yield emit({
-                                    "event": "token",
-                                    "data": json.dumps({
-                                        "node": node,
-                                        "delta": pending,
-                                    }, ensure_ascii=False),
-                                })
+                                yield emit(
+                                    {
+                                        "event": "token",
+                                        "data": json.dumps(
+                                            {
+                                                "node": node,
+                                                "delta": pending,
+                                            },
+                                            ensure_ascii=False,
+                                        ),
+                                    }
+                                )
                         output = event.get("data", {}).get("output", {})
                         final_result.update(output)
                         # 提取节点关键输出
                         node_output = _extract_node_output(node, output)
                         complete_trace_step(reasoning_trace, node, NODE_LABELS[node], node_output)
-                        yield emit({
-                            "event": "node_complete",
-                            "data": json.dumps({
-                                "node": node,
-                                "label": NODE_LABELS[node],
-                                "output": node_output,
-                            }, ensure_ascii=False),
-                        })
+                        yield emit(
+                            {
+                                "event": "node_complete",
+                                "data": json.dumps(
+                                    {
+                                        "node": node,
+                                        "label": NODE_LABELS[node],
+                                        "output": node_output,
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                            }
+                        )
                         current_node = ""
                         reasoning_buffer = ""
                         pending_model_tokens.pop(node, None)
@@ -441,52 +508,74 @@ async def chat_stream(request: dict):
         except Exception as exc:
             logger.exception("chat stream failed")
             error_info = classify_error(exc, current_node)
-            yield emit({
-                "event": "error",
-                "data": json.dumps({
-                    "session_id": session_id,
-                    "node": current_node,
-                    "label": NODE_LABELS.get(current_node, current_node),
-                    "error_type": exc.__class__.__name__,
-                    "error_category": error_info["category"],
-                    "severity": error_info["severity"],
-                    "detail": truncate_error_detail(str(exc) or exc.__class__.__name__),
-                    "message": format_stream_error_message(
-                        exc,
-                        NODE_LABELS.get(current_node, current_node),
+            yield emit(
+                {
+                    "event": "error",
+                    "data": json.dumps(
+                        {
+                            "session_id": session_id,
+                            "node": current_node,
+                            "label": NODE_LABELS.get(current_node, current_node),
+                            "error_type": exc.__class__.__name__,
+                            "error_category": error_info["category"],
+                            "severity": error_info["severity"],
+                            "detail": truncate_error_detail(str(exc) or exc.__class__.__name__),
+                            "message": format_stream_error_message(
+                                exc,
+                                NODE_LABELS.get(current_node, current_node),
+                            ),
+                        },
+                        ensure_ascii=False,
                     ),
-                }, ensure_ascii=False),
-            })
+                }
+            )
             return
 
         # 最终结果
         answer = final_result.get("final_answer", "")
         sql = final_result.get("compiled_sql") or final_result.get("sql_text", "")
         sql_result = final_result.get("sql_result", [])
-        execution_trace = merge_execution_trace(final_result.get("execution_trace"), trace_id, stream_started_at)
+        execution_trace = merge_execution_trace(
+            final_result.get("execution_trace"), trace_id, stream_started_at
+        )
         final_result["execution_trace"] = execution_trace
 
-        yield emit({
-            "event": "answer_start",
-            "data": json.dumps({
-                "session_id": session_id,
-            }, ensure_ascii=False),
-        })
+        yield emit(
+            {
+                "event": "answer_start",
+                "data": json.dumps(
+                    {
+                        "session_id": session_id,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        )
         for delta in chunk_text(answer):
-            yield emit({
-                "event": "answer_delta",
-                "data": json.dumps({
-                    "session_id": session_id,
-                    "delta": delta,
-                }, ensure_ascii=False),
-            })
-        yield emit({
-            "event": "answer_complete",
-            "data": json.dumps({
-                "session_id": session_id,
-                "answer": answer,
-            }, ensure_ascii=False),
-        })
+            yield emit(
+                {
+                    "event": "answer_delta",
+                    "data": json.dumps(
+                        {
+                            "session_id": session_id,
+                            "delta": delta,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            )
+        yield emit(
+            {
+                "event": "answer_complete",
+                "data": json.dumps(
+                    {
+                        "session_id": session_id,
+                        "answer": answer,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        )
 
         try:
             await save_turn(
@@ -508,26 +597,31 @@ async def chat_stream(request: dict):
         except Exception:
             logger.exception("chat stream failed to persist history")
 
-        yield emit({
-            "event": "result",
-            "data": json.dumps({
-                "session_id": session_id,
-                "intent": final_result.get("intent", ""),
-                "sql": sql,
-                "compiled_sql": sql,
-                "logic_form": final_result.get("logic_form"),
-                "answer": answer,
-                "sql_result": sql_result,
-                "plan": final_result.get("plan"),
-                "semantic_check": final_result.get("semantic_check"),
-                "python_result": final_result.get("python_result"),
-                "report_payload": final_result.get("report_payload"),
-                "human_confirmation": final_result.get("human_confirmation"),
-                "clarification": final_result.get("clarification"),
-                "execution_trace": execution_trace,
-                "reasoning_trace": reasoning_trace,
-            }, ensure_ascii=False),
-        })
+        yield emit(
+            {
+                "event": "result",
+                "data": json.dumps(
+                    {
+                        "session_id": session_id,
+                        "intent": final_result.get("intent", ""),
+                        "sql": sql,
+                        "compiled_sql": sql,
+                        "logic_form": final_result.get("logic_form"),
+                        "answer": answer,
+                        "sql_result": sql_result,
+                        "plan": final_result.get("plan"),
+                        "semantic_check": final_result.get("semantic_check"),
+                        "python_result": final_result.get("python_result"),
+                        "report_payload": final_result.get("report_payload"),
+                        "human_confirmation": final_result.get("human_confirmation"),
+                        "clarification": final_result.get("clarification"),
+                        "execution_trace": execution_trace,
+                        "reasoning_trace": reasoning_trace,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        )
         yield emit({"event": "done", "data": "{}"})
 
     return EventSourceResponse(event_generator())
@@ -684,14 +778,20 @@ async def hold_node_for_display(
         node_labels.get(node, node),
     )
     append_trace_event(step, progress)
-    yield sse_event({
-        "event": "node_progress",
-        "data": json.dumps({
-            "node": node,
-            "label": node_labels.get(node, node),
-            "message": progress,
-        }, ensure_ascii=False),
-    }, trace_id=trace_id)
+    yield sse_event(
+        {
+            "event": "node_progress",
+            "data": json.dumps(
+                {
+                    "node": node,
+                    "label": node_labels.get(node, node),
+                    "message": progress,
+                },
+                ensure_ascii=False,
+            ),
+        },
+        trace_id=trace_id,
+    )
     await asyncio.sleep(remaining)
 
 
@@ -702,10 +802,14 @@ def log_sse_event(event: dict) -> None:
         payload = json.loads(data) if isinstance(data, str) else data
     except json.JSONDecodeError:
         payload = data
-    logger.info("SSE event=%s data=%s", event_name, json.dumps(
-        compact_stream_log_payload(payload),
-        ensure_ascii=False,
-    ))
+    logger.info(
+        "SSE event=%s data=%s",
+        event_name,
+        json.dumps(
+            compact_stream_log_payload(payload),
+            ensure_ascii=False,
+        ),
+    )
 
 
 def compact_stream_log_payload(payload):
@@ -750,10 +854,18 @@ def format_stream_error_message(exc: Exception, label: str = "") -> str:
     error_type = exc.__class__.__name__
 
     if "missing credentials" in lowered or "api_key" in lowered:
-        reason = "大模型配置缺少 API Key；本地 OpenAI-compatible/Ollama 服务会自动使用占位 Key，请确认模型配置的 Base URL 和模型名正确。"
+        reason = (
+            "大模型配置缺少 API Key；本地 OpenAI-compatible/Ollama 服务会自动使用占位 Key，"
+            "请确认模型配置的 Base URL 和模型名正确。"
+        )
     elif "unauthorized" in lowered or "401" in lowered:
         reason = "大模型鉴权失败，请检查模型配置里的 API Key 是否启用且填写正确。"
-    elif "connection" in lowered or "connect" in lowered or "timed out" in lowered or "timeout" in lowered:
+    elif (
+        "connection" in lowered
+        or "connect" in lowered
+        or "timed out" in lowered
+        or "timeout" in lowered
+    ):
         reason = "大模型服务连接失败，请确认模型服务已启动，Base URL 可访问。"
     else:
         reason = truncate_error_detail(detail)
@@ -885,7 +997,11 @@ def summarize_trace_step(node: str, output: dict) -> str:
     if node == "python_generate":
         result = output.get("python_result") or {}
         scope = result.get("analysis_scope") or "SQL 结果集分析"
-        return f"已生成基础统计脚本 · {scope}" if output.get("python_code") or output.get("code_length") else ""
+        return (
+            f"已生成基础统计脚本 · {scope}"
+            if output.get("python_code") or output.get("code_length")
+            else ""
+        )
     if node == "python_analyze":
         result = output.get("python_result") or {}
         if result.get("status") == "success":
@@ -902,21 +1018,47 @@ def node_progress_message(node: str, index: int = 0) -> str:
     messages = {
         "intent_recognition": ["正在识别问题意图...", "正在判断是否进入问数链路..."],
         "semantic_enhance": ["正在补全省略的指标、维度和 TopN 口径..."],
-        "semantic_runtime_recall": ["正在检索知识库、匹配语义资产...", "正在整理可用指标、维度和规则..."],
-        "schema_recall": ["正在定位相关数据表、字段和关联关系...", "正在根据业务口径缩小候选 schema..."],
+        "semantic_runtime_recall": [
+            "正在检索知识库、匹配语义资产...",
+            "正在整理可用指标、维度和规则...",
+        ],
+        "schema_recall": [
+            "正在定位相关数据表、字段和关联关系...",
+            "正在根据业务口径缩小候选 schema...",
+        ],
         "clarification": ["正在判断是否需要补充查询条件..."],
-        "nl2lf_generate": ["正在调用大模型生成 LogicForm...", "正在把自然语言映射为指标、维度和过滤条件...", "正在等待模型流式返回结构化 JSON..."],
+        "nl2lf_generate": [
+            "正在调用大模型生成 LogicForm...",
+            "正在把自然语言映射为指标、维度和过滤条件...",
+            "正在等待模型流式返回结构化 JSON...",
+        ],
         "lf_validate": ["正在校验指标、维度、过滤和时间口径...", "正在确认语义资产能否编译执行..."],
-        "lf_to_sql_compile": ["正在把 LogicForm 编译成受控 SQL...", "正在解析表字段映射和关联路径..."],
-        "nl2sql_fallback": ["语义层未命中，正在调用大模型生成兜底 SQL...", "正在使用数据定位候选表约束 SQL 生成..."],
-        "semantic_check": ["正在执行 SQL 前语义一致性检查...", "正在检查指标、维度和 SQL 是否一致..."],
+        "lf_to_sql_compile": [
+            "正在把 LogicForm 编译成受控 SQL...",
+            "正在解析表字段映射和关联路径...",
+        ],
+        "nl2sql_fallback": [
+            "语义层未命中，正在调用大模型生成兜底 SQL...",
+            "正在使用数据定位候选表约束 SQL 生成...",
+        ],
+        "semantic_check": [
+            "正在执行 SQL 前语义一致性检查...",
+            "正在检查指标、维度和 SQL 是否一致...",
+        ],
         "sql_confirmation": ["正在等待用户确认是否执行 SQL..."],
         "lf_repair": ["正在根据错误尝试修复 LogicForm...", "正在调整失败的指标或维度槽位..."],
         "sql_execute": ["正在执行 SQL 查询并等待数据库返回...", "数据库仍在处理查询结果..."],
         "planner": ["正在生成后续分析计划...", "正在规划统计、解读和报告结构..."],
         "python_generate": ["正在生成结果分析代码...", "正在准备只处理 SQL 结果集的统计脚本..."],
-        "python_analyze": ["正在执行统计分析并整理结果...", "正在计算分布、极值、空值和维度样例..."],
-        "report_generator": ["正在生成最终结构化报告...", "正在写入执行摘要、过程、解读和建议...", "正在组装图表和结果明细..."],
+        "python_analyze": [
+            "正在执行统计分析并整理结果...",
+            "正在计算分布、极值、空值和维度样例...",
+        ],
+        "report_generator": [
+            "正在生成最终结构化报告...",
+            "正在写入执行摘要、过程、解读和建议...",
+            "正在组装图表和结果明细...",
+        ],
     }
     options = messages.get(node) or ["当前步骤仍在处理中..."]
     return options[index % len(options)]
@@ -934,7 +1076,7 @@ def chunk_text(text: str, chunk_size: int = ANSWER_CHUNK_SIZE) -> Iterator[str]:
     if not text:
         return
     for start in range(0, len(text), chunk_size):
-        yield text[start:start + chunk_size]
+        yield text[start : start + chunk_size]
 
 
 def _extract_node_output(node: str, output: dict) -> dict:
@@ -961,10 +1103,13 @@ def _extract_node_output(node: str, output: dict) -> dict:
             "count": len(evidence),
             "runtime_counts": {
                 "metrics": len(metrics),
-                "dimensions": len([
-                    item for item in mappings
-                    if item.get("role") in {"dimension", "filter", "time"}
-                ]),
+                "dimensions": len(
+                    [
+                        item
+                        for item in mappings
+                        if item.get("role") in {"dimension", "filter", "time"}
+                    ]
+                ),
                 "rules": len(runtime.get("rules", [])) if isinstance(runtime, dict) else 0,
                 "templates": len(runtime.get("templates", [])) if isinstance(runtime, dict) else 0,
             },
@@ -1137,7 +1282,9 @@ async def list_sessions(agent_id: int):
     db = get_management_db()
     rows = await db.execute_query(
         "SELECT session_id, MIN(created_at) AS created_at, COUNT(*) AS turn_count, "
-        "SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN role='user' THEN content END ORDER BY id), ',', 1) AS last_question "
+        "SUBSTRING_INDEX("
+        "GROUP_CONCAT(CASE WHEN role='user' THEN content END ORDER BY id), ',', 1"
+        ") AS last_question "
         "FROM chat_history WHERE agent_id = :aid "
         "GROUP BY session_id ORDER BY MAX(id) DESC LIMIT 50",
         {"aid": agent_id},
@@ -1266,7 +1413,9 @@ async def save_turn(
     try:
         await insert_assistant_turn(db, assistant_params)
     except Exception:
-        logger.exception("failed to persist full assistant chat history, retry with compact payload")
+        logger.exception(
+            "failed to persist full assistant chat history, retry with compact payload"
+        )
         try:
             await insert_assistant_turn(db, compact_assistant_history_params(assistant_params))
         except Exception:
@@ -1293,25 +1442,33 @@ def build_assistant_history_params(
         "aid": agent_id,
         "sid": session_id,
         "content": answer,
-        "reasoning_trace": json.dumps(reasoning_trace, ensure_ascii=False) if reasoning_trace else None,
+        "reasoning_trace": json.dumps(reasoning_trace, ensure_ascii=False)
+        if reasoning_trace
+        else None,
         "logic_form": json.dumps(logic_form, ensure_ascii=False) if logic_form else None,
         "compiled_sql": compiled_sql or sql or None,
         "trace": json.dumps(execution_trace, ensure_ascii=False) if execution_trace else None,
         "sql": sql or compiled_sql or None,
         "result": json.dumps(sql_result, ensure_ascii=False) if sql_result else None,
         "plan_payload": json.dumps(plan_payload, ensure_ascii=False) if plan_payload else None,
-        "semantic_check": json.dumps(semantic_check, ensure_ascii=False) if semantic_check else None,
+        "semantic_check": json.dumps(semantic_check, ensure_ascii=False)
+        if semantic_check
+        else None,
         "python_result": json.dumps(python_result, ensure_ascii=False) if python_result else None,
-        "report_payload": json.dumps(report_payload, ensure_ascii=False) if report_payload else None,
+        "report_payload": json.dumps(report_payload, ensure_ascii=False)
+        if report_payload
+        else None,
     }
 
 
 async def insert_assistant_turn(db, params: dict[str, Any]) -> None:
     await db.execute_query(
         "INSERT INTO chat_history "
-        "(agent_id, session_id, role, content, reasoning_trace, logic_form, compiled_sql, execution_trace, "
+        "(agent_id, session_id, role, content, reasoning_trace, logic_form, "
+        "compiled_sql, execution_trace, "
         "sql_text, sql_result, plan_payload, semantic_check, python_result, report_payload) "
-        "VALUES (:aid, :sid, 'assistant', :content, :reasoning_trace, :logic_form, :compiled_sql, :trace, "
+        "VALUES (:aid, :sid, 'assistant', :content, :reasoning_trace, "
+        ":logic_form, :compiled_sql, :trace, "
         ":sql, :result, :plan_payload, :semantic_check, :python_result, :report_payload)",
         params,
     )
@@ -1320,12 +1477,18 @@ async def insert_assistant_turn(db, params: dict[str, Any]) -> None:
 def compact_assistant_history_params(params: dict[str, Any]) -> dict[str, Any]:
     compacted = dict(params)
     compacted["result"] = compact_json_text(compacted.get("result"), max_chars=120000)
-    compacted["reasoning_trace"] = compact_json_text(compacted.get("reasoning_trace"), max_chars=120000)
+    compacted["reasoning_trace"] = compact_json_text(
+        compacted.get("reasoning_trace"), max_chars=120000
+    )
     compacted["trace"] = compact_json_text(compacted.get("trace"), max_chars=60000)
     compacted["plan_payload"] = compact_json_text(compacted.get("plan_payload"), max_chars=60000)
-    compacted["semantic_check"] = compact_json_text(compacted.get("semantic_check"), max_chars=60000)
+    compacted["semantic_check"] = compact_json_text(
+        compacted.get("semantic_check"), max_chars=60000
+    )
     compacted["python_result"] = compact_json_text(compacted.get("python_result"), max_chars=60000)
-    compacted["report_payload"] = compact_report_payload_text(compacted.get("report_payload"), max_chars=120000)
+    compacted["report_payload"] = compact_report_payload_text(
+        compacted.get("report_payload"), max_chars=120000
+    )
     return compacted
 
 
@@ -1354,7 +1517,9 @@ def compact_report_payload_text(value: Any, max_chars: int) -> Any:
     if isinstance(compacted, dict):
         markdown = compacted.get("markdown")
         if isinstance(markdown, str) and len(markdown) > 12000:
-            compacted["markdown"] = f"{markdown[:12000]}... [truncated {len(markdown) - 12000} chars]"
+            compacted["markdown"] = (
+                f"{markdown[:12000]}... [truncated {len(markdown) - 12000} chars]"
+            )
             compacted["body"] = compacted["markdown"]
     compacted_text = json.dumps(compacted, ensure_ascii=False)
     if len(compacted_text) <= max_chars:
@@ -1390,12 +1555,12 @@ def compact_history_value(value: Any) -> Any:
 
 
 # 注册子路由
-from app.api.agent import router as agent_router
-from app.api.datasource import router as ds_router
-from app.api.feedback import router as feedback_router
-from app.api.model_config import router as model_config_router
-from app.api.prompt import router as prompt_router
-from app.api.semantic import router as semantic_router
+from app.api.agent import router as agent_router  # noqa: E402
+from app.api.datasource import router as ds_router  # noqa: E402
+from app.api.feedback import router as feedback_router  # noqa: E402
+from app.api.model_config import router as model_config_router  # noqa: E402
+from app.api.prompt import router as prompt_router  # noqa: E402
+from app.api.semantic import router as semantic_router  # noqa: E402
 
 app.include_router(agent_router, prefix="/api/agent", tags=["智能体"])
 app.include_router(ds_router, prefix="/api/datasource", tags=["数据源"])
@@ -1409,4 +1574,6 @@ if __name__ == "__main__":
     import uvicorn
 
     settings = get_settings()
-    uvicorn.run("app.main:app", host=settings.app_host, port=settings.app_port, reload=settings.debug)
+    uvicorn.run(
+        "app.main:app", host=settings.app_host, port=settings.app_port, reload=settings.debug
+    )

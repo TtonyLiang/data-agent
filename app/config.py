@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     max_reasoning_trace_chars: int = 12000
     max_stream_text_trace_chars: int = 24000
     max_sse_log_value_chars: int = 1200
+    detailed_data_logging_enabled: bool = False
+    llm_prompt_logging_enabled: bool = True
+    sql_sample_logging_enabled: bool = False
 
     # App
     app_host: str = "0.0.0.0"
@@ -68,6 +71,9 @@ class Settings(BaseSettings):
     python_container_cpus: str = "1"
     python_container_command: str = ""
     python_firecracker_runner: str = ""
+    python_repair_enabled: bool = True
+    python_repair_max_attempts: int = 2
+    python_repair_error_chars: int = 2400
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

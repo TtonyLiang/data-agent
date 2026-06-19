@@ -51,9 +51,7 @@ class VectorStore:
         schema.add_field("metadata", DataType.JSON)
 
         index_params = MilvusClient.prepare_index_params()
-        index_params.add_index(
-            field_name="vector", index_type="AUTOINDEX", metric_type="COSINE"
-        )
+        index_params.add_index(field_name="vector", index_type="AUTOINDEX", metric_type="COSINE")
         self._client.create_collection(
             collection_name=name,
             schema=schema,

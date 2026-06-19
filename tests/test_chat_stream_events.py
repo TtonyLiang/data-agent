@@ -87,10 +87,16 @@ class SemanticEnhanceStreamGraph:
             "name": "semantic_enhance",
             "data": {
                 "output": {
-                    "enhanced_question": "查询贷款申请按申请区域分组的申请笔数，并按申请笔数降序排序，取前5个区域。",
+                    "enhanced_question": (
+                        "查询贷款申请按申请区域分组的申请笔数，"
+                        "并按申请笔数降序排序，取前5个区域。"
+                    ),
                     "semantic_enhancement": {
                         "original_question": "前五呢",
-                        "enhanced_question": "查询贷款申请按申请区域分组的申请笔数，并按申请笔数降序排序，取前5个区域。",
+                        "enhanced_question": (
+                            "查询贷款申请按申请区域分组的申请笔数，"
+                            "并按申请笔数降序排序，取前5个区域。"
+                        ),
                         "rewrite_type": "followup_resolution",
                         "preserved_constraints": ["TopN=5", "数量/笔数口径"],
                         "reason": "已结合上一轮问题补全追问。",
@@ -268,9 +274,7 @@ async def test_chat_stream_emits_final_answer_deltas_and_saves_only_final(monkey
     assert event_names.index("answer_complete") < event_names.index("result")
 
     answer = "".join(
-        json.loads(event["data"])["delta"]
-        for event in events
-        if event["event"] == "answer_delta"
+        json.loads(event["data"])["delta"] for event in events if event["event"] == "answer_delta"
     )
     assert answer == "近三个月M1+逾期率为12.34%。"
 
@@ -477,7 +481,9 @@ async def test_chat_stream_exposes_low_confidence_clarification(monkeypatch):
 
     events = [item async for item in response.body_iterator]
     result = json.loads(next(event for event in events if event["event"] == "result")["data"])
-    complete = json.loads(next(event for event in events if event["event"] == "node_complete")["data"])
+    complete = json.loads(
+        next(event for event in events if event["event"] == "node_complete")["data"]
+    )
 
     assert complete["node"] == "clarification"
     assert result["clarification"]["required"] is True
@@ -617,7 +623,9 @@ async def test_chat_stream_deduplicates_mixed_model_and_custom_tokens(monkeypatc
     )
 
     events = [item async for item in response.body_iterator]
-    token_events = [json.loads(event["data"])["delta"] for event in events if event["event"] == "token"]
+    token_events = [
+        json.loads(event["data"])["delta"] for event in events if event["event"] == "token"
+    ]
     result = json.loads(next(event for event in events if event["event"] == "result")["data"])
 
     assert token_events == ["{\n", '  "metrics":["application_count"]\n}']
@@ -654,7 +662,11 @@ async def test_chat_stream_returns_error_event_when_graph_fails(monkeypatch, cap
 
     assert events[-1]["event"] == "error"
     error_payload = json.loads(events[-1]["data"])
-    assert error_payload["message"] == "SQL 编译节点失败：大模型服务连接失败，请确认模型服务已启动，Base URL 可访问。（RuntimeError）"
+    assert (
+        error_payload["message"]
+        == "SQL 编译节点失败：大模型服务连接失败，请确认模型服务已启动，"
+        "Base URL 可访问。（RuntimeError）"
+    )
     assert error_payload["label"] == "SQL 编译"
     assert error_payload["error_type"] == "RuntimeError"
     assert error_payload["detail"] == "model connection dropped"
@@ -692,5 +704,7 @@ async def test_chat_stream_still_emits_done_when_save_turn_fails(monkeypatch, ca
     event_names = [event["event"] for event in events]
     assert "result" in event_names
     assert event_names[-1] == "done"
-    assert "history write failed" not in next(event["data"] for event in events if event["event"] == "result")
+    assert "history write failed" not in next(
+        event["data"] for event in events if event["event"] == "result"
+    )
     assert "chat stream failed" in caplog.text

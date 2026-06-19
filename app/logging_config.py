@@ -2,7 +2,6 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOG_FILE = PROJECT_ROOT / "logs" / "backend.log"
 DEFAULT_LOGGERS = ("", "app", "uvicorn", "uvicorn.error", "uvicorn.access")
@@ -13,9 +12,7 @@ def configure_file_logging(
     logger_names: list[str] | tuple[str, ...] = DEFAULT_LOGGERS,
 ) -> Path:
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    formatter = logging.Formatter(
-        "%(asctime)s %(levelname)s [%(name)s] %(message)s"
-    )
+    formatter = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
 
     for logger_name in logger_names:
         logger = logging.getLogger(logger_name)
@@ -37,8 +34,7 @@ def configure_file_logging(
 
 def _has_file_handler(logger: logging.Logger, log_file: Path) -> bool:
     return any(
-        isinstance(handler, RotatingFileHandler)
-        and Path(handler.baseFilename) == log_file
+        isinstance(handler, RotatingFileHandler) and Path(handler.baseFilename) == log_file
         for handler in logger.handlers
     )
 

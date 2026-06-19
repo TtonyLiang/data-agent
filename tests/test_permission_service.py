@@ -49,7 +49,10 @@ async def test_permission_service_filters_schema_and_masks_rows(monkeypatch):
     service = PermissionService()
     filtered = await service.filter_schema(1, 2, schema)
     assert [table["table_name"] for table in filtered] == ["loan_application_indicator"]
-    assert [column["column_name"] for column in filtered[0]["columns"]] == ["application_id", "mobile"]
+    assert [column["column_name"] for column in filtered[0]["columns"]] == [
+        "application_id",
+        "mobile",
+    ]
     assert filtered[0]["columns"][1]["masking_policy"] == "partial"
 
     ok, reason = await service.validate_sql_access(
@@ -72,7 +75,8 @@ async def test_permission_service_filters_schema_and_masks_rows(monkeypatch):
 
 def test_extract_table_references_and_mask_value():
     assert extract_table_references(
-        "SELECT t0.region FROM loan_application_indicator t0 JOIN loan_account_indicator a ON a.id=t0.id"
+        "SELECT t0.region FROM loan_application_indicator t0 "
+        "JOIN loan_account_indicator a ON a.id=t0.id"
     ) == ["loan_application_indicator", "loan_account_indicator"]
     assert mask_value("abcdef", "partial") == "ab**ef"
     assert len(mask_value("abcdef", "hash")) == 12

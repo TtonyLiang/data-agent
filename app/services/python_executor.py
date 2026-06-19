@@ -28,8 +28,7 @@ class PythonExecutionResult:
 
 
 class PythonExecutor(Protocol):
-    def execute(self, code: str, rows: list[dict[str, Any]]) -> PythonExecutionResult:
-        ...
+    def execute(self, code: str, rows: list[dict[str, Any]]) -> PythonExecutionResult: ...
 
 
 class RestrictedLocalPythonExecutor:
@@ -97,7 +96,13 @@ class RestrictedLocalPythonExecutor:
             elif isinstance(node, ast.ImportFrom):
                 self._assert_allowed_module(node.module or "")
             elif isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name) and node.func.id in {"open", "exec", "eval", "compile", "__import__"}:
+                if isinstance(node.func, ast.Name) and node.func.id in {
+                    "open",
+                    "exec",
+                    "eval",
+                    "compile",
+                    "__import__",
+                }:
                     raise PythonExecutionError(f"Python 分析代码禁止调用 {node.func.id}")
             elif isinstance(node, ast.Attribute):
                 if node.attr in {"system", "popen", "remove", "unlink", "rmdir", "mkdir"}:
@@ -123,7 +128,9 @@ class RestrictedLocalPythonExecutor:
         except (OSError, ValueError):
             pass
         try:
-            resource.setrlimit(resource.RLIMIT_CPU, (self.timeout_seconds, self.timeout_seconds + 1))
+            resource.setrlimit(
+                resource.RLIMIT_CPU, (self.timeout_seconds, self.timeout_seconds + 1)
+            )
         except (OSError, ValueError):
             pass
 
@@ -193,7 +200,9 @@ class HighIsolationPythonExecutor:
     def _execute_container(self, code: str, rows: list[dict[str, Any]]) -> PythonExecutionResult:
         runtime = "docker" if self.backend in {"docker", "container"} else "nerdctl"
         if not self.image:
-            raise PythonExecutionError(f"{self.backend} 高安全执行后端缺少 python_container_image 配置")
+            raise PythonExecutionError(
+                f"{self.backend} 高安全执行后端缺少 python_container_image 配置"
+            )
         RestrictedLocalPythonExecutor()._validate_code(code)
         with tempfile.TemporaryDirectory(prefix="wenqu-container-analysis-") as tmpdir:
             input_path = os.path.join(tmpdir, "input.json")
@@ -231,7 +240,9 @@ class HighIsolationPythonExecutor:
                     check=False,
                 )
             except FileNotFoundError as exc:
-                raise PythonExecutionError(f"{runtime} 命令不存在，请安装或改用 worker 后端。") from exc
+                raise PythonExecutionError(
+                    f"{runtime} 命令不存在，请安装或改用 worker 后端。"
+                ) from exc
             except subprocess.TimeoutExpired as exc:
                 raise PythonExecutionError(f"{self.backend} Python 执行超时") from exc
         return _python_process_result(proc)
@@ -243,7 +254,9 @@ class HighIsolationPythonExecutor:
 
     def _execute_firecracker(self, code: str, rows: list[dict[str, Any]]) -> PythonExecutionResult:
         if not self.firecracker_runner:
-            raise PythonExecutionError("firecracker 高安全执行后端缺少 python_firecracker_runner 配置")
+            raise PythonExecutionError(
+                "firecracker 高安全执行后端缺少 python_firecracker_runner 配置"
+            )
         RestrictedLocalPythonExecutor()._validate_code(code)
         try:
             proc = subprocess.run(
@@ -255,7 +268,9 @@ class HighIsolationPythonExecutor:
                 check=False,
             )
         except FileNotFoundError as exc:
-            raise PythonExecutionError("firecracker runner 命令不存在，请检查 python_firecracker_runner。") from exc
+            raise PythonExecutionError(
+                "firecracker runner 命令不存在，请检查 python_firecracker_runner。"
+            ) from exc
         except subprocess.TimeoutExpired as exc:
             raise PythonExecutionError("firecracker Python 执行超时") from exc
         return _python_process_result(proc)
@@ -276,7 +291,9 @@ def build_python_executor() -> PythonExecutor:
     backend = (settings.python_executor_backend or "local").lower()
     if backend == "local":
         if not settings.debug and not settings.allow_local_python_executor_in_production:
-            raise PythonExecutionError("生产环境禁止使用本地 Python 执行器，请配置 worker/container 后端。")
+            raise PythonExecutionError(
+                "生产环境禁止使用本地 Python 执行器，请配置 worker/container 后端。"
+            )
         return RestrictedLocalPythonExecutor(
             timeout_seconds=settings.python_executor_timeout_seconds,
             memory_mb=settings.python_executor_memory_mb,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
@@ -9,27 +10,41 @@ from langchain_core.callbacks.manager import adispatch_custom_event
 from app.agent.prompts import load_prompt
 from app.services.llm_service import get_llm_service
 from app.services.prompt_service import get_prompt_service
-
+from app.utils.logging_helpers import (
+    json_for_log,
+    log_node_end,
+    log_node_error,
+    log_node_start,
+    truncate_text,
+)
 
 SEMANTIC_ENHANCE_PROMPT = load_prompt("semantic_enhance.system.md")
+logger = logging.getLogger(__name__)
 
 
 async def semantic_enhance_node(state: dict) -> dict:
     """Rewrite the original user question into a clearer business question."""
+    log_node_start(logger, "semantic_enhance", state, keys=("trace_id", "agent_id", "question"))
     question = str(state.get("question") or "").strip()
     history = state.get("chat_history") or []
     if not question:
-        return _build_result(question, question, "no_change", [], "原始问题为空，跳过语义增强。")
+        result = _build_result(question, question, "no_change", [], "原始问题为空，跳过语义增强。")
+        log_node_end(logger, "semantic_enhance", result)
+        return result
 
     deterministic = deterministic_enhancement(question, history)
+    if deterministic:
+        logger.info("semantic enhance deterministic candidate=%s", json_for_log(deterministic))
     if deterministic and should_short_circuit_enhancement(question, deterministic):
-        return _build_result(
+        result = _build_result(
             question,
             deterministic["enhanced_question"],
             deterministic.get("rewrite_type", "clarified"),
             deterministic.get("preserved_constraints", []),
             deterministic.get("reason", "命中规则增强，跳过大模型调用。"),
         )
+        log_node_end(logger, "semantic_enhance", result)
+        return result
     try:
         llm = get_llm_service()
         llm_kwargs = await llm.resolve_agent_chat_kwargs(state.get("agent_id"))
@@ -43,9 +58,15 @@ async def semantic_enhance_node(state: dict) -> dict:
             {"role": "user", "content": build_enhancement_user_prompt(question, history)},
         ]
         content, reasoning = await llm.achat_with_reasoning(messages, **llm_kwargs)
+        logger.info(
+            "semantic enhance LLM response content=%s reasoning=%s",
+            truncate_text(content, 1600),
+            truncate_text(reasoning, 1600),
+        )
         if reasoning:
             await emit_enhancement_reasoning(reasoning)
         payload = parse_enhancement_response(content)
+        logger.info("semantic enhance parsed payload=%s", json_for_log(payload))
         enhanced = guard_enhanced_question(
             question,
             history,
@@ -61,31 +82,40 @@ async def semantic_enhance_node(state: dict) -> dict:
             rewrite_type = deterministic.get("rewrite_type", "followup_resolution")
             reason = deterministic.get("reason", reason)
             preserved = deterministic.get("preserved_constraints", preserved)
-        return _build_result(question, enhanced, rewrite_type, preserved, reason)
+        result = _build_result(question, enhanced, rewrite_type, preserved, reason)
+        log_node_end(logger, "semantic_enhance", result)
+        return result
     except Exception as exc:
+        log_node_error(logger, "semantic_enhance", exc, state)
         if deterministic:
-            return _build_result(
+            result = _build_result(
                 question,
                 deterministic["enhanced_question"],
                 deterministic.get("rewrite_type", "clarified"),
                 deterministic.get("preserved_constraints", []),
                 f"大模型语义增强失败，使用规则兜底: {exc}",
             )
-        return _build_result(
+            log_node_end(logger, "semantic_enhance", result)
+            return result
+        result = _build_result(
             question,
             question,
             "no_change",
             extract_preserved_constraints(question, question),
             f"大模型语义增强失败，保留原问题: {exc}",
         )
+        log_node_end(logger, "semantic_enhance", result)
+        return result
 
 
 def build_enhancement_user_prompt(question: str, history: list[dict]) -> str:
+    """Assemble recent dialogue and the raw question for the semantic enhancement model."""
     history_text = render_recent_history(history)
     return f"最近对话：\n{history_text}\n\n当前原始问题：{question}"
 
 
 def render_recent_history(history: list[dict], limit: int = 6) -> str:
+    """Render recent turns into compact text while preserving SQL and LogicForm markers."""
     if not history:
         return "无"
     lines = []
@@ -104,6 +134,7 @@ def render_recent_history(history: list[dict], limit: int = 6) -> str:
 
 
 def parse_enhancement_response(response: str) -> dict[str, Any]:
+    """Parse model output as JSON, falling back to treating plain text as the rewrite."""
     text = strip_code_fence(str(response or "").strip())
     if not text:
         return {}
@@ -115,6 +146,7 @@ def parse_enhancement_response(response: str) -> dict[str, Any]:
 
 
 def strip_code_fence(text: str) -> str:
+    """Remove a Markdown code fence around model output when present."""
     if "```" not in text:
         return text
     body = text.split("```", 2)[1].strip()
@@ -124,6 +156,7 @@ def strip_code_fence(text: str) -> str:
 
 
 def deterministic_enhancement(question: str, history: list[dict]) -> dict[str, Any] | None:
+    """Handle common follow-up and domain rewrite cases with deterministic rules."""
     top_limit = extract_followup_top_limit(question)
     previous = last_user_data_question(history)
     if top_limit and previous:
@@ -156,6 +189,7 @@ def deterministic_enhancement(question: str, history: list[dict]) -> dict[str, A
 
 
 def should_short_circuit_enhancement(question: str, deterministic: dict[str, Any]) -> bool:
+    """Decide whether a deterministic rewrite is reliable enough to skip the model."""
     rewrite_type = str(deterministic.get("rewrite_type") or "")
     constraints = set(deterministic.get("preserved_constraints") or [])
     if rewrite_type == "followup_resolution":
@@ -163,7 +197,9 @@ def should_short_circuit_enhancement(question: str, deterministic: dict[str, Any
     if "数量/笔数口径" in constraints and "区域/地区维度" in constraints:
         return True
     compact = compact_text(question)
-    return bool("申请" in compact and contains_count_intent(question) and contains_region_intent(question))
+    return bool(
+        "申请" in compact and contains_count_intent(question) and contains_region_intent(question)
+    )
 
 
 def guard_enhanced_question(
@@ -172,6 +208,7 @@ def guard_enhanced_question(
     candidate: str,
     deterministic: dict[str, Any] | None,
 ) -> str:
+    """Validate the model rewrite and fall back if it emits SQL or loses constraints."""
     cleaned = clean_enhanced_question(candidate)
     if not cleaned:
         return deterministic["enhanced_question"] if deterministic else question
@@ -184,15 +221,24 @@ def guard_enhanced_question(
         if not contains_top_limit(cleaned, top_limit):
             return deterministic["enhanced_question"]
         previous_limit = extract_top_limit(last_user_data_question(history) or "")
-        if previous_limit and previous_limit != top_limit and contains_top_limit(cleaned, previous_limit):
+        if (
+            previous_limit
+            and previous_limit != top_limit
+            and contains_top_limit(cleaned, previous_limit)
+        ):
             return deterministic["enhanced_question"]
 
     if is_count_correction(question) and not contains_count_intent(cleaned):
-        return deterministic["enhanced_question"] if deterministic else f"{cleaned}，统计口径为笔数/数量，不是金额。"
+        return (
+            deterministic["enhanced_question"]
+            if deterministic
+            else f"{cleaned}，统计口径为笔数/数量，不是金额。"
+        )
     return cleaned
 
 
 def clean_enhanced_question(text: str) -> str:
+    """Normalize a candidate enhanced question into a compact natural-language sentence."""
     cleaned = str(text or "").strip().strip('"').strip("'")
     cleaned = re.sub(r"^增强后的?问题[:：]\s*", "", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
@@ -200,6 +246,7 @@ def clean_enhanced_question(text: str) -> str:
 
 
 def common_business_rewrite(question: str) -> str | None:
+    """Rewrite high-confidence business patterns without waiting for an LLM."""
     compact = compact_text(question)
     top_limit = extract_top_limit(question)
     if "申请" in compact and contains_count_intent(question) and contains_trend_intent(question):
@@ -215,6 +262,7 @@ def common_business_rewrite(question: str) -> str | None:
 
 
 def replace_top_limit(previous_question: str, limit: int) -> str:
+    """Apply a new TopN limit to the previous full data question."""
     marker = f"前{number_to_chinese(limit)}"
     text = str(previous_question or "").strip()
     if not text:
@@ -229,6 +277,7 @@ def replace_top_limit(previous_question: str, limit: int) -> str:
 
 
 def force_count_metric(previous_question: str) -> str:
+    """Force a previous question to use count/volume semantics instead of amount."""
     text = str(previous_question or "").strip()
     if not text:
         return "延续上一轮问题，但统计口径改为笔数/数量，不是金额。"
@@ -238,6 +287,7 @@ def force_count_metric(previous_question: str) -> str:
 
 
 def extract_preserved_constraints(question: str, enhanced: str) -> list[str]:
+    """Collect key constraints that should remain visible after question rewriting."""
     text = f"{question} {enhanced}"
     constraints = []
     top_limit = extract_top_limit(text)
@@ -254,6 +304,7 @@ def extract_preserved_constraints(question: str, enhanced: str) -> list[str]:
 
 
 def extract_followup_top_limit(question: str) -> int | None:
+    """Extract TopN from short follow-ups such as 前五呢."""
     compact = compact_text(question)
     limit = extract_top_limit(compact)
     if not limit:
@@ -262,6 +313,7 @@ def extract_followup_top_limit(question: str) -> int | None:
 
 
 def extract_top_limit(text: str) -> int | None:
+    """Extract numeric or Chinese TopN limits from text."""
     compact = compact_text(text)
     match = re.search(r"(?:top|前)(\d{1,3})", compact, flags=re.IGNORECASE)
     if match:
@@ -273,12 +325,14 @@ def extract_top_limit(text: str) -> int | None:
 
 
 def contains_top_limit(text: str, limit: int) -> bool:
+    """Return true when text contains the expected TopN value."""
     compact = compact_text(text)
     chinese = number_to_chinese(limit)
     return f"前{limit}" in compact or f"top{limit}" in compact or f"前{chinese}" in compact
 
 
 def last_user_data_question(history: list[dict]) -> str:
+    """Return the latest user message that appears to contain a data query."""
     for item in reversed(history or []):
         if item.get("role") != "user":
             continue
@@ -287,12 +341,15 @@ def last_user_data_question(history: list[dict]) -> str:
             return content
     for item in reversed(history or []):
         content = str(item.get("content") or "").strip()
-        if content and (item.get("logic_form") or item.get("sql") or looks_like_data_context(content)):
+        if content and (
+            item.get("logic_form") or item.get("sql") or looks_like_data_context(content)
+        ):
             return content
     return ""
 
 
 def looks_like_data_context(text: str) -> bool:
+    """Heuristically identify whether text carries data-query context."""
     compact = compact_text(text)
     return any(
         token in compact
@@ -322,6 +379,7 @@ def looks_like_data_context(text: str) -> bool:
 
 
 def is_count_correction(question: str) -> bool:
+    """Detect user corrections that clarify they wanted count rather than amount."""
     compact = compact_text(question)
     return (
         "不是金额" in compact
@@ -332,31 +390,48 @@ def is_count_correction(question: str) -> bool:
 
 
 def contains_count_intent(text: str) -> bool:
+    """Detect words that indicate count or quantity semantics."""
     compact = compact_text(text)
-    return any(token in compact for token in ("笔数", "多少笔", "几笔", "数量", "申请数", "申请量", "进件量", "count"))
+    return any(
+        token in compact
+        for token in ("笔数", "多少笔", "几笔", "数量", "申请数", "申请量", "进件量", "count")
+    )
 
 
 def contains_region_intent(text: str) -> bool:
+    """Detect region or area grouping intent."""
     compact = compact_text(text)
     return any(token in compact for token in ("区域", "地区", "region", "area"))
 
 
 def contains_product_type_intent(text: str) -> bool:
+    """Detect product-type grouping or filtering intent."""
     compact = compact_text(text)
-    return any(token in compact for token in ("产品类型", "贷款产品", "产品", "producttype", "product"))
+    return any(
+        token in compact for token in ("产品类型", "贷款产品", "产品", "producttype", "product")
+    )
 
 
 def contains_bucketed_loan_intent(text: str) -> bool:
+    """Detect bucketed loan-amount grouping intent."""
     compact = compact_text(text)
-    return any(token in compact for token in ("各个贷款", "各类贷款", "不同贷款", "每种贷款", "各贷款", "各项贷款"))
+    return any(
+        token in compact
+        for token in ("各个贷款", "各类贷款", "不同贷款", "每种贷款", "各贷款", "各项贷款")
+    )
 
 
 def contains_trend_intent(text: str) -> bool:
+    """Detect trend or time-series wording."""
     compact = compact_text(text)
-    return any(token in compact for token in ("变化", "趋势", "走势", "波动", "按月", "按日", "同比", "环比", "trend"))
+    return any(
+        token in compact
+        for token in ("变化", "趋势", "走势", "波动", "按月", "按日", "同比", "环比", "trend")
+    )
 
 
 def chinese_number_to_int(text: str) -> int | None:
+    """Convert small Chinese numerals used in TopN expressions into integers."""
     digits = {
         "一": 1,
         "二": 2,
@@ -383,6 +458,7 @@ def chinese_number_to_int(text: str) -> int | None:
 
 
 def number_to_chinese(value: int | None) -> str:
+    """Render a small integer as Chinese text for natural rewritten questions."""
     if value is None:
         return ""
     digits = {
@@ -403,10 +479,12 @@ def number_to_chinese(value: int | None) -> str:
 
 
 def compact_text(text: str) -> str:
+    """Lowercase and remove whitespace to simplify mixed Chinese/English keyword checks."""
     return re.sub(r"\s+", "", str(text or "")).lower()
 
 
 def unique_list(values: list[str]) -> list[str]:
+    """Deduplicate strings while preserving their first-seen order."""
     result = []
     for value in values:
         if value and value not in result:
@@ -415,6 +493,7 @@ def unique_list(values: list[str]) -> list[str]:
 
 
 async def emit_enhancement_reasoning(delta: str) -> None:
+    """Emit semantic-enhancement reasoning chunks to the LangGraph custom event stream."""
     try:
         await adispatch_custom_event(
             "wenqu_token",
@@ -435,11 +514,14 @@ def _build_result(
     preserved_constraints: list[Any],
     reason: str,
 ) -> dict[str, Any]:
+    """Build the graph state update produced by semantic enhancement."""
     payload = {
         "original_question": original_question,
         "enhanced_question": enhanced_question or original_question,
         "rewrite_type": rewrite_type,
-        "preserved_constraints": [str(item) for item in preserved_constraints if str(item or "").strip()],
+        "preserved_constraints": [
+            str(item) for item in preserved_constraints if str(item or "").strip()
+        ],
         "reason": reason,
     }
     return {

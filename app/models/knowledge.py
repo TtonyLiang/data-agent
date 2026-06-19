@@ -3,7 +3,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
 AssetType = Literal["concept", "relation", "metric", "rule", "mapping", "template"]
 
 

@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 
 from langchain_core.callbacks.manager import adispatch_custom_event
@@ -7,21 +8,41 @@ from app.agent.prompts import load_prompt
 from app.models.knowledge import LogicFilter, LogicForm, LogicSort
 from app.services.llm_service import get_llm_service
 from app.services.prompt_service import get_prompt_service
-
+from app.utils.logging_helpers import (
+    json_for_log,
+    log_node_end,
+    log_node_error,
+    log_node_start,
+    truncate_text,
+)
 
 NL2LF_PROMPT = load_prompt("nl2lf_generate.system.md")
+logger = logging.getLogger(__name__)
 
 
 async def nl2lf_generate_node(state: dict) -> dict:
     """把自然语言问题转换为 LogicForm。"""
+    log_node_start(
+        logger,
+        "nl2lf_generate",
+        state,
+        keys=("trace_id", "agent_id", "question", "enhanced_question", "semantic_error"),
+    )
     if state.get("semantic_error"):
-        return {"logic_form": None}
+        result = {"logic_form": None}
+        log_node_end(logger, "nl2lf_generate", result)
+        return result
 
     question = state.get("enhanced_question") or state.get("question", "")
     original_question = state.get("question", question)
     runtime = state.get("semantic_runtime") or {}
     history = state.get("chat_history", [])
     runtime_context = build_runtime_context(runtime)
+    logger.info(
+        "nl2lf runtime context chars=%s context=%s",
+        len(runtime_context),
+        truncate_text(runtime_context, 1600),
+    )
 
     try:
         llm = get_llm_service()
@@ -51,16 +72,26 @@ async def nl2lf_generate_node(state: dict) -> dict:
             response_parts.append(content)
             await emit_node_delta("nl2lf_generate", content, kind="token")
         response = "".join(response_parts)
+        logger.info("nl2lf LLM raw response=%s", truncate_text(response, 2400))
         logic_form = parse_logic_form(response)
-    except Exception:
+        logger.info("nl2lf parsed logic_form=%s", json_for_log(logic_form.model_dump()))
+    except Exception as exc:
+        log_node_error(logger, "nl2lf_generate", exc, state)
         logic_form = fallback_logic_form(question)
+        logger.info("nl2lf fallback logic_form=%s", json_for_log(logic_form.model_dump()))
 
     if not logic_form.metrics:
         logic_form = fallback_logic_form(question)
+        logger.info(
+            "nl2lf empty metrics fallback logic_form=%s", json_for_log(logic_form.model_dump())
+        )
 
     logic_form = normalize_logic_form(question, logic_form, history)
+    logger.info("nl2lf normalized logic_form=%s", json_for_log(logic_form.model_dump()))
 
-    return {"logic_form": logic_form.model_dump()}
+    result = {"logic_form": logic_form.model_dump()}
+    log_node_end(logger, "nl2lf_generate", result)
+    return result
 
 
 def normalize_logic_form(
@@ -110,13 +141,16 @@ def normalize_logic_form(
     if high_pd_segment:
         filters = [
             item.model_copy(update={"value": normalize_risk_grade_value(item.value)})
-            if item.field == "risk_grade" else item
+            if item.field == "risk_grade"
+            else item
             for item in filters
         ]
     if high_pd_segment:
         dimensions = [item for item in dimensions if item != "risk_grade"]
 
-    preserve_inferred_trend_window = asks_application_count and asks_trend and grain in {"month", "day"}
+    preserve_inferred_trend_window = (
+        asks_application_count and asks_trend and grain in {"month", "day"}
+    )
     if time_range and not has_explicit_time_range(question) and not preserve_inferred_trend_window:
         time_range = None
 
@@ -137,6 +171,7 @@ def normalize_logic_form(
 
 
 async def emit_node_delta(node: str, delta: str, kind: str) -> None:
+    """Emit NL2LF token or reasoning deltas to the graph event stream."""
     try:
         await adispatch_custom_event(
             "wenqu_token",
@@ -153,6 +188,7 @@ async def emit_node_delta(node: str, delta: str, kind: str) -> None:
 
 
 def contextual_question_text(question: str, history: list[dict] | None = None) -> str:
+    """Combine recent dialogue with current question for follow-up-sensitive rules."""
     if not history:
         return question
     recent = " ".join(str(item.get("content", "")) for item in history[-4:])
@@ -160,6 +196,7 @@ def contextual_question_text(question: str, history: list[dict] | None = None) -
 
 
 def is_application_count_question(text: str) -> bool:
+    """Detect whether the user asks for loan-application count semantics."""
     compact = text.lower().replace(" ", "")
     has_application = any(token in compact for token in ("贷款申请", "申请", "进件"))
     asks_count = any(
@@ -175,36 +212,55 @@ def is_application_count_question(text: str) -> bool:
             "count",
         )
     )
-    asks_application_ranking = has_application and any(token in compact for token in ("最多", "排名", "排行", "top"))
-    correction_to_count = any(token in compact for token in ("问的是笔数", "要的是笔数", "不是金额", "为什么查出来的是金额"))
+    asks_application_ranking = has_application and any(
+        token in compact for token in ("最多", "排名", "排行", "top")
+    )
+    correction_to_count = any(
+        token in compact
+        for token in ("问的是笔数", "要的是笔数", "不是金额", "为什么查出来的是金额")
+    )
     return has_application and (asks_count or asks_application_ranking or correction_to_count)
 
 
 def mentions_region(text: str) -> bool:
+    """Detect region dimension mentions."""
     compact = text.lower().replace(" ", "")
     return any(token in compact for token in ("地区", "区域", "region"))
 
 
 def mentions_product_type(text: str) -> bool:
+    """Detect product-type dimension mentions."""
     compact = text.lower().replace(" ", "")
-    return any(token in compact for token in ("产品类型", "贷款产品", "产品", "producttype", "product"))
+    return any(
+        token in compact for token in ("产品类型", "贷款产品", "产品", "producttype", "product")
+    )
 
 
 def mentions_bucketed_loan(text: str) -> bool:
+    """Detect loan bucket or loan-type dimension mentions."""
     compact = text.lower().replace(" ", "")
-    return any(token in compact for token in ("各个贷款", "各类贷款", "不同贷款", "每种贷款", "各贷款", "各项贷款"))
+    return any(
+        token in compact
+        for token in ("各个贷款", "各类贷款", "不同贷款", "每种贷款", "各贷款", "各项贷款")
+    )
 
 
 def asks_ranking(compact_text: str) -> bool:
+    """Detect ranking or TopN intent."""
     return any(token in compact_text for token in ("最多", "排名", "排行", "top", "前"))
 
 
 def asks_trend_question(text: str) -> bool:
+    """Detect trend or time-series intent."""
     compact = text.lower().replace(" ", "")
-    return any(token in compact for token in ("变化", "趋势", "走势", "波动", "按月", "按日", "同比", "环比", "trend"))
+    return any(
+        token in compact
+        for token in ("变化", "趋势", "走势", "波动", "按月", "按日", "同比", "环比", "trend")
+    )
 
 
 def extract_top_limit(compact_text: str) -> int | None:
+    """Extract numeric or Chinese TopN limits from compact text."""
     match = re.search(r"(?:top|前)(\d{1,3})", compact_text)
     if match:
         return int(match.group(1))
@@ -228,6 +284,7 @@ def extract_top_limit(compact_text: str) -> int | None:
 
 
 def normalize_application_count_filters(filters: list[LogicFilter]) -> list[LogicFilter]:
+    """Map generic filters to application-count-specific asset keys."""
     normalized = []
     for item in filters:
         if item.field == "product_type":
@@ -240,6 +297,7 @@ def normalize_application_count_filters(filters: list[LogicFilter]) -> list[Logi
 
 
 def normalize_application_count_dimensions(dimensions: list[str]) -> list[str]:
+    """Map generic dimensions to application-count-specific asset keys."""
     normalized: list[str] = []
     mapping = {
         "region": "application_region",
@@ -252,7 +310,12 @@ def normalize_application_count_dimensions(dimensions: list[str]) -> list[str]:
 
 
 def infer_application_count_dimension(text: str, dimensions: list[str]) -> str | None:
-    if "application_product_type" in dimensions or mentions_product_type(text) or mentions_bucketed_loan(text):
+    """Choose the best application-count dimension from question text."""
+    if (
+        "application_product_type" in dimensions
+        or mentions_product_type(text)
+        or mentions_bucketed_loan(text)
+    ):
         return "application_product_type"
     if "application_region" in dimensions or mentions_region(text):
         return "application_region"
@@ -262,6 +325,7 @@ def infer_application_count_dimension(text: str, dimensions: list[str]) -> str |
 
 
 def has_explicit_time_range(question: str) -> bool:
+    """Return true when the question explicitly states a time window."""
     return bool(
         re.search(r"\d{4}[-年]", question)
         or any(
@@ -285,6 +349,7 @@ def has_explicit_time_range(question: str) -> bool:
 
 
 def normalize_risk_grade_value(value):
+    """Normalize risk-grade synonyms to configured grade values."""
     text = str(value).strip().lower()
     if text in {"high", "高", "高风险", "d", "4"}:
         return "D"
@@ -298,6 +363,7 @@ def normalize_risk_grade_value(value):
 
 
 def build_runtime_context(runtime: dict) -> str:
+    """Serialize the semantic runtime subset used by the NL2LF prompt."""
     metrics = [
         {
             "metric_key": item.get("metric_key"),
@@ -318,7 +384,11 @@ def build_runtime_context(runtime: dict) -> str:
         if item.get("role") in {"dimension", "filter", "time"}
     ]
     rules = [
-        {"rule_key": item.get("rule_key"), "name": item.get("name"), "description": item.get("description")}
+        {
+            "rule_key": item.get("rule_key"),
+            "name": item.get("name"),
+            "description": item.get("description"),
+        }
         for item in runtime.get("rules", [])
     ]
     return json.dumps(
@@ -327,7 +397,10 @@ def build_runtime_context(runtime: dict) -> str:
     )
 
 
-def build_user_prompt(question: str, history: list[dict], original_question: str | None = None) -> str:
+def build_user_prompt(
+    question: str, history: list[dict], original_question: str | None = None
+) -> str:
+    """Build the user message for NL2LF from history and enhanced question."""
     if not history:
         if original_question and original_question != question:
             return f"原始问题: {original_question}\n语义增强后的问题: {question}"
@@ -343,6 +416,7 @@ def build_user_prompt(question: str, history: list[dict], original_question: str
 
 
 def parse_logic_form(response: str) -> LogicForm:
+    """Parse a LogicForm JSON response from model output."""
     text = response.strip()
     if "```" in text:
         text = text.split("```", 2)[1]
@@ -352,6 +426,7 @@ def parse_logic_form(response: str) -> LogicForm:
 
 
 def fallback_logic_form(question: str) -> LogicForm:
+    """Produce a deterministic LogicForm when model parsing fails."""
     normalized = question.lower()
     compact = normalized.replace(" ", "")
     filters = []
@@ -386,12 +461,16 @@ def fallback_logic_form(question: str) -> LogicForm:
                 time_range = {"type": "relative", "period": "recent_3_months"}
         elif dimension:
             dimensions = [dimension]
-        sort = [{"field": "application_count", "direction": "desc"}] if asks_ranking(compact) else []
+        sort = (
+            [{"field": "application_count", "direction": "desc"}] if asks_ranking(compact) else []
+        )
         limit = extract_top_limit(compact) or limit
         filters = [
             {
                 **item,
-                "field": "application_product_type" if item.get("field") == "product_type" else item.get("field"),
+                "field": "application_product_type"
+                if item.get("field") == "product_type"
+                else item.get("field"),
             }
             for item in filters
         ]

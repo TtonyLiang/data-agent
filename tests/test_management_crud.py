@@ -3,12 +3,16 @@ import pytest
 from app.api import agent as agent_api
 from app.api import datasource as datasource_api
 from app.api import model_config as model_config_api
-from app.services import model_config_service
-from app.models.agent import AgentCreate
 from app.models import datasource as datasource_model
+from app.models.agent import AgentCreate
 from app.models.model_config import ModelConfigCreate, ModelConfigUpdate
+from app.services import model_config_service
 from app.services.datasource_service import DatasourceService
-from app.services.model_config_service import ModelConfigService, _public_model_config, api_key_expiry_flags
+from app.services.model_config_service import (
+    ModelConfigService,
+    _public_model_config,
+    api_key_expiry_flags,
+)
 
 
 class RecordingDB:
@@ -74,7 +78,9 @@ async def test_update_agent_updates_fields_and_does_not_return_api_key(monkeypat
         ),
     )
 
-    update_sql, update_params = next((sql, params) for sql, params in db.queries if "UPDATE agent" in sql)
+    update_sql, update_params = next(
+        (sql, params) for sql, params in db.queries if "UPDATE agent" in sql
+    )
     assert "chat_model_config_id" in update_sql
     assert "semantic_domain_id" in update_sql
     assert update_params["chat_model_config_id"] == 11
@@ -201,7 +207,9 @@ async def test_model_config_api_does_not_return_api_key(monkeypatch):
                 }
             ]
 
-    monkeypatch.setattr(model_config_api, "get_model_config_service", lambda: FakeModelConfigService())
+    monkeypatch.setattr(
+        model_config_api, "get_model_config_service", lambda: FakeModelConfigService()
+    )
 
     created = await model_config_api.create_model_config(
         ModelConfigCreate(
@@ -276,7 +284,9 @@ async def test_model_config_update_preserves_api_key_when_form_leaves_it_blank(m
         ),
     )
 
-    update_sql, update_params = next((sql, params) for sql, params in db.queries if sql.startswith("UPDATE model_config"))
+    update_sql, update_params = next(
+        (sql, params) for sql, params in db.queries if sql.startswith("UPDATE model_config")
+    )
     assert "api_key = :api_key" in update_sql
     assert update_params["api_key"] == "existing-secret"
     assert updated.api_key == "existing-secret"
@@ -325,7 +335,9 @@ async def test_model_config_update_replaces_api_key_when_new_value_is_entered(mo
         ),
     )
 
-    update_params = next(params for sql, params in db.queries if sql.startswith("UPDATE model_config"))
+    update_params = next(
+        params for sql, params in db.queries if sql.startswith("UPDATE model_config")
+    )
     assert update_params["api_key"] == "new-secret"
 
 

@@ -1,5 +1,5 @@
-import logging
 import asyncio
+import logging
 import time
 from types import SimpleNamespace
 
@@ -12,6 +12,8 @@ def test_llm_service_logs_prompt_messages(caplog):
         llm_model="qwen3:14b",
         max_llm_prompt_log_chars=8000,
         llm_cache_enabled=False,
+        detailed_data_logging_enabled=False,
+        llm_prompt_logging_enabled=True,
     )
     messages = [
         {"role": "system", "content": "系统提示词"},
@@ -24,16 +26,41 @@ def test_llm_service_logs_prompt_messages(caplog):
     log_text = caplog.text
     assert "LLM request" in log_text
     assert "model=qwen3:14b" in log_text
-    assert "[system] 系统提示词" in log_text
-    assert "[user] 用户问题" in log_text
+    assert '"role": "system"' in log_text
+    assert '"chars": 5' in log_text
+    assert "[system] 系统提示词" not in log_text
+    assert "[user] 用户问题" not in log_text
 
 
-def test_llm_service_truncates_prompt_logs(caplog):
+def test_llm_service_logs_prompt_preview_when_detailed_logging_enabled(caplog):
+    service = LLMService()
+    service._settings = SimpleNamespace(
+        llm_model="qwen3:14b",
+        max_llm_prompt_log_chars=8000,
+        llm_cache_enabled=False,
+        detailed_data_logging_enabled=True,
+        llm_prompt_logging_enabled=True,
+    )
+    messages = [
+        {"role": "system", "content": "系统提示词"},
+        {"role": "user", "content": "用户问题"},
+    ]
+
+    with caplog.at_level(logging.INFO, logger="app.services.llm_service"):
+        service.log_prompt_messages(messages, model="qwen3:14b", streaming=False)
+
+    assert "[system] 系统提示词" in caplog.text
+    assert "[user] 用户问题" in caplog.text
+
+
+def test_llm_service_truncates_prompt_logs_when_detailed_logging_enabled(caplog):
     service = LLMService()
     service._settings = SimpleNamespace(
         llm_model="qwen3:14b",
         max_llm_prompt_log_chars=24,
         llm_cache_enabled=False,
+        detailed_data_logging_enabled=True,
+        llm_prompt_logging_enabled=True,
     )
 
     with caplog.at_level(logging.INFO, logger="app.services.llm_service"):
@@ -114,6 +141,8 @@ def test_llm_service_achat_uses_short_ttl_cache(monkeypatch):
         llm_cache_ttl_seconds=300,
         llm_cache_max_items=16,
         max_llm_prompt_log_chars=8000,
+        detailed_data_logging_enabled=False,
+        llm_prompt_logging_enabled=True,
     )
     monkeypatch.setattr(service, "get_client", lambda **kwargs: fake_client)
 

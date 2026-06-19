@@ -1,6 +1,6 @@
+from app.agent.nodes import semantic_runtime_recall
 from app.agent.nodes.nl2lf_generate import fallback_logic_form, normalize_logic_form
 from app.agent.nodes.semantic_enhance import deterministic_enhancement
-from app.agent.nodes import semantic_runtime_recall
 from app.models.knowledge import (
     LogicForm,
     LogicFormTemplate,
@@ -128,7 +128,9 @@ def test_semantic_runtime_recall_prefers_agent_bound_domain(monkeypatch):
         def search(self, agent_id, query_vector):
             return []
 
-    monkeypatch.setattr(semantic_runtime_recall, "get_semantic_runtime_service", lambda: FakeService())
+    monkeypatch.setattr(
+        semantic_runtime_recall, "get_semantic_runtime_service", lambda: FakeService()
+    )
     monkeypatch.setattr(semantic_runtime_recall, "get_embedding_service", lambda: FakeEmbedding())
     monkeypatch.setattr(semantic_runtime_recall, "get_vector_store", lambda: FakeVectorStore())
 

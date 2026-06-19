@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 from app.db.mysql import get_management_db
 from app.models.knowledge import (
     CompiledQuery,
-    LogicFilter,
     LogicForm,
     LogicFormTemplate,
     LogicFormValidation,
-    LogicSort,
     SemanticConcept,
     SemanticDomain,
     SemanticMapping,
@@ -20,6 +19,9 @@ from app.models.knowledge import (
     SemanticRule,
     SemanticRuntime,
 )
+from app.utils.logging_helpers import json_for_log, truncate_text
+
+logger = logging.getLogger(__name__)
 
 
 JSON_FIELDS: dict[str, tuple[str, ...]] = {
@@ -51,6 +53,7 @@ class SemanticRuntimeService:
     """语义运行时服务：结构化资产读取、校验和 LogicForm 编译。"""
 
     async def list_domains(self, agent_id: int) -> list[SemanticDomain]:
+        """List semantic domains owned by an agent."""
         db = get_management_db()
         rows = await db.execute_query(
             "SELECT * FROM semantic_domain WHERE agent_id = :aid ORDER BY id ASC",
@@ -59,13 +62,13 @@ class SemanticRuntimeService:
         return [SemanticDomain(**row) for row in rows]
 
     async def list_all_domains(self) -> list[SemanticDomain]:
+        """List all semantic domains for administration screens."""
         db = get_management_db()
-        rows = await db.execute_query(
-            "SELECT * FROM semantic_domain ORDER BY id ASC"
-        )
+        rows = await db.execute_query("SELECT * FROM semantic_domain ORDER BY id ASC")
         return [SemanticDomain(**row) for row in rows]
 
     async def get_domain(self, domain_id: int) -> SemanticDomain | None:
+        """Load one semantic domain by id."""
         db = get_management_db()
         rows = await db.execute_query(
             "SELECT * FROM semantic_domain WHERE id = :id",
@@ -79,6 +82,7 @@ class SemanticRuntimeService:
         domain_key: str = "loan_risk",
         datasource_id: int | None = None,
     ) -> SemanticDomain | None:
+        """Find the best active semantic domain for agent, key, and optional datasource."""
         db = get_management_db()
         params: dict[str, Any] = {"aid": agent_id, "domain_key": domain_key}
         datasource_filter = ""
@@ -94,6 +98,7 @@ class SemanticRuntimeService:
         return SemanticDomain(**rows[0]) if rows else None
 
     async def get_agent_bound_domain(self, agent_id: int) -> SemanticDomain | None:
+        """Load the semantic domain explicitly selected on an agent."""
         db = get_management_db()
         rows = await db.execute_query(
             "SELECT sd.* FROM agent a "
@@ -104,6 +109,7 @@ class SemanticRuntimeService:
         return SemanticDomain(**rows[0]) if rows else None
 
     async def upsert_domain(self, data: dict[str, Any]) -> int:
+        """Create or update a semantic domain while preserving unique domain keys per agent."""
         db = get_management_db()
         domain = SemanticDomain(**data)
         params = {
@@ -137,7 +143,8 @@ class SemanticRuntimeService:
             return int(domain.id)
 
         existing = await db.execute_query(
-            "SELECT id FROM semantic_domain WHERE agent_id = :agent_id AND domain_key = :domain_key",
+            "SELECT id FROM semantic_domain "
+            "WHERE agent_id = :agent_id AND domain_key = :domain_key",
             {"agent_id": domain.agent_id, "domain_key": domain.domain_key},
         )
         if existing:
@@ -155,6 +162,7 @@ class SemanticRuntimeService:
         )
 
     async def delete_domain(self, domain_id: int) -> bool:
+        """Delete a semantic domain and all child semantic assets."""
         db = get_management_db()
         existing = await db.execute_query(
             "SELECT id FROM semantic_domain WHERE id = :id",
@@ -185,6 +193,7 @@ class SemanticRuntimeService:
         return True
 
     async def export_domain_bundle(self, domain_id: int) -> dict[str, Any]:
+        """Export a semantic domain and its assets as a portable bundle."""
         domain = await self.get_domain(domain_id)
         if domain is None:
             raise ValueError("语义领域不存在")
@@ -197,6 +206,7 @@ class SemanticRuntimeService:
         }
 
     async def copy_domain(self, domain_id: int, payload: dict[str, Any]) -> int:
+        """Clone a semantic domain bundle into a new domain."""
         bundle = await self.export_domain_bundle(domain_id)
         source = bundle["domain"]
         new_domain = {
@@ -212,6 +222,7 @@ class SemanticRuntimeService:
         return int(new_id)
 
     async def import_domain_bundle(self, bundle: dict[str, Any]) -> int:
+        """Import a semantic domain bundle into management storage."""
         domain = dict(bundle.get("domain") or {})
         if not domain:
             raise ValueError("导入文件缺少 domain")
@@ -219,7 +230,8 @@ class SemanticRuntimeService:
             domain.pop(field, None)
         db = get_management_db()
         duplicate = await db.execute_query(
-            "SELECT id FROM semantic_domain WHERE agent_id = :agent_id AND domain_key = :domain_key",
+            "SELECT id FROM semantic_domain "
+            "WHERE agent_id = :agent_id AND domain_key = :domain_key",
             {"agent_id": domain.get("agent_id"), "domain_key": domain.get("domain_key")},
         )
         if duplicate:
@@ -229,6 +241,7 @@ class SemanticRuntimeService:
         return int(new_id)
 
     async def validate_domain_assets(self, domain_id: int) -> dict[str, Any]:
+        """Validate configured semantic assets against collected schema and references."""
         domain = await self.get_domain(domain_id)
         if domain is None:
             raise ValueError("语义领域不存在")
@@ -243,8 +256,7 @@ class SemanticRuntimeService:
             schema = await get_metadata_service().get_schema(domain.datasource_id)
             schema_tables = {
                 str(table.get("table_name")): {
-                    str(column.get("column_name"))
-                    for column in table.get("columns", []) or []
+                    str(column.get("column_name")) for column in table.get("columns", []) or []
                 }
                 for table in schema
             }
@@ -258,32 +270,56 @@ class SemanticRuntimeService:
             column_name = str(mapping.get("column_name") or "")
             if schema_tables and table_name not in schema_tables:
                 errors.append(f"映射 {mapping.get('asset_key')} 的表不存在或未采集: {table_name}")
-            if schema_tables and column_name and column_name not in schema_tables.get(table_name, set()):
-                errors.append(f"映射 {mapping.get('asset_key')} 的字段不存在或未采集: {table_name}.{column_name}")
+            if (
+                schema_tables
+                and column_name
+                and column_name not in schema_tables.get(table_name, set())
+            ):
+                errors.append(
+                    f"映射 {mapping.get('asset_key')} 的字段不存在或未采集: "
+                    f"{table_name}.{column_name}"
+                )
             if not column_name and not mapping.get("expression_sql"):
                 errors.append(f"映射 {mapping.get('asset_key')} 缺少字段名或表达式")
 
         for metric in assets.get("metric", []):
             base_table = str(metric.get("base_table") or "")
             if schema_tables and base_table not in schema_tables:
-                errors.append(f"指标 {metric.get('metric_key')} 的基础表不存在或未采集: {base_table}")
+                errors.append(
+                    f"指标 {metric.get('metric_key')} 的基础表不存在或未采集: {base_table}"
+                )
             time_field = str(metric.get("time_field") or "")
             if time_field:
                 table_name, column_name = self._safe_split_qualified(time_field)
-                if schema_tables and table_name and column_name and column_name not in schema_tables.get(table_name, set()):
-                    errors.append(f"指标 {metric.get('metric_key')} 的时间字段不存在或未采集: {time_field}")
+                if (
+                    schema_tables
+                    and table_name
+                    and column_name
+                    and column_name not in schema_tables.get(table_name, set())
+                ):
+                    errors.append(
+                        f"指标 {metric.get('metric_key')} 的时间字段不存在或未采集: {time_field}"
+                    )
             for dimension in metric.get("dimensions") or []:
                 if dimension not in mapping_keys:
-                    errors.append(f"指标 {metric.get('metric_key')} 的可用维度未配置映射: {dimension}")
+                    errors.append(
+                        f"指标 {metric.get('metric_key')} 的可用维度未配置映射: {dimension}"
+                    )
 
         for relation in assets.get("relation", []):
             for join in relation.get("join_path") or []:
                 for side in ("left", "right"):
                     table_name, column_name = self._safe_split_qualified(str(join.get(side) or ""))
                     if not table_name or not column_name:
-                        errors.append(f"关系 {relation.get('relation_key')} 的 JOIN 字段格式错误: {join.get(side)}")
+                        errors.append(
+                            f"关系 {relation.get('relation_key')} 的 JOIN 字段格式错误: "
+                            f"{join.get(side)}"
+                        )
                     elif schema_tables and column_name not in schema_tables.get(table_name, set()):
-                        errors.append(f"关系 {relation.get('relation_key')} 的 JOIN 字段不存在或未采集: {table_name}.{column_name}")
+                        errors.append(
+                            f"关系 {relation.get('relation_key')} 的 JOIN 字段不存在或未采集: "
+                            f"{table_name}.{column_name}"
+                        )
 
         return {
             "valid": not errors,
@@ -292,7 +328,10 @@ class SemanticRuntimeService:
             "asset_counts": {key: len(value) for key, value in assets.items()},
         }
 
-    async def create_snapshot(self, domain_id: int, name: str | None = None, description: str | None = "") -> int:
+    async def create_snapshot(
+        self, domain_id: int, name: str | None = None, description: str | None = ""
+    ) -> int:
+        """Persist a point-in-time snapshot of a semantic domain bundle."""
         bundle = await self.export_domain_bundle(domain_id)
         db = get_management_db()
         return await db.execute_insert(
@@ -309,6 +348,7 @@ class SemanticRuntimeService:
         )
 
     async def list_snapshots(self, domain_id: int) -> list[dict[str, Any]]:
+        """List saved snapshots for a semantic domain."""
         db = get_management_db()
         rows = await db.execute_query(
             "SELECT id, domain_id, name, description, asset_counts, created_at "
@@ -320,6 +360,7 @@ class SemanticRuntimeService:
         return rows
 
     async def get_snapshot(self, domain_id: int, snapshot_id: int) -> dict[str, Any]:
+        """Load one semantic domain snapshot payload."""
         db = get_management_db()
         rows = await db.execute_query(
             "SELECT id, domain_id, name, description, snapshot_json, asset_counts, created_at "
@@ -334,6 +375,7 @@ class SemanticRuntimeService:
         return row
 
     async def diff_snapshot(self, domain_id: int, snapshot_id: int) -> dict[str, Any]:
+        """Compare the current semantic domain with a saved snapshot."""
         snapshot = await self.get_snapshot(domain_id, snapshot_id)
         snapshot_bundle = snapshot.get("snapshot_json") or {}
         current_bundle = await self.export_domain_bundle(domain_id)
@@ -345,11 +387,16 @@ class SemanticRuntimeService:
                 "created_at": snapshot.get("created_at"),
             },
             "summary": self._diff_summary(current_bundle, snapshot_bundle),
-            "domain": self._diff_domain(current_bundle.get("domain") or {}, snapshot_bundle.get("domain") or {}),
-            "assets": self._diff_assets(current_bundle.get("assets") or {}, snapshot_bundle.get("assets") or {}),
+            "domain": self._diff_domain(
+                current_bundle.get("domain") or {}, snapshot_bundle.get("domain") or {}
+            ),
+            "assets": self._diff_assets(
+                current_bundle.get("assets") or {}, snapshot_bundle.get("assets") or {}
+            ),
         }
 
     async def rollback_snapshot(self, domain_id: int, snapshot_id: int) -> dict[str, Any]:
+        """Replace current semantic domain config with a saved snapshot."""
         snapshot = await self.get_snapshot(domain_id, snapshot_id)
         bundle = snapshot.get("snapshot_json") or {}
         domain = dict(bundle.get("domain") or {})
@@ -384,15 +431,30 @@ class SemanticRuntimeService:
             "asset_counts": bundle.get("asset_counts") or {},
         }
 
-    async def list_assets(self, domain_id: int, asset_type: str | None = None) -> dict[str, list[dict]]:
+    async def list_assets(
+        self, domain_id: int, asset_type: str | None = None
+    ) -> dict[str, list[dict]]:
+        """List semantic assets for a domain, optionally limited to one asset type."""
+        logger.info("semantic list_assets domain_id=%s asset_type=%s", domain_id, asset_type)
         if asset_type:
-            return {asset_type: await self._list_asset_type(domain_id, asset_type)}
-        return {
-            key: await self._list_asset_type(domain_id, key)
-            for key in ASSET_TABLES
-        }
+            result = {asset_type: await self._list_asset_type(domain_id, asset_type)}
+        else:
+            result = {key: await self._list_asset_type(domain_id, key) for key in ASSET_TABLES}
+        logger.info(
+            "semantic list_assets result domain_id=%s counts=%s",
+            domain_id,
+            json_for_log({key: len(value) for key, value in result.items()}),
+        )
+        return result
 
     async def upsert_asset(self, domain_id: int, asset_type: str, data: dict[str, Any]) -> int:
+        """Create or update one semantic asset in a domain."""
+        logger.info(
+            "semantic upsert_asset domain_id=%s asset_type=%s data=%s",
+            domain_id,
+            asset_type,
+            json_for_log(data, text_limit=1200),
+        )
         if asset_type not in ASSET_TABLES:
             raise ValueError(f"不支持的语义资产类型: {asset_type}")
         table, key_field, model = ASSET_TABLES[asset_type]
@@ -410,13 +472,18 @@ class SemanticRuntimeService:
             if not existing_by_id:
                 raise ValueError(f"语义资产不存在或不属于当前领域: {item.id}")
             assignments = ", ".join(
-                f"{field} = :{field}"
-                for field in payload
-                if field != "domain_id"
+                f"{field} = :{field}" for field in payload if field != "domain_id"
             )
             await db.execute_query(
                 f"UPDATE {table} SET {assignments} WHERE id = :id AND domain_id = :domain_id",
                 {**payload, "id": item.id},
+            )
+            logger.info(
+                "semantic upsert_asset updated by id domain_id=%s asset_type=%s id=%s key=%s",
+                domain_id,
+                asset_type,
+                item.id,
+                key_value,
             )
             return int(item.id)
 
@@ -426,24 +493,38 @@ class SemanticRuntimeService:
         )
         if existing:
             assignments = ", ".join(
-                f"{field} = :{field}"
-                for field in payload
-                if field not in {"domain_id", key_field}
+                f"{field} = :{field}" for field in payload if field not in {"domain_id", key_field}
             )
             await db.execute_query(
                 f"UPDATE {table} SET {assignments} WHERE id = :id",
                 {**payload, "id": existing[0]["id"]},
             )
+            logger.info(
+                "semantic upsert_asset updated by key domain_id=%s asset_type=%s id=%s key=%s",
+                domain_id,
+                asset_type,
+                existing[0]["id"],
+                key_value,
+            )
             return int(existing[0]["id"])
 
         fields = ", ".join(payload)
         values = ", ".join(f":{field}" for field in payload)
-        return await db.execute_insert(
+        asset_id = await db.execute_insert(
             f"INSERT INTO {table} ({fields}) VALUES ({values})",
             payload,
         )
+        logger.info(
+            "semantic upsert_asset inserted domain_id=%s asset_type=%s id=%s key=%s",
+            domain_id,
+            asset_type,
+            asset_id,
+            key_value,
+        )
+        return asset_id
 
     async def _import_assets(self, domain_id: int, assets: dict[str, list[dict]]) -> None:
+        """Import every asset group from a domain bundle into a target domain."""
         for asset_type in ASSET_TABLES:
             for item in assets.get(asset_type, []) or []:
                 payload = dict(item)
@@ -452,6 +533,7 @@ class SemanticRuntimeService:
                 await self.upsert_asset(domain_id, asset_type, payload)
 
     async def delete_asset(self, domain_id: int, asset_type: str, asset_id: int) -> bool:
+        """Delete one semantic asset by type and id."""
         if asset_type not in ASSET_TABLES:
             raise ValueError(f"不支持的语义资产类型: {asset_type}")
         table, _, _ = ASSET_TABLES[asset_type]
@@ -475,6 +557,14 @@ class SemanticRuntimeService:
         domain_key: str = "loan_risk",
         domain_id: int | None = None,
     ) -> SemanticRuntime:
+        """Load the executable semantic runtime used by graph nodes."""
+        logger.info(
+            "semantic build_runtime start agent_id=%s datasource_id=%s domain_key=%s domain_id=%s",
+            agent_id,
+            datasource_id,
+            domain_key,
+            domain_id,
+        )
         domain = await self.get_domain(domain_id) if domain_id else None
         if domain is None:
             domain = await self.get_agent_bound_domain(agent_id)
@@ -483,25 +573,51 @@ class SemanticRuntimeService:
         if domain is None:
             raise ValueError(f"未找到语义领域: {domain_key}")
 
-        return SemanticRuntime(
+        runtime = SemanticRuntime(
             domain=domain,
-            concepts=[SemanticConcept(**row) for row in await self._list_asset_type(domain.id, "concept")],
-            relations=[
-                SemanticRelation(**row) for row in await self._list_asset_type(domain.id, "relation")
+            concepts=[
+                SemanticConcept(**row) for row in await self._list_asset_type(domain.id, "concept")
             ],
-            metrics=[SemanticMetric(**row) for row in await self._list_asset_type(domain.id, "metric")],
+            relations=[
+                SemanticRelation(**row)
+                for row in await self._list_asset_type(domain.id, "relation")
+            ],
+            metrics=[
+                SemanticMetric(**row) for row in await self._list_asset_type(domain.id, "metric")
+            ],
             rules=[SemanticRule(**row) for row in await self._list_asset_type(domain.id, "rule")],
-            mappings=[SemanticMapping(**row) for row in await self._list_asset_type(domain.id, "mapping")],
+            mappings=[
+                SemanticMapping(**row) for row in await self._list_asset_type(domain.id, "mapping")
+            ],
             templates=[
-                LogicFormTemplate(**row) for row in await self._list_asset_type(domain.id, "template")
+                LogicFormTemplate(**row)
+                for row in await self._list_asset_type(domain.id, "template")
             ],
         )
+        logger.info(
+            "semantic build_runtime result domain_id=%s domain_key=%s counts=%s",
+            domain.id,
+            domain.domain_key,
+            json_for_log(
+                {
+                    "concepts": len(runtime.concepts),
+                    "relations": len(runtime.relations),
+                    "metrics": len(runtime.metrics),
+                    "rules": len(runtime.rules),
+                    "mappings": len(runtime.mappings),
+                    "templates": len(runtime.templates),
+                }
+            ),
+        )
+        return runtime
 
     def validate_logic_form(
         self,
         logic_form: LogicForm,
         runtime: SemanticRuntime,
     ) -> LogicFormValidation:
+        """Check that a LogicForm references known metrics, dimensions, filters, and sorts."""
+        logger.info("semantic validate_logic_form input=%s", json_for_log(logic_form.model_dump()))
         metric_map = {metric.metric_key: metric for metric in runtime.metrics}
         mapping_map = {mapping.asset_key: mapping for mapping in runtime.mappings}
         errors: list[str] = []
@@ -528,7 +644,11 @@ class SemanticRuntimeService:
             elif not logic_form.metrics:
                 errors.append("时间粒度查询缺少指标")
             else:
-                metrics = [metric_map.get(metric_key) for metric_key in logic_form.metrics if metric_map.get(metric_key)]
+                metrics = [
+                    metric_map.get(metric_key)
+                    for metric_key in logic_form.metrics
+                    if metric_map.get(metric_key)
+                ]
                 if metrics and any(not metric.time_field for metric in metrics):
                     missing = [metric.metric_key for metric in metrics if not metric.time_field]
                     errors.append(f"以下指标缺少时间字段，无法按时间粒度分析: {', '.join(missing)}")
@@ -558,14 +678,18 @@ class SemanticRuntimeService:
             if logic_form.time_range.period not in ALLOWED_TIME_PERIODS:
                 warnings.append(f"未内置识别的时间窗口: {logic_form.time_range.period}")
 
-        return LogicFormValidation(
+        result = LogicFormValidation(
             valid=not errors,
             errors=errors,
             warnings=warnings,
             used_assets=sorted(set(used_assets)),
         )
+        logger.info("semantic validate_logic_form result=%s", json_for_log(result.model_dump()))
+        return result
 
     def compile_logic_form(self, logic_form: LogicForm, runtime: SemanticRuntime) -> CompiledQuery:
+        """Compile a validated LogicForm into deterministic MySQL SELECT SQL."""
+        logger.info("semantic compile_logic_form input=%s", json_for_log(logic_form.model_dump()))
         validation = self.validate_logic_form(logic_form, runtime)
         if not validation.valid:
             raise ValueError("；".join(validation.errors))
@@ -578,7 +702,7 @@ class SemanticRuntimeService:
         if len(metric_base_tables) > 1:
             if logic_form.dimensions:
                 raise ValueError("暂不支持跨事实表指标按维度分组，请减少指标或去掉分组维度")
-            return self._compile_scalar_multi_metric_query(
+            compiled = self._compile_scalar_multi_metric_query(
                 logic_form=logic_form,
                 metrics=metrics,
                 runtime=runtime,
@@ -586,16 +710,24 @@ class SemanticRuntimeService:
                 used_assets=list(validation.used_assets),
                 warnings=validation.warnings,
             )
+            logger.info(
+                "semantic compile_logic_form result scalar sql=%s",
+                truncate_text(compiled.sql, 1800),
+            )
+            return compiled
 
         table_aliases = {base_table: "t0"}
         joins: list[str] = []
         used_assets = list(validation.used_assets)
 
         def ensure_table(table_name: str) -> str:
+            """Return an alias for a table, creating the required JOIN when needed."""
             if table_name in table_aliases:
                 return table_aliases[table_name]
             alias = f"t{len(table_aliases)}"
-            join_condition = self._find_join_condition(base_table, table_name, runtime, table_aliases)
+            join_condition = self._find_join_condition(
+                base_table, table_name, runtime, table_aliases
+            )
             table_aliases[table_name] = alias
             joins.append(f"JOIN `{table_name}` {alias} ON {join_condition.format(target=alias)}")
             return alias
@@ -646,7 +778,9 @@ class SemanticRuntimeService:
         if logic_form.time_range:
             time_field = metrics[0].time_field
             if time_field:
-                where_parts.extend(self._compile_time_range(time_field, logic_form.time_range, table_aliases))
+                where_parts.extend(
+                    self._compile_time_range(time_field, logic_form.time_range, table_aliases)
+                )
 
         sql_parts = [
             "SELECT " + ", ".join(select_parts),
@@ -658,10 +792,7 @@ class SemanticRuntimeService:
         if group_parts:
             sql_parts.append("GROUP BY " + ", ".join(group_parts))
         if logic_form.sort:
-            order_parts = [
-                f"`{sort.field}` {sort.direction.upper()}"
-                for sort in logic_form.sort
-            ]
+            order_parts = [f"`{sort.field}` {sort.direction.upper()}" for sort in logic_form.sort]
             sql_parts.append("ORDER BY " + ", ".join(order_parts))
         elif logic_form.grain:
             order_parts = [f"`{'day' if logic_form.grain == 'day' else 'month'}` ASC"]
@@ -670,12 +801,19 @@ class SemanticRuntimeService:
         if logic_form.limit:
             sql_parts.append(f"LIMIT {min(max(int(logic_form.limit), 1), 1000)}")
 
-        return CompiledQuery(
+        compiled = CompiledQuery(
             logic_form=logic_form,
             sql="\n".join(sql_parts),
             used_assets=sorted(set(used_assets)),
             warnings=validation.warnings,
         )
+        logger.info(
+            "semantic compile_logic_form result sql=%s used_assets=%s warnings=%s",
+            truncate_text(compiled.sql, 1800),
+            json_for_log(compiled.used_assets),
+            json_for_log(compiled.warnings),
+        )
+        return compiled
 
     def _compile_scalar_multi_metric_query(
         self,
@@ -700,6 +838,7 @@ class SemanticRuntimeService:
             joins: list[str] = []
 
             def ensure_table(table_name: str) -> str:
+                """Return a metric-local alias for a table, adding joins for subqueries."""
                 if table_name in table_aliases:
                     return table_aliases[table_name]
                 alias = f"{alias_prefix}{len(table_aliases)}"
@@ -710,7 +849,9 @@ class SemanticRuntimeService:
                     table_aliases,
                 )
                 table_aliases[table_name] = alias
-                joins.append(f"JOIN `{table_name}` {alias} ON {join_condition.format(target=alias)}")
+                joins.append(
+                    f"JOIN `{table_name}` {alias} ON {join_condition.format(target=alias)}"
+                )
                 return alias
 
             where_parts = [
@@ -725,10 +866,14 @@ class SemanticRuntimeService:
                 time_table, _ = self._split_qualified(metric.time_field)
                 ensure_table(time_table)
                 where_parts.extend(
-                    self._compile_time_range(metric.time_field, logic_form.time_range, table_aliases)
+                    self._compile_time_range(
+                        metric.time_field, logic_form.time_range, table_aliases
+                    )
                 )
 
-            metric_expr = self._format_sql_expr(metric.formula_sql, table_aliases[metric.base_table])
+            metric_expr = self._format_sql_expr(
+                metric.formula_sql, table_aliases[metric.base_table]
+            )
             query_parts = [
                 f"SELECT {metric_expr} AS `{metric.metric_key}`",
                 f"FROM `{metric.base_table}` {table_aliases[metric.base_table]}",
@@ -738,7 +883,7 @@ class SemanticRuntimeService:
                 query_parts.append("WHERE " + " AND ".join(part for part in where_parts if part))
 
             subquery_alias = f"q{index}"
-            subqueries.append(f"(\n" + "\n".join(query_parts) + f"\n) {subquery_alias}")
+            subqueries.append("(\n" + "\n".join(query_parts) + f"\n) {subquery_alias}")
             select_parts.append(f"{subquery_alias}.`{metric.metric_key}` AS `{metric.metric_key}`")
             used_assets.append(f"metric:{metric.metric_key}")
 
@@ -756,6 +901,7 @@ class SemanticRuntimeService:
         )
 
     async def _list_asset_type(self, domain_id: int | None, asset_type: str) -> list[dict]:
+        """Read one semantic asset table and parse JSON columns."""
         if domain_id is None:
             return []
         if asset_type not in ASSET_TABLES:
@@ -769,21 +915,25 @@ class SemanticRuntimeService:
         return [self._parse_json_fields(row, asset_type) for row in rows]
 
     def _model_payload(self, data: dict[str, Any], asset_type: str) -> dict[str, Any]:
+        """Prepare a Pydantic semantic asset for database storage."""
         return {
             key: self._json_dump(value) if key in JSON_FIELDS.get(asset_type, ()) else value
             for key, value in data.items()
         }
 
     def _parse_json_fields(self, row: dict[str, Any], asset_type: str) -> dict[str, Any]:
+        """Parse JSON-encoded columns for a semantic asset row."""
         parsed = dict(row)
         for field in JSON_FIELDS.get(asset_type, ()):
             parsed[field] = self._json_load(parsed.get(field))
         return parsed
 
     def _json_dump(self, value: Any) -> str:
+        """Serialize JSON columns with Chinese text preserved."""
         return json.dumps(value if value is not None else [], ensure_ascii=False)
 
     def _json_load(self, value: Any) -> Any:
+        """Parse a JSON column value with a default fallback."""
         if value in (None, ""):
             return []
         if isinstance(value, str):
@@ -793,12 +943,21 @@ class SemanticRuntimeService:
                 return []
         return value
 
-    def _diff_summary(self, current_bundle: dict[str, Any], snapshot_bundle: dict[str, Any]) -> dict[str, Any]:
-        assets = self._diff_assets(current_bundle.get("assets") or {}, snapshot_bundle.get("assets") or {})
+    def _diff_summary(
+        self, current_bundle: dict[str, Any], snapshot_bundle: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Build a high-level diff between two semantic domain bundles."""
+        assets = self._diff_assets(
+            current_bundle.get("assets") or {}, snapshot_bundle.get("assets") or {}
+        )
         added = sum(len(value.get("added", [])) for value in assets.values())
         removed = sum(len(value.get("removed", [])) for value in assets.values())
         changed = sum(len(value.get("changed", [])) for value in assets.values())
-        domain_changed = bool(self._diff_domain(current_bundle.get("domain") or {}, snapshot_bundle.get("domain") or {}))
+        domain_changed = bool(
+            self._diff_domain(
+                current_bundle.get("domain") or {}, snapshot_bundle.get("domain") or {}
+            )
+        )
         return {
             "domain_changed": domain_changed,
             "added": added,
@@ -807,27 +966,39 @@ class SemanticRuntimeService:
             "total_changes": added + removed + changed + (1 if domain_changed else 0),
         }
 
-    def _diff_domain(self, current: dict[str, Any], snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    def _diff_domain(
+        self, current: dict[str, Any], snapshot: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Compare domain-level fields between current and snapshot bundles."""
         fields = ("agent_id", "datasource_id", "domain_key", "name", "description", "status")
         changes = []
         for field in fields:
             if current.get(field) != snapshot.get(field):
-                changes.append({
-                    "field": field,
-                    "current": current.get(field),
-                    "snapshot": snapshot.get(field),
-                })
+                changes.append(
+                    {
+                        "field": field,
+                        "current": current.get(field),
+                        "snapshot": snapshot.get(field),
+                    }
+                )
         return changes
 
-    def _diff_assets(self, current: dict[str, list[dict]], snapshot: dict[str, list[dict]]) -> dict[str, dict[str, list[Any]]]:
+    def _diff_assets(
+        self, current: dict[str, list[dict]], snapshot: dict[str, list[dict]]
+    ) -> dict[str, dict[str, list[Any]]]:
+        """Compare asset identities and payloads between current and snapshot bundles."""
         result = {}
         for asset_type, (_, key_field, _) in ASSET_TABLES.items():
             current_map = {
-                self._asset_identity(asset_type, item, key_field): self._normalize_asset_for_diff(item)
+                self._asset_identity(asset_type, item, key_field): self._normalize_asset_for_diff(
+                    item
+                )
                 for item in current.get(asset_type, []) or []
             }
             snapshot_map = {
-                self._asset_identity(asset_type, item, key_field): self._normalize_asset_for_diff(item)
+                self._asset_identity(asset_type, item, key_field): self._normalize_asset_for_diff(
+                    item
+                )
                 for item in snapshot.get(asset_type, []) or []
             }
             current_keys = set(current_map)
@@ -849,6 +1020,7 @@ class SemanticRuntimeService:
         return result
 
     def _asset_identity(self, asset_type: str, item: dict[str, Any], key_field: str) -> str:
+        """Return the stable identity field for an asset in snapshot diffs."""
         if asset_type == "mapping":
             return "|".join(
                 str(item.get(field) or "")
@@ -857,12 +1029,9 @@ class SemanticRuntimeService:
         return str(item.get(key_field) or item.get("id") or "")
 
     def _normalize_asset_for_diff(self, item: dict[str, Any]) -> dict[str, Any]:
+        """Remove volatile fields before comparing semantic assets."""
         ignored = {"id", "domain_id", "created_at", "updated_at"}
-        return {
-            key: item[key]
-            for key in sorted(item)
-            if key not in ignored
-        }
+        return {key: item[key] for key in sorted(item) if key not in ignored}
 
     def _find_join_condition(
         self,
@@ -871,6 +1040,7 @@ class SemanticRuntimeService:
         runtime: SemanticRuntime,
         table_aliases: dict[str, str],
     ) -> str:
+        """Find a configured relation that can join the base table to a target table."""
         for relation in runtime.relations:
             for join in relation.join_path:
                 left_table, left_col = self._split_qualified(join["left"])
@@ -882,12 +1052,14 @@ class SemanticRuntimeService:
         raise ValueError(f"未找到从 {base_table} 到 {target_table} 的唯一关系路径")
 
     def _split_qualified(self, value: str) -> tuple[str, str]:
+        """Split a required table.column reference or raise when malformed."""
         table, column = value.split(".", 1)
         self._assert_identifier(table)
         self._assert_identifier(column)
         return table, column
 
     def _safe_split_qualified(self, value: str) -> tuple[str, str]:
+        """Split table.column references permissively for relation discovery."""
         if "." not in value:
             return "", ""
         table, column = value.split(".", 1)
@@ -896,6 +1068,7 @@ class SemanticRuntimeService:
         return table, column
 
     def _mapping_expr(self, mapping: SemanticMapping, alias: str) -> str:
+        """Return the SQL expression for a semantic mapping on a table alias."""
         if mapping.expression_sql:
             return self._format_sql_expr(mapping.expression_sql, alias)
         if not mapping.column_name:
@@ -904,11 +1077,15 @@ class SemanticRuntimeService:
         return f"{alias}.`{mapping.column_name}`"
 
     def _format_sql_expr(self, expression: str, alias: str) -> str:
+        """Replace the metric base placeholder with an actual table alias."""
         if not SAFE_SQL_EXPR.match(expression):
             raise ValueError(f"SQL表达式包含非法字符: {expression}")
         return expression.format(base=alias, alias=alias)
 
-    def _compile_filter(self, item: dict[str, Any], mapping_map: dict[str, SemanticMapping], ensure_table) -> str:
+    def _compile_filter(
+        self, item: dict[str, Any], mapping_map: dict[str, SemanticMapping], ensure_table
+    ) -> str:
+        """Compile one LogicForm or default filter into a SQL predicate."""
         field = str(item.get("field", ""))
         operator = str(item.get("operator", "=")).lower()
         value = item.get("value")
@@ -926,13 +1103,19 @@ class SemanticRuntimeService:
             return f"{expr} {operator.upper()} ({values})"
         return f"{expr} {operator.upper()} {self._sql_literal(value)}"
 
-    def _compile_time_range(self, time_field: str, time_range, table_aliases: dict[str, str]) -> list[str]:
+    def _compile_time_range(
+        self, time_field: str, time_range, table_aliases: dict[str, str]
+    ) -> list[str]:
+        """Compile a relative time range into SQL date predicates."""
         table, column = self._split_qualified(time_field)
         if table not in table_aliases:
             raise ValueError(f"时间字段所在表未参与查询: {time_field}")
         expr = f"{table_aliases[table]}.`{column}`"
         if time_range.start and time_range.end:
-            return [f"{expr} >= {self._sql_literal(time_range.start)}", f"{expr} < {self._sql_literal(time_range.end)}"]
+            return [
+                f"{expr} >= {self._sql_literal(time_range.start)}",
+                f"{expr} < {self._sql_literal(time_range.end)}",
+            ]
         if time_range.period == "this_month":
             return [
                 f"{expr} >= DATE_FORMAT(CURRENT_DATE, '%Y-%m-01')",
@@ -948,6 +1131,7 @@ class SemanticRuntimeService:
         return []
 
     def _sql_literal(self, value: Any) -> str:
+        """Render a safe SQL literal for configured filter values."""
         if value is None:
             return "NULL"
         if isinstance(value, bool):
@@ -957,6 +1141,7 @@ class SemanticRuntimeService:
         return "'" + str(value).replace("'", "''") + "'"
 
     def _assert_identifier(self, value: str) -> None:
+        """Validate identifiers before interpolating them into SQL."""
         if not SAFE_IDENTIFIER.match(value):
             raise ValueError(f"非法标识符: {value}")
 
@@ -965,6 +1150,7 @@ _semantic_runtime_service: SemanticRuntimeService | None = None
 
 
 def get_semantic_runtime_service() -> SemanticRuntimeService:
+    """Return the process-wide semantic runtime service singleton."""
     global _semantic_runtime_service
     if _semantic_runtime_service is None:
         _semantic_runtime_service = SemanticRuntimeService()
