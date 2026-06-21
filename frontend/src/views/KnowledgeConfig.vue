@@ -222,10 +222,10 @@
     >
       <el-form :model="domainForm" label-width="110px" label-position="left">
         <el-form-item label="名称">
-          <el-input v-model="domainForm.name" placeholder="如 贷款风控" />
+          <el-input v-model="domainForm.name" placeholder="如 订单分析" />
         </el-form-item>
         <el-form-item label="标识">
-          <el-input v-model="domainForm.domain_key" placeholder="如 loan_risk" :disabled="domainDialogMode === 'edit'" />
+          <el-input v-model="domainForm.domain_key" placeholder="如 order_analysis" :disabled="domainDialogMode === 'edit'" />
         </el-form-item>
         <el-form-item label="默认数据源">
           <el-select v-model="domainForm.datasource_id" clearable filterable placeholder="可选，选择语义层默认数据源">
@@ -282,7 +282,7 @@
           <el-form :model="assetDraft" label-width="112px" label-position="left">
             <template v-if="editingAssetType === 'concept'">
               <el-form-item label="标识">
-                <el-input v-model="assetDraft.concept_key" placeholder="如 LoanAccount" />
+                <el-input v-model="assetDraft.concept_key" placeholder="如 Order" />
               </el-form-item>
               <el-form-item label="类型">
                 <el-select v-model="assetDraft.concept_type">
@@ -294,7 +294,7 @@
                 </el-select>
               </el-form-item>
               <el-form-item label="名称">
-                <el-input v-model="assetDraft.name" placeholder="如 贷款账户" />
+                <el-input v-model="assetDraft.name" placeholder="如 订单" />
               </el-form-item>
               <el-form-item label="描述">
                 <el-input v-model="assetDraft.description" type="textarea" :rows="3" />
@@ -306,7 +306,7 @@
 
             <template v-else-if="editingAssetType === 'relation'">
               <el-form-item label="标识">
-                <el-input v-model="assetDraft.relation_key" placeholder="如 account_to_repayment" />
+                <el-input v-model="assetDraft.relation_key" placeholder="如 order_to_customer" />
               </el-form-item>
               <el-form-item label="类型">
                 <el-select v-model="assetDraft.relation_type">
@@ -320,16 +320,16 @@
                 <el-input v-model="assetDraft.name" />
               </el-form-item>
               <el-form-item label="源概念">
-                <el-input v-model="assetDraft.source_concept" placeholder="如 LoanAccount" />
+                <el-input v-model="assetDraft.source_concept" placeholder="如 Order" />
               </el-form-item>
               <el-form-item label="目标概念">
-                <el-input v-model="assetDraft.target_concept" placeholder="如 RepaymentPeriod" />
+                <el-input v-model="assetDraft.target_concept" placeholder="如 Customer" />
               </el-form-item>
               <el-form-item label="左表字段">
-                <el-input v-model="assetDraft.join_left" placeholder="如 loan_account_indicator.loan_id" />
+                <el-input v-model="assetDraft.join_left" placeholder="如 orders.customer_id" />
               </el-form-item>
               <el-form-item label="右表字段">
-                <el-input v-model="assetDraft.join_right" placeholder="如 loan_repayment_period_indicator.loan_id" />
+                <el-input v-model="assetDraft.join_right" placeholder="如 customers.customer_id" />
               </el-form-item>
               <el-form-item label="描述">
                 <el-input v-model="assetDraft.description" type="textarea" :rows="3" />
@@ -338,10 +338,10 @@
 
             <template v-else-if="editingAssetType === 'metric'">
               <el-form-item label="标识">
-                <el-input v-model="assetDraft.metric_key" placeholder="如 m1_plus_rate" />
+                <el-input v-model="assetDraft.metric_key" placeholder="如 order_count" />
               </el-form-item>
               <el-form-item label="名称">
-                <el-input v-model="assetDraft.name" placeholder="如 M1+逾期率" />
+                <el-input v-model="assetDraft.name" placeholder="如 订单数" />
               </el-form-item>
               <el-form-item label="指标类型">
                 <el-select v-model="assetDraft.metric_type">
@@ -352,16 +352,16 @@
                 </el-select>
               </el-form-item>
               <el-form-item label="基础表">
-                <el-input v-model="assetDraft.base_table" placeholder="如 loan_account_indicator" />
+                <el-input v-model="assetDraft.base_table" placeholder="如 orders" />
               </el-form-item>
               <el-form-item label="时间字段">
-                <el-input v-model="assetDraft.time_field" placeholder="如 loan_account_indicator.snapshot_date" />
+                <el-input v-model="assetDraft.time_field" placeholder="如 orders.created_at" />
               </el-form-item>
               <el-form-item label="计算公式">
                 <el-input v-model="assetDraft.formula_sql" type="textarea" :rows="3" placeholder="支持 {base} 表别名占位" />
               </el-form-item>
               <el-form-item label="可用维度">
-                <el-input v-model="assetDraft.dimensions_text" placeholder="如 product_type, vintage, mob" />
+                <el-input v-model="assetDraft.dimensions_text" placeholder="如 product_type, region, channel" />
               </el-form-item>
               <el-form-item label="同义词">
                 <el-input v-model="assetDraft.synonyms_text" placeholder="多个词用逗号或换行分隔" />
@@ -384,7 +384,7 @@
 
             <template v-else-if="editingAssetType === 'rule'">
               <el-form-item label="标识">
-                <el-input v-model="assetDraft.rule_key" placeholder="如 m1_plus_definition" />
+                <el-input v-model="assetDraft.rule_key" placeholder="如 order_count_definition" />
               </el-form-item>
               <el-form-item label="规则类型">
                 <el-select v-model="assetDraft.rule_type">
@@ -398,13 +398,13 @@
                 <el-input v-model="assetDraft.name" />
               </el-form-item>
               <el-form-item label="适用对象">
-                <el-input v-model="assetDraft.applies_to_text" placeholder="如 m1_plus_rate, vintage" />
+                <el-input v-model="assetDraft.applies_to_text" placeholder="如 order_count, product_type" />
               </el-form-item>
               <el-form-item label="表达式键">
-                <el-input v-model="assetDraft.expression_key" placeholder="如 overdue_bucket" />
+                <el-input v-model="assetDraft.expression_key" placeholder="如 status" />
               </el-form-item>
               <el-form-item label="表达式值">
-                <el-input v-model="assetDraft.expression_value" placeholder="如 M1, M2, M3, M4+" />
+                <el-input v-model="assetDraft.expression_value" placeholder="如 paid, shipped" />
               </el-form-item>
               <el-form-item label="级别">
                 <el-select v-model="assetDraft.severity">
@@ -428,7 +428,7 @@
                 </el-select>
               </el-form-item>
               <el-form-item label="资产键">
-                <el-input v-model="assetDraft.asset_key" placeholder="如 vintage" />
+                <el-input v-model="assetDraft.asset_key" placeholder="如 product_type" />
               </el-form-item>
               <el-form-item label="角色">
                 <el-select v-model="assetDraft.role">
@@ -440,10 +440,10 @@
                 </el-select>
               </el-form-item>
               <el-form-item label="表名">
-                <el-input v-model="assetDraft.table_name" placeholder="如 loan_account_indicator" />
+                <el-input v-model="assetDraft.table_name" placeholder="如 orders" />
               </el-form-item>
               <el-form-item label="字段名">
-                <el-input v-model="assetDraft.column_name" placeholder="如 disburse_month" />
+                <el-input v-model="assetDraft.column_name" placeholder="如 product_type" />
               </el-form-item>
               <el-form-item label="表达式">
                 <el-input v-model="assetDraft.expression_sql" placeholder="可选，字段映射为空时使用" />
@@ -715,15 +715,15 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '标识 concept_key',
         purpose: '概念在语义层里的唯一英文键，关系、规则和向量召回都会引用它。',
         instructions: ['使用稳定的英文 PascalCase 或 snake_case。', '对象建议用名词，事件建议用动词过去式或业务动作，状态建议用状态名。', '保存后不要随意改名，避免关系和规则引用失效。'],
-        examples: ['LoanAccount', 'RepaymentPaid', 'OverdueBucket'],
+        examples: ['Order', 'RepaymentPaid', 'OverdueBucket'],
       },
       {
         key: 'concept_type',
         label: '类型',
         title: '类型 concept_type',
         purpose: '告诉系统这个概念是对象、事件、状态、维度还是动作。',
-        instructions: ['对象：业务实体，如贷款账户、客户。', '事件：发生过的动作，如放款、还款。', '状态：某个对象所处阶段，如逾期阶段、审批状态。'],
-        examples: ['LoanAccount 选择“对象”', 'LoanDisbursed 选择“事件”', 'LoanStatus 选择“状态”'],
+        instructions: ['对象：业务实体，如订单、客户。', '事件：发生过的动作，如下单、支付、发货。', '状态：某个对象所处阶段，如订单状态、审批状态。'],
+        examples: ['Order 选择“对象”', 'OrderPaid 选择“事件”', 'OrderStatus 选择“状态”'],
       },
       {
         key: 'name',
@@ -731,7 +731,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '名称',
         purpose: '业务人员看到的中文名称，也帮助大模型理解用户问法。',
         instructions: ['使用业务团队日常叫法。', '短而明确，不要写成一整句描述。'],
-        examples: ['贷款账户', '还款入账', '逾期阶段'],
+        examples: ['订单', '支付成功', '订单状态'],
       },
       {
         key: 'description',
@@ -739,7 +739,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '描述',
         purpose: '说明这个概念的业务边界，降低模型误解。',
         instructions: ['写清楚它代表什么，不代表什么。', '必要时说明生命周期或取值范围。'],
-        examples: ['审批通过后形成的贷款借据和当前余额状态。'],
+        examples: ['客户提交并完成支付的业务订单。'],
       },
       {
         key: 'synonyms',
@@ -747,7 +747,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '同义词',
         purpose: '把用户口语、旧系统名称、业务黑话映射到这个概念。',
         instructions: ['多个词用逗号或换行分隔。', '优先填真实问数时会出现的叫法。'],
-        examples: ['借据, 贷款, 账户'],
+        examples: ['订单, 交易, 下单'],
       },
     ],
   },
@@ -761,7 +761,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '标识 relation_key',
         purpose: '关系在语义层里的唯一英文键。',
         instructions: ['使用英文 snake_case。', '建议按“源概念_to_目标概念”命名。'],
-        examples: ['account_to_repayment', 'account_to_collection'],
+        examples: ['order_to_customer', 'order_to_payment'],
       },
       {
         key: 'relation_type',
@@ -769,7 +769,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '类型 relation_type',
         purpose: '说明这条关系的业务性质或技术用途。',
         instructions: ['关联路径：用于 SQL JOIN。', '对象关系：描述两个业务对象的关系。', '事件链路/状态流转：描述业务过程。'],
-        examples: ['账户到还款期次选择“关联路径”'],
+        examples: ['订单到客户选择“关联路径”'],
       },
       {
         key: 'name',
@@ -777,7 +777,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '名称',
         purpose: '关系的中文展示名。',
         instructions: ['用“源到目标”的业务说法。', '让配置人员一眼能理解这条关系。'],
-        examples: ['账户到还款期次', '账户到催收案件'],
+        examples: ['订单到客户', '订单到支付'],
       },
       {
         key: 'source_concept',
@@ -785,7 +785,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '源概念',
         purpose: '关系起点，必须引用已经配置过的概念标识。',
         instructions: ['填写概念的英文标识。', '一般对应 JOIN 左侧或查询主对象。'],
-        examples: ['LoanAccount'],
+        examples: ['Order'],
       },
       {
         key: 'target_concept',
@@ -793,7 +793,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '目标概念',
         purpose: '关系终点，必须引用已经配置过的概念标识。',
         instructions: ['填写概念的英文标识。', '一般对应 JOIN 右侧或被关联对象。'],
-        examples: ['RepaymentPeriod'],
+        examples: ['Customer'],
       },
       {
         key: 'join_path',
@@ -801,7 +801,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '左右表字段',
         purpose: '告诉 SQL 编译器两张表用哪些字段连接。',
         instructions: ['左表字段和右表字段都建议填写“表名.字段名”。', '字段必须存在于已采集 Schema。', '只配置稳定、真实的一对关系，不要写临时过滤条件。'],
-        examples: ['loan_account_indicator.loan_id = loan_repayment_period_indicator.loan_id'],
+        examples: ['orders.customer_id = customers.customer_id'],
       },
       {
         key: 'description',
@@ -809,7 +809,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '描述',
         purpose: '说明这条关系成立的业务条件。',
         instructions: ['写清楚一对一、一对多或多对一。', '如果关系只适用于部分场景，也要说明。'],
-        examples: ['一个贷款账户包含多个还款期次。'],
+        examples: ['一个客户可以产生多个订单。'],
       },
     ],
   },
@@ -827,7 +827,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
       '命名要表达业务含义，推荐按“指标对象 + 计算含义”组织。',
       '保存后不要随意改名，否则历史问法、维度校验和结果字段都可能失效。',
     ],
-    examples: ['m1_plus_rate', 'approval_rate', 'collection_recovery_rate'],
+    examples: ['order_count', 'conversion_rate', 'revenue'],
     tips: ['如果页面展示需要中文，请填“名称”，不要把中文写进标识。'],
       },
       {
@@ -840,7 +840,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
       '如果有缩写，可以保留缩写并补充中文含义。',
       '避免只写“比率”“金额”这种过泛名称。',
     ],
-    examples: ['M1+逾期率', '审批通过率', '催收回收率'],
+    examples: ['订单数', '转化率', '销售额'],
       },
       {
         key: 'metric_type',
@@ -848,12 +848,12 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '指标类型',
     purpose: '用于告诉语义层这个指标的计算形态，影响大模型理解、校验和后续展示。',
     instructions: [
-      '度量：金额、余额、天数、概率等可聚合数值，例如放款金额、PD。',
-      '比率：分子除以分母，例如审批通过率、M1+逾期率。',
-      '计数：数量类指标，例如申请数、客户数。',
-      '维度指标：本质是维度，但用户会像指标一样提问，例如 MOB、Vintage。',
+      '度量：金额、余额、天数、概率等可聚合数值，例如交易金额、评分。',
+      '比率：分子除以分母，例如转化率、复购率。',
+      '计数：数量类指标，例如订单数、客户数。',
+      '维度指标：本质是维度，但用户会像指标一样提问，例如客户等级、产品类型。',
     ],
-    examples: ['M1+逾期率选择“比率”', '放款金额选择“度量”', '申请数选择“计数”'],
+    examples: ['转化率选择“比率”', '交易金额选择“度量”', '订单数选择“计数”'],
     tips: ['不确定时先按公式判断：有除法口径通常选“比率”。'],
       },
       {
@@ -866,7 +866,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
       '选择包含指标核心字段的事实表或指标表。',
       '如果指标需要跨表维度，必须在“关系”里存在可用 JOIN 路径。',
     ],
-    examples: ['loan_repayment_period_indicator', 'loan_account_indicator', 'collection_case_indicator'],
+    examples: ['orders', 'orders', 'payments'],
     tips: ['基础表不是中文表名，必须填数据库里的英文表名。'],
       },
       {
@@ -876,10 +876,10 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
     purpose: '用户问“本月、近三个月、按天/按月”时，语义层默认用这个字段做时间过滤或时间分组。',
     instructions: [
       '推荐填写“表名.字段名”的完整形式。',
-      '选择最符合指标统计口径的日期字段，例如申请日、放款日、快照日、到期日。',
+      '选择最符合指标统计口径的日期字段，例如创建时间、支付时间、快照时间、事件时间。',
       '如果指标没有时间口径可以留空，但自然语言时间过滤能力会变弱。',
     ],
-    examples: ['loan_repayment_period_indicator.due_date', 'loan_account_indicator.snapshot_date', 'loan_application_indicator.apply_date'],
+    examples: ['orders.created_at', 'orders.created_at', 'orders.created_at'],
     tips: ['同一个指标换时间字段，业务结果可能完全不同，配置前要确认口径。'],
       },
       {
@@ -889,13 +889,13 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
     purpose: '这是指标真正的 SQL 聚合表达式，编译器会把它放进 SELECT 里生成查询。',
     instructions: [
       '只填写表达式，不要写 SELECT、FROM、WHERE。',
-      '用 {base} 表示基础表别名，例如 {base}.`remaining_principal`。',
+      '用 {base} 表示基础表别名，例如 {base}.`amount`。',
       '比率指标请用 NULLIF 保护分母，避免除零。',
       '字段名建议用反引号包起来，降低关键字冲突风险。',
     ],
     examples: [
-      'SUM({base}.`loan_amount`)',
-      "SUM(CASE WHEN {base}.`overdue_bucket` IN ('M1','M2','M3','M4+') THEN {base}.`remaining_principal_after` ELSE 0 END) / NULLIF(SUM({base}.`remaining_principal_after`), 0)",
+      'SUM({base}.`amount`)',
+      "SUM(CASE WHEN {base}.`status` = 'paid' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0)",
     ],
     tips: ['如果公式里写了不存在的字段，SQL 执行阶段才会报错；配置前最好对照数据源 Schema。'],
       },
@@ -910,8 +910,8 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
       '每个维度最好在“映射”里能找到对应表字段。',
       '跨表维度需要有“关系”路径支撑。',
     ],
-    examples: ['product_type, vintage, mob, region', 'assigned_team, collection_strategy, overdue_bucket_at_entry'],
-    tips: ['用户问“按 Vintage 看 M1+逾期率”时，vintage 必须在该指标的可用维度里。'],
+    examples: ['product_type, region, channel', 'customer_segment, region, channel'],
+    tips: ['用户问“按产品类型看订单数”时，product_type 必须在该指标的可用维度里。'],
       },
       {
         key: 'synonyms',
@@ -923,7 +923,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
       '多个词用逗号或换行分隔。',
       '优先补充缩写、行业黑话、历史报表里的旧名称。',
     ],
-    examples: ['M1+, 30+逾期, 逾期率', '通过率, 审批率, 申请通过率'],
+    examples: ['订单量, 下单数, 成交数', '转化率, 成交率, 完成率'],
     tips: ['同义词太泛会误召回，例如只写“率”会让很多比率指标混在一起。'],
       },
       {
@@ -932,12 +932,12 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '默认过滤',
     purpose: '给指标附加固定过滤条件，用户不明确说明时也会自动生效。',
     instructions: [
-      '字段填写语义字段键，例如 is_written_off。',
+      '字段填写语义字段键，例如 status。',
       '操作符支持 =、!=、in。',
       '值会自动解析数字、true/false；多个值可用逗号分隔。',
       '只配置业务口径里永远成立的条件，不要放临时筛选。',
     ],
-    examples: ['is_written_off = 1', "overdue_bucket in M1, M2, M3, M4+"],
+    examples: ['status = 1', "status in paid, shipped"],
     tips: ['默认过滤对所有查询都会生效，配置前要确认它是指标定义的一部分。'],
       },
       {
@@ -947,10 +947,10 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
     purpose: '说明指标业务口径，供配置人员理解，也供模型在歧义场景下选择正确指标。',
     instructions: [
       '写清楚分子、分母、统计范围和排除规则。',
-      '必要时说明时间口径，例如按到期日、放款日或快照日统计。',
-      '说明行业缩写，例如 M1+、PD、MOB 的含义。',
+      '必要时说明时间口径，例如按创建时间、支付时间或快照时间统计。',
+      '说明业务缩写或内部口径，例如 GMV、ARPU、留存率的含义。',
     ],
-    examples: ['M1+贷款余额 / 对应贷款余额，M1+ 表示逾期阶段为 M1、M2、M3、M4+。'],
+    examples: ['支付转化率 = 支付成功订单数 / 创建订单数，统计口径按订单创建时间。'],
     tips: ['描述越清楚，后续自然语言解释和指标治理越省心。'],
       },
     ],
@@ -965,7 +965,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '标识 rule_key',
         purpose: '规则在语义层里的唯一英文键。',
         instructions: ['使用英文 snake_case。', '建议表达规则适用对象和规则含义。'],
-        examples: ['m1_plus_definition', 'writeoff_filter', 'default_snapshot_date'],
+        examples: ['order_count_definition', 'status_filter', 'default_created_at'],
       },
       {
         key: 'rule_type',
@@ -973,7 +973,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '规则类型',
         purpose: '说明规则用于定义口径、过滤、时间还是约束。',
         instructions: ['口径定义：解释指标或维度含义。', '过滤规则：提供固定筛选条件。', '时间规则：定义默认时间口径。', '约束规则：限制不允许的组合。'],
-        examples: ['M1+口径选择“口径定义”', '核销识别选择“过滤规则”'],
+        examples: ['订单数口径选择“口径定义”', '状态识别选择“过滤规则”'],
       },
       {
         key: 'name',
@@ -981,7 +981,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '名称',
         purpose: '规则的中文展示名。',
         instructions: ['用短语概括规则。', '避免写成长句，详细内容放到描述。'],
-        examples: ['M1+口径', '核销识别'],
+        examples: ['订单数口径', '状态识别'],
       },
       {
         key: 'applies_to',
@@ -989,15 +989,15 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '适用对象',
         purpose: '说明这条规则约束或解释哪些指标、维度或字段。',
         instructions: ['填写语义资产键，多个用逗号或换行分隔。', '优先填写指标或维度的英文标识。'],
-        examples: ['m1_plus_rate, vintage'],
+        examples: ['order_count, product_type'],
       },
       {
         key: 'expression',
         label: '表达式',
         title: '表达式键和值',
         purpose: '用结构化方式记录规则内容，后续可用于校验或编译。',
-        instructions: ['表达式键填写规则字段，如 overdue_bucket。', '表达式值填写对应值，多个值用逗号分隔。'],
-        examples: ['overdue_bucket = M1, M2, M3, M4+'],
+        instructions: ['表达式键填写规则字段，如 status。', '表达式值填写对应值，多个值用逗号分隔。'],
+        examples: ['status = paid, shipped'],
       },
       {
         key: 'severity',
@@ -1013,7 +1013,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '描述',
         purpose: '用自然语言完整描述规则。',
         instructions: ['写清楚业务含义。', '必要时说明来源、适用范围和例外。'],
-        examples: ['M1+ 通常表示逾期阶段为 M1、M2、M3、M4+，或 DPD 大于 30 天。'],
+        examples: ['有效订单只包含已支付、已发货、已完成状态，不包含已取消或测试订单。'],
       },
     ],
   },
@@ -1027,7 +1027,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '资产类型',
         purpose: '说明被映射的语义资产属于维度、过滤项、指标还是概念。',
         instructions: ['维度：可 group by 或过滤。', '过滤项：主要用于 where 条件。', '指标：映射到表达式或字段。', '概念：映射到业务实体表。'],
-        examples: ['vintage 选择“维度”', 'is_written_off 选择“过滤项”'],
+        examples: ['product_type 选择“维度”', 'status 选择“过滤项”'],
       },
       {
         key: 'asset_key',
@@ -1035,7 +1035,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '资产键',
         purpose: '语义层引用的英文键，必须和指标可用维度、规则或概念保持一致。',
         instructions: ['填写语义资产键，不是中文名。', '同一个键应保持唯一业务含义。'],
-        examples: ['vintage', 'mob', 'risk_grade'],
+        examples: ['product_type', 'region', 'channel'],
       },
       {
         key: 'role',
@@ -1043,7 +1043,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '角色',
         purpose: '告诉编译器这个映射在 SQL 中主要扮演什么角色。',
         instructions: ['维度用于分组。', '过滤用于 where。', '时间用于时间过滤。', '度量用于聚合计算。'],
-        examples: ['disburse_month 的角色是“维度”', 'snapshot_date 的角色是“时间”'],
+        examples: ['product_type 的角色是“维度”', 'created_at 的角色是“时间”'],
       },
       {
         key: 'table_name',
@@ -1051,7 +1051,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '表名',
         purpose: '映射到哪张真实数据库表。',
         instructions: ['填写已采集 Schema 里的英文表名。', '不要填写中文表名。'],
-        examples: ['loan_account_indicator'],
+        examples: ['orders'],
       },
       {
         key: 'column_name',
@@ -1059,7 +1059,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '字段名',
         purpose: '映射到表里的哪个真实字段。',
         instructions: ['填写字段英文名。', '如果不是单字段映射，可留空并填写表达式。'],
-        examples: ['disburse_month', 'mob', 'risk_grade_at_origination'],
+        examples: ['product_type', 'region', 'region'],
       },
       {
         key: 'expression_sql',
@@ -1067,7 +1067,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '表达式',
         purpose: '当语义资产不是单一字段，而是计算表达式时使用。',
         instructions: ['只填写 SQL 表达式。', '能用字段名解决时优先用字段名。'],
-        examples: ["CASE WHEN is_written_off = 1 THEN '已核销' ELSE '未核销' END"],
+        examples: ["CASE WHEN status = 'paid' THEN '已支付' ELSE '未支付' END"],
       },
       {
         key: 'data_type',
@@ -1089,7 +1089,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '标识 template_key',
         purpose: '模板在语义层里的唯一英文键。',
         instructions: ['使用英文 snake_case。', '建议按意图类型命名。'],
-        examples: ['metric_query', 'vintage_analysis'],
+        examples: ['metric_query', 'product_type_analysis'],
       },
       {
         key: 'intent_type',
@@ -1097,7 +1097,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '意图类型',
         purpose: '说明模板处理哪类用户问题。',
         instructions: ['指标查询：统计分析类问题。', '元数据查询：问表、字段、口径。', '普通问答：不走 SQL 的回答。'],
-        examples: ['本月 M1+ 逾期率选择“指标查询”'],
+        examples: ['本月订单数选择“指标查询”'],
       },
       {
         key: 'name',
@@ -1105,7 +1105,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '名称',
         purpose: '模板中文名，方便配置人员识别。',
         instructions: ['用短语描述模板用途。', '不要和标识重复。'],
-        examples: ['指标查询', 'Vintage 分析'],
+        examples: ['指标查询', '分类分析'],
       },
       {
         key: 'required_slots',
@@ -1137,7 +1137,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         title: '示例问法',
         purpose: '给模型参考典型用户表达，提升意图识别和槽位抽取稳定性。',
         instructions: ['每行一个真实问法。', '覆盖常见指标、维度和时间表达。'],
-        examples: ['本月现金贷 M1+逾期率怎么算', '按 Vintage 看放款后 MOB3 的风险表现'],
+        examples: ['本月订单数是多少', '按产品类型看近三个月销售额趋势'],
       },
       {
         key: 'description',
@@ -2027,27 +2027,13 @@ function formatAssetDetailValue(key: string, value: unknown) {
   return { value: text, multiline: text.length > 80 || text.includes('\n') }
 }
 
-const _labelMap: Record<string, string> = {
-  approval_rate: '审批通过率', disbursement_amount: '放款金额', outstanding_balance: '贷款余额',
-  m1_plus_rate: 'M1+逾期率', mob: '账龄', dpd: '逾期天数', vintage: '放款批次',
-  pd: '预测违约概率', dti: '负债收入比', writeoff_amount: '核销金额',
-  collection_recovery_rate: '催收回收率', product_type: '产品类型', region: '地区',
-  application_count: '申请笔数', application_product_type: '申请产品类型',
-  application_region: '申请地区', application_risk_grade: '申请风险等级',
-  channel: '渠道', risk_grade: '风险等级', overdue_bucket: '逾期阶段',
-  assigned_team: '催收团队', collection_strategy: '催收策略',
-  overdue_bucket_at_entry: '入催逾期阶段', customer_segment: '客户分层',
-  is_written_off: '核销标识',
-}
-
 function semanticLabel(key: string) {
-  if (_labelMap[key]) return _labelMap[key]
   for (const metric of assets.value.metric || []) {
     if (metric.metric_key === key && metric.name) return String(metric.name)
   }
   for (const mapping of assets.value.mapping || []) {
     if (mapping.asset_key === key) {
-      const desc = mapping.description || mapping.column_name
+      const desc = mapping.description || mapping.column_name || mapping.expression_sql
       if (desc) return String(desc)
     }
   }
@@ -2104,35 +2090,12 @@ function assetTypeLabel(type: string) {
 }
 
 function tableNameLabel(tableName: string) {
-  const map: Record<string, string> = {
-    loan_application_indicator: '贷款申请指标表',
-    loan_account_indicator: '贷款账户指标表',
-    loan_repayment_period_indicator: '分期还款表现指标表',
-    collection_case_indicator: '贷后催收处置指标表',
-    customer_risk_monthly_indicator: '客户月度风险指标表',
-  }
-  return map[tableName] || tableName
+  return tableName || '-'
 }
 
 function columnNameLabel(assetKey: string, columnName: string) {
-  const map: Record<string, string> = {
-    product_type: '产品类型',
-    application_product_type: '申请产品类型',
-    application_region: '申请地区',
-    application_risk_grade: '申请风险等级',
-    vintage: '放款月份',
-    mob: '账龄月数',
-    region: '区域',
-    channel: '渠道',
-    risk_grade: '放款时风险等级',
-    overdue_bucket: '逾期阶段',
-    is_written_off: '是否核销',
-    assigned_team: '分配团队',
-    collection_strategy: '催收策略',
-    overdue_bucket_at_entry: '入催逾期阶段',
-    customer_segment: '客群类型',
-  }
-  return map[assetKey] || semanticLabel(assetKey) || columnName
+  const label = semanticLabel(assetKey)
+  return label && label !== assetKey ? label : columnName || '-'
 }
 </script>
 

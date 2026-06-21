@@ -69,6 +69,9 @@
   补齐申请表相关映射的中文名、表中文名、字段中文名展示，避免新增资产在管理台回退显示英文 key
 - [x] 模型配置 Key 返显与保留:
   编辑模型配置时显示已配置 Key 的掩码状态；不修改 Key 直接保存会保留原密钥，输入新 Key 才覆盖
+- [x] 语义层去隐藏文件化:
+  `loan_risk.json` 迁入 `examples/loan/semantic-domain.json` 作为显式导入的示例导出包；
+  迁移、运行时、主前端页面和通用 seed 路径不再默认读取信贷业务口径文件，页面配置和管理库成为语义资产唯一真相源
 
 ---
 
@@ -180,8 +183,11 @@
   日志脱敏关键词扩展到 `dsn/connection_string/private_key/credential` 等字段，生产模式缺少关键安全配置会拒绝启动。
 - [ ] code review 后续重构:
   `app/main.py` 和 `frontend/src/views/ChatView.vue` 仍较大，后续按 API/SSE/history/trace helper 与 Chat 子组件逐步拆分；
+  复杂 SQL 安全校验可继续评估 AST 解析库。
+- [x] 领域硬编码去文件化收口:
   贷款申请数、排名、趋势、MOB、高 PD、催收回收率、业务表召回和客户年龄字段提示等核心业务口径已下沉到语义层规则；
-  后续继续把前端示例文案、管理台默认模板和报表建议从信贷样例泛化为行业模板，复杂 SQL 安全校验可继续评估 AST 解析库。
+  前端示例问题、语义层配置指引、管理台字段中文名和后端报告建议不再以信贷样例作为默认口径；
+  信贷资产仅保留在 `examples/loan/`，用于演示导入和案例回归测试。
 - [x] 推理模型 reasoning_content 控制:
   LLM prompt 日志、SSE 日志、reasoning trace 和 streamText 都增加长度上限；历史会话恢复保留最近有效内容，避免超长思考过程拖垮日志和前端。
 - [x] 超宽表和超大结果集体验:

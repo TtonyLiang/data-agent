@@ -1,3 +1,19 @@
+"""深度分析管线 —— Phase 3 的 5 个节点:语义一致性检查 → 分析计划 → Python 生成 → Python 分析 → 报告生成。
+
+本模块是问数链路中最复杂的文件(1900+ 行),包含 Phase 3 深度分析的完整流程:
+
+1. ``semantic_check_node``:SQL 执行前的语义一致性校验(检查 SQL 是否忠实于 LogicForm)。
+2. ``planner_node``:根据用户问题和数据结果,规划深度分析计划(趋势/排名/分布/异常)。
+3. ``python_generate_node``:调用 LLM 生成 pandas/matplotlib 分析脚本。
+4. ``python_analyze_node``:在受限环境(PythonExecutor)中执行分析脚本,支持多轮修复。
+5. ``report_generator_node``:把分析结果组装为结构化 Markdown 报告。
+
+辅助函数:
+- Python 安全校验:AST 白名单校验、禁止函数/模块检测。
+- 报告构建:标题/摘要/亮点/背景/过程/解读/建议/图表/表格的模板化组装。
+- 报告→流式文本:把结构化报告转为逐段流式输出。
+"""
+
 from __future__ import annotations
 
 import ast
@@ -744,9 +760,16 @@ async def generate_python_code_with_llm(state: dict, profile: dict[str, Any]) ->
         semantic_domain_id=domain.get("id") if isinstance(domain, dict) else None,
         variables=phase3_prompt_variables(state, profile),
     )
+    user_prompt = await get_prompt_service().resolve(
+        "phase3_python_generate.user",
+        PYTHON_GENERATE_USER_PROMPT,
+        agent_id=state.get("agent_id"),
+        semantic_domain_id=domain.get("id") if isinstance(domain, dict) else None,
+        variables=phase3_prompt_variables(state, profile),
+    )
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": PYTHON_GENERATE_USER_PROMPT},
+        {"role": "user", "content": user_prompt},
     ]
     logger.info(
         "python generate LLM call profile=%s variables=%s",
@@ -800,9 +823,16 @@ async def generate_report_markdown_with_llm(
         semantic_domain_id=domain.get("id") if isinstance(domain, dict) else None,
         variables=variables,
     )
+    user_prompt = await get_prompt_service().resolve(
+        "phase3_report_generator.user",
+        REPORT_GENERATOR_USER_PROMPT,
+        agent_id=state.get("agent_id"),
+        semantic_domain_id=domain.get("id") if isinstance(domain, dict) else None,
+        variables=variables,
+    )
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": REPORT_GENERATOR_USER_PROMPT},
+        {"role": "user", "content": user_prompt},
     ]
     logger.info(
         "report generator LLM call profile=%s variables=%s",
@@ -1446,9 +1476,9 @@ def _report_suggestions(
     if mode == "multi_series_trend":
         items.append("可继续围绕趋势拐点月份、增长最快产品类型和下滑序列做二次追问。")
         items.append(
-            "建议进一步补充渠道、区域或风险等级维度，观察不同贷款产品趋势是否存在结构性分化。"
+            "建议进一步补充渠道、区域或客群等维度，观察不同分类趋势是否存在结构性分化。"
         )
-        items.append("如需复核趋势口径，可先查看 SQL 中的时间窗口、时间粒度和产品类型分组字段。")
+        items.append("如需复核趋势口径，可先查看 SQL 中的时间窗口、时间粒度和分组字段。")
         if not rows:
             items = [
                 "可以尝试放宽时间范围或调整趋势窗口。",

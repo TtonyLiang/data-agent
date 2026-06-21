@@ -1,3 +1,19 @@
+"""LLM 统一调用服务 —— 通过 OpenAI 兼容接口接入各模型。
+
+LLMService 是所有节点调用大语言模型的统一入口,负责:
+1. 客户端管理:按 (provider, model, base_url, temperature, streaming) 缓存 ChatOpenAI 实例。
+2. 响应缓存:可选的进程内 LLM 响应缓存,减少重复调用(见 llm_cache_enabled 配置)。
+3. 日志记录:每次请求/响应都记录 prompt 组成、模型名、token 数、缓存命中等。
+4. 多种调用模式:
+   - ``chat``/``achat``:同步/异步非流式,返回完整文本。
+   - ``achat_stream``:异步流式,逐 chunk yield。
+   - ``achat_with_reasoning``:异步非流式 + reasoning_content 提取(适配 MiMo 等推理模型)。
+   - ``achat_stream_with_reasoning``:异步流式 + reasoning 提取。
+
+``resolve_agent_chat_kwargs`` 根据 agent_id 解析绑定的模型配置,
+无绑定时回退到环境默认配置(LLM_MODEL / LLM_BASE_URL 等)。
+"""
+
 import hashlib
 import logging
 import time
@@ -18,12 +34,13 @@ logger = logging.getLogger(__name__)
 
 
 class LLMService:
-    """统一 LLM 调用服务，通过 OpenAI 兼容接口接入各模型."""
+    """统一 LLM 调用服务,通过 OpenAI 兼容接口接入各模型。"""
 
+    # 本地兼容端点(如 Ollama)不需要真实 API Key,用此占位值
     API_KEY_PLACEHOLDER = "not-needed"
 
     def __init__(self):
-        """Initialize model client and response caches for this process."""
+        """初始化模型客户端缓存和响应缓存。"""
         self._settings = get_settings()
         self._clients: dict[str, ChatOpenAI] = {}
         self._response_cache: dict[str, tuple[float, str]] = {}
@@ -37,7 +54,11 @@ class LLMService:
         temperature: float = 0,
         streaming: bool = True,
     ) -> ChatOpenAI:
-        """Return a cached OpenAI-compatible client for the resolved model settings."""
+        """返回缓存的 OpenAI 兼容客户端。
+
+        缓存键由 (provider, base_url, model, temperature, streaming, api_key_digest) 组成,
+        相同参数复用同一客户端实例,避免重复创建连接。
+        """
         provider = provider or self._settings.llm_provider
         model = model or self._settings.llm_model
         if not base_url:
@@ -69,7 +90,11 @@ class LLMService:
         return self._clients[key]
 
     def _resolve_provider(self, provider: str) -> tuple[str, str]:
-        """Resolve base URL and API key from the configured provider name."""
+        """根据供应商名称解析 base_url 和 api_key。
+
+        当前所有供应商共用环境变量中的 llm_base_url/llm_api_key,
+        通过 provider 字段区分(实际 API 调用不依赖此值)。
+        """
         s = self._settings
         providers = {
             "deepseek": (s.llm_base_url, s.llm_api_key),
@@ -82,18 +107,16 @@ class LLMService:
         return s.llm_base_url, s.llm_api_key
 
     def _normalize_api_key(self, api_key: str | None) -> str:
-        """Supply a placeholder key when a local compatible endpoint accepts keyless calls."""
-        # OpenAI-compatible SDKs still require an api_key argument even when
-        # local endpoints such as Ollama do not validate it.
+        """确保 api_key 非空:本地兼容端点(如 Ollama)不校验 Key,但 SDK 要求非空。"""
         value = (api_key or "").strip()
         return value or self.API_KEY_PLACEHOLDER
 
     def _api_key_cache_token(self, api_key: str) -> str:
-        """Return a short non-secret digest for client cache keys and diagnostics."""
+        """返回 api_key 的短摘要(非密文),用于缓存键和诊断日志。"""
         return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12]
 
     def _messages_cache_key(self, messages: list[dict[str, str]], kwargs: dict) -> str:
-        """Build a deterministic cache key from messages plus model selection parameters."""
+        """构建请求级别的缓存键(消息内容 + 模型参数),用于响应缓存匹配。"""
         payload = {
             "messages": messages,
             "provider": kwargs.get("provider") or self._settings.llm_provider,
@@ -104,7 +127,7 @@ class LLMService:
         return hashlib.sha256(repr(payload).encode("utf-8", errors="ignore")).hexdigest()
 
     def _cache_get(self, key: str) -> str | None:
-        """Return a cached response if caching is enabled and the entry has not expired."""
+        """从响应缓存取值,过期或未启用时返回 None。"""
         if not self._settings.llm_cache_enabled:
             return None
         cached = self._response_cache.get(key)
@@ -117,7 +140,7 @@ class LLMService:
         return value
 
     def _cache_put(self, key: str, value: str) -> None:
-        """Store a response in the bounded in-memory LLM response cache."""
+        """写入响应缓存,超限时淘汰最旧条目。"""
         if not self._settings.llm_cache_enabled:
             return
         if len(self._response_cache) >= self._settings.llm_cache_max_items:
@@ -129,7 +152,10 @@ class LLMService:
         self._response_cache[key] = (time.monotonic(), value)
 
     async def resolve_agent_chat_kwargs(self, agent_id: int | None) -> dict:
-        """Resolve per-agent chat-model configuration into keyword arguments for calls."""
+        """解析 agent 绑定的模型配置,转为 get_client 需要的 kwargs。
+
+        无 agent_id 或无绑定配置时返回空 dict(走环境默认值)。
+        """
         if not agent_id:
             logger.info("LLM config resolve skipped: no agent_id, using defaults")
             return {}
@@ -151,7 +177,7 @@ class LLMService:
         return kwargs
 
     def _to_lc_messages(self, messages: list[dict[str, str]]) -> list:
-        """Convert role/content dictionaries into LangChain message instances."""
+        """把 role/content 字典列表转为 LangChain 消息对象列表。"""
         lc_messages = []
         for m in messages:
             if m["role"] == "system":
@@ -168,7 +194,7 @@ class LLMService:
         model: str | None = None,
         streaming: bool = False,
     ) -> None:
-        """Log prompt messages exactly as sent to the model, with configured truncation."""
+        """记录 prompt 请求日志(消息组成 + 详细内容预览)。"""
         message_summary = [
             {
                 "role": message.get("role", ""),
@@ -183,6 +209,7 @@ class LLMService:
             len(messages),
             json_for_log(message_summary),
         )
+        # 详细日志模式下记录完整 prompt 内容
         if getattr(
             self._settings,
             "detailed_data_logging_enabled",
@@ -191,7 +218,7 @@ class LLMService:
             rendered = "\n".join(
                 f"[{message.get('role', '')}] {message.get('content', '')}" for message in messages
             )
-            rendered = truncate_text(rendered, self._settings.max_llm_prompt_log_chars)
+            rendered = safe_truncate_text(rendered, self._settings.max_llm_prompt_log_chars)
             logger.info(
                 "LLM request preview model=%s messages:\n%s",
                 model or self._settings.llm_model,
@@ -207,7 +234,7 @@ class LLMService:
         cache_hit: bool = False,
         reasoning: str = "",
     ) -> None:
-        """Log a bounded preview of model output and reasoning output."""
+        """记录响应日志(content 长度 + reasoning 长度 + 详细预览)。"""
         logger.info(
             "LLM response model=%s streaming=%s cache_hit=%s content_chars=%s reasoning_chars=%s",
             model or self._settings.llm_model,
@@ -220,15 +247,15 @@ class LLMService:
             logger.info(
                 "LLM response preview model=%s content=%s reasoning=%s",
                 model or self._settings.llm_model,
-                truncate_text(content, getattr(self._settings, "max_llm_prompt_log_chars", 8000)),
-                truncate_text(
+                safe_truncate_text(content, getattr(self._settings, "max_llm_prompt_log_chars", 8000)),
+                safe_truncate_text(
                     reasoning,
                     getattr(self._settings, "max_reasoning_trace_chars", 12000),
                 ),
             )
 
     def chat(self, messages: list[dict[str, str]], **kwargs) -> str:
-        """Synchronously invoke a chat model and return text content."""
+        """同步调用 chat 模型,返回完整文本。"""
         self.log_prompt_messages(
             messages,
             model=kwargs.get("model"),
@@ -248,7 +275,7 @@ class LLMService:
         return content
 
     async def achat(self, messages: list[dict[str, str]], **kwargs) -> str:
-        """Invoke a chat model from async code without blocking the event loop."""
+        """异步调用 chat 模型,返回完整文本。"""
         self.log_prompt_messages(
             messages,
             model=kwargs.get("model"),
@@ -269,7 +296,14 @@ class LLMService:
         return content
 
     async def achat_stream(self, messages: list[dict[str, str]], **kwargs):
-        """Yield streaming chat chunks, using a fallback stream API when event streaming fails."""
+        """异步流式调用,逐 chunk yield。
+
+        实现策略:
+        1. 优先用 astream_events(version='v2') 获取结构化事件流,
+           从中提取 on_chat_model_stream 事件的 chunk。
+        2. 如果 astream_events 失败(如 API 不兼容),回退到 astream。
+        3. 全程记录 chunk 数和 content 总字符数。
+        """
         self.log_prompt_messages(
             messages,
             model=kwargs.get("model"),
@@ -280,6 +314,7 @@ class LLMService:
         content_chars = 0
         chunk_count = 0
         try:
+            # 优先用 astream_events:支持 reasoning 等结构化事件
             async for event in client.astream_events(lc_messages, version="v2"):
                 if event.get("event") != "on_chat_model_stream":
                     continue
@@ -289,6 +324,7 @@ class LLMService:
                     content_chars += len(str(getattr(chunk, "content", "") or ""))
                     yield chunk
         except Exception:
+            # 回退:直接用 astream,逐 chunk yield
             async for chunk in client.astream(lc_messages):
                 chunk_count += 1
                 content_chars += len(str(getattr(chunk, "content", "") or ""))
@@ -304,7 +340,13 @@ class LLMService:
     async def achat_with_reasoning(
         self, messages: list[dict[str, str]], **kwargs
     ) -> tuple[str, str]:
-        """返回 (content, reasoning_content). 捕获 MiMo 等推理模型的思考过程."""
+        """异步调用并返回 (content, reasoning_content)。
+
+        适配 MiMo 等推理模型:reasoning_content 可能在:
+        - resp.additional_kwargs.reasoning_content
+        - resp.response_metadata.reasoning_content
+        两个位置,按顺序尝试提取。
+        """
         self.log_prompt_messages(
             messages,
             model=kwargs.get("model"),
@@ -329,24 +371,30 @@ class LLMService:
             except ValueError:
                 self.log_response_text(cached, model=kwargs.get("model"), cache_hit=True)
                 return cached, ""
+
         client = self.get_client(**kwargs, streaming=False)
         lc_messages = self._to_lc_messages(messages)
         resp = await client.ainvoke(lc_messages)
         content = str(resp.content or "")
+
+        # MiMo 推理模型适配:reasoning_content 在 additional_kwargs 或 response_metadata 中
         reasoning = ""
-        # MiMo 返回 reasoning_content 在 additional_kwargs 中
         if hasattr(resp, "additional_kwargs"):
             reasoning = resp.additional_kwargs.get("reasoning_content", "")
-        # 也检查 response_metadata
         if not reasoning and hasattr(resp, "response_metadata"):
             reasoning = resp.response_metadata.get("reasoning_content", "")
-        reasoning = truncate_text(str(reasoning or ""), self._settings.max_reasoning_trace_chars)
+
+        reasoning = safe_truncate_text(str(reasoning or ""), self._settings.max_reasoning_trace_chars)
+        # 缓存时把 content 和 reasoning 拼接,用分隔符隔开
         self._cache_put(cache_key, f"{content}\n---REASONING---\n{reasoning}")
         self.log_response_text(content, model=kwargs.get("model"), reasoning=reasoning)
         return content, reasoning
 
     async def achat_stream_with_reasoning(self, messages: list[dict[str, str]], **kwargs):
-        """流式返回，yield (content_delta, reasoning_delta) 元组."""
+        """异步流式调用,逐 chunk yield (content_delta, reasoning_delta) 元组。
+
+        用于需要同时转发 content 和 reasoning 流的节点(如 semantic_enhance)。
+        """
         self.log_prompt_messages(
             messages,
             model=kwargs.get("model"),
@@ -367,6 +415,7 @@ class LLMService:
                     reasoning = chunk.additional_kwargs.get("reasoning_content", "")
                 yield content, reasoning
         except Exception:
+            # 回退:直接用 astream
             async for chunk in client.astream(lc_messages):
                 content = chunk.content or ""
                 reasoning = ""
@@ -375,11 +424,12 @@ class LLMService:
                 yield content, reasoning
 
 
+# 全局单例
 _llm_service: LLMService | None = None
 
 
 def get_llm_service() -> LLMService:
-    """Return the process-wide LLM service singleton."""
+    """返回进程级 LLM 服务单例。"""
     global _llm_service
     if _llm_service is None:
         _llm_service = LLMService()
@@ -387,5 +437,5 @@ def get_llm_service() -> LLMService:
 
 
 def truncate_text(text: str, limit: int) -> str:
-    """Compatibility wrapper for older imports that expect truncation in this module."""
+    """向后兼容的截断函数,实际委托给 logging_helpers。"""
     return safe_truncate_text(text, limit)

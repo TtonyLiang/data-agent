@@ -1,11 +1,14 @@
 import pytest
 from pathlib import Path
+import json
 
 from app.agent.nodes import schema_recall
 from app.agent.nodes.nl2sql_fallback import build_schema_context
 from app.agent.nodes.schema_recall import select_tables_by_score
 from app.models.system_parameter import SchemaRecallSettings
-from scripts import seed_loan_semantic_runtime as seed
+
+
+EXAMPLE_SEMANTIC_PATH = Path("examples/loan/semantic-domain.json")
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +29,7 @@ def fake_schema_recall_settings(monkeypatch):
 
 
 def loan_recall_rules():
-    payload = seed.load_semantic_file()
+    payload = json.loads(EXAMPLE_SEMANTIC_PATH.read_text(encoding="utf-8"))
     return [
         item for item in payload.get("rules", []) if item.get("rule_type") == "recall"
     ]

@@ -1,6 +1,6 @@
 from datetime import date
 
-from scripts import seed_loan_indicators as seed
+from examples.loan import seed_loan_indicators as seed
 
 TABLE_NAMES = [
     "loan_application_indicator",

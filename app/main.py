@@ -1,3 +1,23 @@
+"""WenQu 问数后端入口 —— FastAPI 应用、SSE 流式接口与会话管理。
+
+本模块是整个后端的启动入口,提供:
+1. FastAPI 应用初始化(lifespan hook 运行迁移)。
+2. SSE 流式问数接口(/api/chat/stream):完整的节点事件流、token 流、报告流。
+3. 同步问数接口(/api/chat):非流式调用。
+4. SQL 确认执行接口(/api/chat/confirm-sql):Human-in-the-loop。
+5. 会话管理接口(列表、历史、删除)。
+6. 子路由注册(agent/datasource/semantic/model-config/prompt/system/feedback)。
+
+SSE 事件类型:
+- node_start/node_progress/node_complete:节点生命周期
+- reasoning:模型思考过程
+- token:流式输出内容
+- answer_start/answer_delta/answer_complete:最终回答
+- result:完整结果(JSON)
+- error:异常
+- done:结束
+"""
+
 import asyncio
 import json
 import logging
@@ -33,6 +53,8 @@ ANSWER_CHUNK_SIZE = 32
 STREAM_PROGRESS_INTERVAL_SECONDS = 0.5
 MIN_NODE_DISPLAY_SECONDS = 1.0
 logger = logging.getLogger(__name__)
+
+# 需要通过 wenqu_token custom event 转发流式输出的节点(不走 on_chat_model_stream)
 CUSTOM_STREAM_NODES = {
     "semantic_enhance",
     "nl2lf_generate",
@@ -40,6 +62,27 @@ CUSTOM_STREAM_NODES = {
     "python_generate",
     "python_analyze",
     "report_generator",
+}
+
+# 节点内部名称 → 中文展示名映射,用于 SSE 事件和前端展示
+NODE_LABELS = {
+    "intent_recognition": "意图识别",
+    "semantic_enhance": "语义增强",
+    "semantic_runtime_recall": "知识召回",
+    "schema_recall": "数据定位",
+    "clarification": "低置信度追问",
+    "nl2lf_generate": "LogicForm 生成",
+    "lf_validate": "语义校验",
+    "lf_to_sql_compile": "SQL 编译",
+    "nl2sql_fallback": "NL2SQL 兜底",
+    "semantic_check": "语义一致性检查",
+    "sql_confirmation": "执行确认",
+    "lf_repair": "LF 修复",
+    "sql_execute": "SQL 执行",
+    "planner": "分析计划",
+    "python_generate": "Python 生成",
+    "python_analyze": "Python 分析",
+    "report_generator": "报告生成",
 }
 
 
@@ -210,27 +253,6 @@ async def chat_stream(request: dict):
     await validate_datasource_access(agent_id, datasource_id)
 
     history = await load_history(agent_id, session_id, limit=5)
-
-    # 节点中文名映射
-    NODE_LABELS = {
-        "intent_recognition": "意图识别",
-        "semantic_enhance": "语义增强",
-        "semantic_runtime_recall": "知识召回",
-        "schema_recall": "数据定位",
-        "clarification": "低置信度追问",
-        "nl2lf_generate": "LogicForm 生成",
-        "lf_validate": "语义校验",
-        "lf_to_sql_compile": "SQL 编译",
-        "nl2sql_fallback": "NL2SQL 兜底",
-        "semantic_check": "语义一致性检查",
-        "sql_confirmation": "执行确认",
-        "lf_repair": "LF 修复",
-        "sql_execute": "SQL 执行",
-        "planner": "分析计划",
-        "python_generate": "Python 生成",
-        "python_analyze": "Python 分析",
-        "report_generator": "报告生成",
-    }
 
     async def event_generator():
         stream_started_at = time.monotonic()
@@ -722,6 +744,11 @@ async def confirm_sql_execution(request: dict):
 
 
 async def pump_graph_events(graph, state: AgentState, event_queue: asyncio.Queue[dict]) -> None:
+    """从 LangGraph astream_events 泵送事件到 event_queue。
+
+    用于 SSE 流式输出:graph 事件通过 asyncio.Queue 桥接到 SSE generator,
+    实现生产者-消费者解耦。异常时放入 error 事件,结束时放入 done 事件。
+    """
     try:
         async for event in graph.astream_events(state, version="v2"):
             await event_queue.put({"kind": "event", "event": event})
@@ -799,6 +826,7 @@ async def hold_node_for_display(
 
 
 def log_sse_event(event: dict) -> None:
+    """记录 SSE 事件日志(事件名 + 压缩后的 data)。"""
     event_name = event.get("event", "")
     data = event.get("data", "{}")
     try:
@@ -816,6 +844,7 @@ def log_sse_event(event: dict) -> None:
 
 
 def compact_stream_log_payload(payload):
+    """压缩 SSE 事件的 data 用于日志:大对象(如 sql_result/report_payload)只记录摘要。"""
     if not isinstance(payload, dict):
         return payload
     settings = get_settings()
@@ -851,6 +880,7 @@ def truncate_log_values(value, limit: int):
 
 
 def format_stream_error_message(exc: Exception, label: str = "") -> str:
+    """把异常转为用户友好的错误提示(含中文原因和异常类型)。"""
     prefix = f"{label}节点失败" if label else "后端处理失败"
     detail = str(exc) or exc.__class__.__name__
     lowered = detail.lower()
@@ -882,6 +912,7 @@ def truncate_error_detail(detail: str, limit: int = 260) -> str:
 
 
 def ensure_trace_step(trace: list[dict], node: str, label: str) -> dict:
+    """确保 reasoning_trace 中存在指定节点的步骤记录,不存在则创建。"""
     for step in trace:
         if step.get("node") == node:
             return step
@@ -934,6 +965,7 @@ def append_trace_event(step: dict, message: str) -> None:
 
 
 def complete_trace_step(trace: list[dict], node: str, label: str, output: dict) -> None:
+    """标记节点步骤为 done,记录输出和摘要。"""
     step = ensure_trace_step(trace, node, label)
     step["status"] = "done"
     step["output"] = output
@@ -943,6 +975,7 @@ def complete_trace_step(trace: list[dict], node: str, label: str, output: dict) 
 
 
 def summarize_trace_step(node: str, output: dict) -> str:
+    """为每个节点生成一句中文摘要,用于 reasoning_trace 展示。"""
     if node == "intent_recognition":
         return f"→ {output.get('intent', '')}"
     if node == "semantic_enhance":
@@ -1018,6 +1051,7 @@ def summarize_trace_step(node: str, output: dict) -> str:
 
 
 def node_progress_message(node: str, index: int = 0) -> str:
+    """返回节点的进度提示消息(轮播式,按 index 取不同文案)。"""
     messages = {
         "intent_recognition": ["正在识别问题意图...", "正在判断是否进入问数链路..."],
         "semantic_enhance": ["正在补全省略的指标、维度和 TopN 口径..."],

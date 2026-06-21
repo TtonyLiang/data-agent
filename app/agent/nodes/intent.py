@@ -1,3 +1,17 @@
+"""意图识别节点 —— 判断用户问题的语义类型和置信度。
+
+IntentRecognitionNode 是 graph 的第一个节点,负责:
+1. 规则优先:基于 DATA_QUERY_KEYWORDS 等词表做快速分类(高置信度直接返回)。
+2. LLM 兜底:规则无法判定时调用大语言模型做意图分类。
+3. 历史上下文:支持结合最近会话历史判断追问意图。
+
+意图类型:
+- ``high_confidence_query``:明确的问数意图,直接进入语义增强。
+- ``followup_with_data_context``:追问意图(基于历史数据),直接进入语义增强。
+- ``needs_clarification``:低置信度,触发 clarification 节点追问用户。
+- ``out_of_scope``:超出数据查询范围,直接拒绝。
+"""
+
 import logging
 
 from app.agent.prompts import load_prompt
@@ -10,6 +24,7 @@ logger = logging.getLogger(__name__)
 INTENT_PROMPT = load_prompt("intent_recognition.system.md")
 
 
+# 数据查询类关键词 —— 命中任一即判定为高置信度问数意图
 DATA_QUERY_KEYWORDS = (
     "查询",
     "统计",
@@ -26,25 +41,13 @@ DATA_QUERY_KEYWORDS = (
     "报表",
     "金额",
     "余额",
-    "本金",
-    "放款",
-    "审批",
-    "逾期",
-    "回收",
-    "催收",
-    "核销",
-    "风险",
-    "客户",
-    "团队",
-    "vintage",
-    "mob",
-    "pd",
-    "dpd",
-    "dti",
-    "m1",
-    "m1+",
-    "m2",
-    "m3",
+    "均值",
+    "平均",
+    "最大",
+    "最小",
+    "总数",
+    "明细",
+    "top",
 )
 
 FOLLOWUP_DATA_QUERY_KEYWORDS = (

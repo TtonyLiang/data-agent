@@ -1,3 +1,14 @@
+"""语义运行时召回节点 —— 加载语义层资产并构建 SemanticRuntime。
+
+SemanticRuntimeRecallNode 负责:
+1. 按 agent_id / domain_key / domain_id 从管理库加载语义层资产。
+2. 组装 SemanticRuntime 对象(metrics/mappings/rules/concepts/relations/templates)。
+3. 向量召回(可选):从 Milvus 检索语义资产向量,作为额外证据。
+4. 向量召回失败时安全降级到关键词证据(keyword_runtime_evidence)。
+
+SemanticRuntime 贯穿后续所有语义节点(校验、编译、修复、NL2LF 后处理)。
+"""
+
 import logging
 
 from app.services.embedding_service import get_embedding_service

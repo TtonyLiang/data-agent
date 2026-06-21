@@ -1,3 +1,12 @@
+"""LF→SQL 编译节点 —— 把校验通过的 LogicForm 确定性编译为 MySQL SELECT。
+
+编译由 SemanticRuntimeService.compile_logic_form 完成,本节点负责:
+1. 从 state 中提取 logic_form 和 semantic_runtime。
+2. 调用编译服务产出 SQL。
+3. 把 SQL、used_assets、warnings 写回 state 和 execution_trace。
+4. 异常时记录错误并进入 NL2SQL 兜底。
+"""
+
 import logging
 
 from app.models.knowledge import LogicForm, SemanticRuntime

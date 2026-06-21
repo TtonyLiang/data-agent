@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from app.agent.nodes import semantic_runtime_recall
 from app.agent.nodes.nl2lf_generate import (
     augment_logic_form_with_physical_schema,
@@ -5,7 +7,7 @@ from app.agent.nodes.nl2lf_generate import (
     fallback_logic_form,
     normalize_logic_form,
 )
-from app.agent.nodes.semantic_enhance import deterministic_enhancement
+from app.agent.nodes.semantic_enhance import collect_domain_rewrites, deterministic_enhancement
 from app.models.knowledge import (
     LogicForm,
     LogicFormTemplate,
@@ -18,11 +20,14 @@ from app.models.knowledge import (
     SemanticRuntime,
 )
 from app.services.semantic_runtime import SemanticRuntimeService
-from scripts import seed_loan_semantic_runtime as seed
+from scripts import import_semantic_bundle as semantic_bundle
+
+
+EXAMPLE_SEMANTIC_PATH = Path("examples/loan/semantic-domain.json")
 
 
 def build_runtime() -> SemanticRuntime:
-    payload = seed.load_semantic_file()
+    payload = semantic_bundle.load_semantic_file(EXAMPLE_SEMANTIC_PATH)
     domain = SemanticDomain(id=1, **payload["domain"])
     return SemanticRuntime(
         domain=domain,
@@ -37,14 +42,10 @@ def build_runtime() -> SemanticRuntime:
 
 def build_domain_rewrites() -> list[dict]:
     runtime = build_runtime().model_dump()
-    rewrites = []
-    for rule in runtime.get("rules", []):
-        if rule.get("rule_type") == "rewrite":
-            rewrites.extend((rule.get("expression") or {}).get("rewrites") or [])
-    return rewrites
+    return collect_domain_rewrites(runtime.get("rules", []))
 
 
-def test_loan_risk_semantic_file_contains_core_assets():
+def test_loan_example_semantic_bundle_contains_core_assets():
     runtime = build_runtime()
 
     assert {item.concept_key for item in runtime.concepts} >= {
@@ -81,7 +82,7 @@ def test_loan_risk_semantic_file_contains_core_assets():
     }
 
 
-def test_seed_loan_semantic_runtime_uses_file_assets(monkeypatch):
+def test_import_semantic_bundle_uses_explicit_example_assets(monkeypatch):
     class FakeSemanticService:
         def __init__(self):
             self.domains = []
@@ -96,11 +97,17 @@ def test_seed_loan_semantic_runtime_uses_file_assets(monkeypatch):
             return len(self.assets)
 
     fake = FakeSemanticService()
-    monkeypatch.setattr(seed, "get_semantic_runtime_service", lambda: fake)
+    monkeypatch.setattr(semantic_bundle, "get_semantic_runtime_service", lambda: fake)
 
     import asyncio
 
-    result = asyncio.run(seed.seed_loan_semantic_runtime(agent_id=7, datasource_id=42))
+    result = asyncio.run(
+        semantic_bundle.import_semantic_bundle(
+            path=EXAMPLE_SEMANTIC_PATH,
+            agent_id=7,
+            datasource_id=42,
+        )
+    )
 
     assert result["semantic_domain"] == 1
     assert result["semantic_concept"] >= 18
@@ -371,6 +378,7 @@ def test_semantic_enhancement_clarifies_application_count_region_question():
         "贷款排名前三的申请区域是什么，分别申请了多少笔",
         [],
         build_domain_rewrites(),
+        build_runtime().model_dump(),
     )
 
     assert result is not None
@@ -380,10 +388,49 @@ def test_semantic_enhancement_clarifies_application_count_region_question():
 
 
 def test_semantic_enhancement_clarifies_application_count_trend_question():
-    result = deterministic_enhancement("各个贷款申请量变化", [], build_domain_rewrites())
+    result = deterministic_enhancement(
+        "各个贷款申请量变化",
+        [],
+        build_domain_rewrites(),
+        build_runtime().model_dump(),
+    )
 
     assert result is not None
     assert result["enhanced_question"] == "查询贷款申请按月份统计各贷款产品类型的申请笔数变化趋势。"
+
+
+def test_semantic_enhancement_preserves_explicit_balance_metric():
+    result = deterministic_enhancement(
+        "贷款排名前三的申请区域是什么，分别申请了多少笔，余额是多少",
+        [],
+        build_domain_rewrites(),
+        build_runtime().model_dump(),
+    )
+
+    assert result is not None
+    assert "申请笔数" in result["enhanced_question"]
+    assert "余额" in result["enhanced_question"]
+    assert "额外指标：余额" in result["preserved_constraints"]
+
+
+def test_normalize_logic_form_preserves_explicit_balance_metric():
+    runtime = build_runtime().model_dump()
+    logic_form = LogicForm(
+        metrics=["application_count"],
+        dimensions=["application_region"],
+        sort=[{"field": "application_count", "direction": "desc"}],
+        limit=3,
+    )
+
+    normalized = normalize_logic_form(
+        "贷款排名前三的申请区域是什么，分别申请了多少笔，余额是多少",
+        logic_form,
+        [],
+        runtime,
+    )
+
+    assert normalized.metrics == ["application_count", "outstanding_balance"]
+    assert normalized.dimensions == ["application_region"]
 
 
 def test_application_count_trend_logic_form_compiles_to_monthly_sql():

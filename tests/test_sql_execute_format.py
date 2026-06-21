@@ -7,7 +7,7 @@ def test_format_result_does_not_embed_sql_or_markdown_table():
         "SELECT * FROM loan_repayment_period_indicator",
     )
 
-    assert answer == "现金贷的 M1+逾期率为 14.26%。"
+    assert answer == "现金贷的 m1_plus_rate为 14.26%。"
     assert "SQL:" not in answer
     assert "|" not in answer
 

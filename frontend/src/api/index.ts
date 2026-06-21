@@ -172,6 +172,15 @@ export interface PromptTemplateItem {
   updated_at?: string
 }
 
+export interface PromptCatalogItem {
+  prompt_key: string
+  filename: string
+  name: string
+  description: string
+  node: string
+  template_text: string
+}
+
 export interface SystemParameterItem {
   key: string
   name: string
@@ -250,6 +259,11 @@ export async function fetchPromptTemplates(promptKey?: string): Promise<PromptTe
     params: promptKey ? { prompt_key: promptKey } : undefined,
   })
   return data.templates || []
+}
+
+export async function fetchPromptCatalog(): Promise<PromptCatalogItem[]> {
+  const { data } = await api.get<{ prompts: PromptCatalogItem[] }>('/prompt/catalog')
+  return data.prompts || []
 }
 
 export async function upsertPromptTemplate(template: PromptTemplateRequest) {

@@ -1,3 +1,19 @@
+"""日志助手 —— 全仓统一的日志脱敏、截断与节点日志标准化。
+
+本模块是所有后端模块记录日志的公共工具,提供:
+1. 敏感数据脱敏(``redact_value`` / ``redact_text``):自动识别并屏蔽 API Key、密码、
+   手机号、身份证、银行卡号、Bearer token 等。
+2. 大对象截断(``truncate_text`` / ``safe_log_value``):防止日志文件爆炸。
+3. 节点日志标准化(``log_node_start`` / ``log_node_end`` / ``log_node_error``):
+   graph 节点统一的日志骨架,带 trace_id 贯穿。
+4. 结构化序列化(``json_for_log`` / ``state_summary``):把复杂对象转为安全的日志字符串。
+
+使用原则:
+- 凡是涉及用户数据(问题、SQL、结果、API Key)的日志,都应通过本模块输出。
+- ``log_node_start/end/error`` 是 graph 节点的标准日志模式,所有节点必须使用。
+- ``json_for_log`` 递归脱敏并截断,适合记录任意 dict/list 结构。
+"""
+
 from __future__ import annotations
 
 import json
@@ -6,6 +22,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+# 敏感字段名关键字:字段名包含这些词时,value 会被替换为 ***REDACTED***
 SENSITIVE_KEYWORDS = (
     "api_key",
     "apikey",
@@ -20,6 +37,7 @@ SENSITIVE_KEYWORDS = (
     "credential",
     "credentials",
 )
+# 敏感值正则模式:在自由文本中匹配并脱敏(手机号/身份证/卡号/邮箱/Bearer token)
 SENSITIVE_VALUE_PATTERNS = (
     (re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"), "1**********"),
     (re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)"), "******************"),

@@ -1,3 +1,21 @@
+"""元数据管理服务 —— 业务库表结构的采集、查询与权限过滤。
+
+MetadataService 负责:
+1. ``list_remote_tables``:从业务库 information_schema 读取表清单(未采集的)。
+2. ``collect_schema``:采集指定表的字段、外键信息,存入管理库(meta_table/meta_column)。
+3. ``get_schema``:读取已采集的完整 schema(表 + 字段),供数据定位与 NL2SQL 使用。
+4. ``get_authorized_schema``:在 ``get_schema`` 基础上叠加权限过滤,由
+   ``PermissionService`` 根据 agent 的表/列权限规则移除或脱敏。
+
+采集流程(``collect_schema``):
+1. 从业务库 information_schema.TABLES 读取表清单,按 table_names 过滤。
+2. 对每张表读取 information_schema.COLUMNS 采集字段信息。
+3. 读取 KEY_COLUMN_USAGE 采集外键关系(用于推导 JOIN Hint)。
+4. 通过事务 REPLACE 落库(meta_table + meta_column),已有记录先删再插。
+
+注意:采集不会触及业务数据库的数据,只读取 schema 元信息。
+"""
+
 import logging
 
 from sqlalchemy import text
@@ -11,10 +29,10 @@ logger = logging.getLogger(__name__)
 
 
 class MetadataService:
-    """元数据管理服务：表/字段采集与查询."""
+    """元数据管理服务 —— 表/字段采集与查询。"""
 
     async def get_tables(self, datasource_id: int) -> list[TableMeta]:
-        """Return collected table metadata for a datasource."""
+        """返回指定数据源的已采集表元数据列表。"""
         logger.info("metadata get_tables datasource_id=%s", datasource_id)
         db = get_management_db()
         rows = await db.execute_query(
@@ -28,7 +46,7 @@ class MetadataService:
         return result
 
     async def get_columns(self, table_id: int) -> list[ColumnMeta]:
-        """Return collected column metadata for one collected table."""
+        """返回指定表的已采集字段元数据列表。"""
         logger.info("metadata get_columns table_id=%s", table_id)
         db = get_management_db()
         rows = await db.execute_query(
@@ -40,15 +58,21 @@ class MetadataService:
         return result
 
     async def list_remote_tables(self, datasource_id: int) -> list[dict]:
-        """Return remote table names/comments without collecting columns."""
+        """从业务库读取全部表清单,并标记哪些已采集、采集了多少字段。
+
+        供前端"采集表选择"页面使用,返回按采集状态和 id 排序的列表。
+        """
         logger.info("metadata list_remote_tables datasource_id=%s", datasource_id)
         biz_db = await get_datasource_db(datasource_id)
         mgmt_db = get_management_db()
+
+        # 从业务库读取全部 BASE TABLE
         remote_rows = await biz_db.execute_query(
             "SELECT TABLE_NAME, TABLE_COMMENT FROM information_schema.TABLES "
             "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' "
             "ORDER BY TABLE_NAME"
         )
+        # 从管理库读取已采集表的 id 和字段数
         collected_rows = await mgmt_db.execute_query(
             "SELECT mt.id, mt.table_name, COUNT(mc.id) AS column_count "
             "FROM meta_table mt "
@@ -77,7 +101,7 @@ class MetadataService:
         result = sorted(
             catalog,
             key=lambda row: (
-                row["table_id"] is None,
+                row["table_id"] is None,  # 未采集的排后面
                 int(row["table_id"] or 0),
                 row["table_name"],
             ),
@@ -91,7 +115,7 @@ class MetadataService:
         return result
 
     async def get_table_summaries(self, datasource_id: int) -> list[dict]:
-        """Return collected table list without expanding all columns."""
+        """返回已采集表列表(不含字段明细),供列表页展示。"""
         logger.info("metadata get_table_summaries datasource_id=%s", datasource_id)
         db = get_management_db()
         rows = await db.execute_query(
@@ -122,7 +146,7 @@ class MetadataService:
         return result
 
     async def get_schema_stats(self, datasource_id: int) -> dict:
-        """Return table/column counts and a simple noise-level recommendation."""
+        """返回已采集表/字段数量及噪音等级评估。"""
         logger.info("metadata get_schema_stats datasource_id=%s", datasource_id)
         db = get_management_db()
         rows = await db.execute_query(
@@ -138,6 +162,7 @@ class MetadataService:
         result = {
             "table_count": table_count,
             "column_count": column_count,
+            # 超过 12 张表或 600 个字段视为高噪音,建议只采集核心事实表/维表
             "noise_level": "high" if table_count > 12 or column_count > 600 else "normal",
             "recommendation": (
                 "建议只采集当前智能体会用到的核心事实表和维表，"
@@ -154,7 +179,7 @@ class MetadataService:
         return result
 
     async def get_table_detail(self, datasource_id: int, table_id: int) -> dict | None:
-        """Return one collected table with its expanded column list."""
+        """返回单张表的完整信息(含字段列表)。"""
         logger.info(
             "metadata get_table_detail datasource_id=%s table_id=%s", datasource_id, table_id
         )
@@ -182,7 +207,7 @@ class MetadataService:
         return table_data
 
     async def get_schema(self, datasource_id: int) -> list[dict]:
-        """Return collected tables with their columns for a datasource."""
+        """返回指定数据源的完整已采集 schema(表 + 字段),供数据定位与 NL2SQL 使用。"""
         logger.info("metadata get_schema datasource_id=%s", datasource_id)
         tables = await self.get_tables(datasource_id)
         schema = []
@@ -202,7 +227,13 @@ class MetadataService:
     async def get_authorized_schema(
         self, datasource_id: int, agent_id: int | None = None
     ) -> list[dict]:
-        """Return collected schema after applying the agent's permission rules."""
+        """返回经权限过滤的 schema。
+
+        与 get_schema 相比,多了 PermissionService 的表/列权限过滤:
+        - 被拒的表整体移除
+        - 被拒的列移除
+        - 配置了脱敏策略的列标记 masking_policy
+        """
         logger.info(
             "metadata get_authorized_schema datasource_id=%s agent_id=%s", datasource_id, agent_id
         )
@@ -223,18 +254,30 @@ class MetadataService:
         datasource_id: int,
         table_names: list[str] | None = None,
     ) -> list[dict]:
-        """从业务数据库采集指定表和字段信息；table_names 为空时保持兼容采集全部表."""
+        """从业务数据库采集指定表和字段元信息。
+
+        采集流程:
+        1. 从业务库 information_schema.TABLES 读取表清单
+        2. 按 table_names 过滤(为空时采集全部表)
+        3. 对每张表:读取 COLUMNS(字段) + KEY_COLUMN_USAGE(外键)
+        4. 通过事务 REPLACE 落库(已有记录先删再插)
+
+        table_names 显式传空列表时返回空结果(不采集)。
+        """
         logger.info(
             "metadata collect_schema datasource_id=%s table_names=%s", datasource_id, table_names
         )
         biz_db = await get_datasource_db(datasource_id)
         mgmt_db = get_management_db()
 
+        # 第1步:读取业务库全部 BASE TABLE
         tables = await biz_db.execute_query(
             "SELECT TABLE_NAME, TABLE_COMMENT FROM information_schema.TABLES "
             "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' "
             "ORDER BY TABLE_NAME"
         )
+
+        # 第2步:按 table_names 过滤(显式传空列表 = 不采集)
         selected_names = {name for name in (table_names or []) if name}
         if selected_names:
             tables = [row for row in tables if row["TABLE_NAME"] in selected_names]
@@ -250,6 +293,7 @@ class MetadataService:
             tname = t["TABLE_NAME"]
             tcomment = t.get("TABLE_COMMENT", "")
 
+            # 第3a步:采集字段信息(字段名/类型/注释/主键)
             columns = await biz_db.execute_query(
                 "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_COMMENT, COLUMN_KEY "
                 "FROM information_schema.COLUMNS "
@@ -258,6 +302,7 @@ class MetadataService:
                 {"tn": tname},
             )
 
+            # 第3b步:采集外键关系(用于推导 JOIN Hint)
             fk_rows = await biz_db.execute_query(
                 "SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME "
                 "FROM information_schema.KEY_COLUMN_USAGE "
@@ -271,6 +316,7 @@ class MetadataService:
                     f"{fk['REFERENCED_TABLE_NAME']}.{fk['REFERENCED_COLUMN_NAME']}"
                 )
 
+            # 第4步:通过事务 REPLACE 落库(先删旧记录再插新记录)
             table_id = await self._replace_collected_table(
                 mgmt_db,
                 datasource_id=datasource_id,
@@ -297,7 +343,10 @@ class MetadataService:
         return collected
 
     async def uncollect_schema(self, datasource_id: int, table_names: list[str]) -> list[dict]:
-        """Remove collected metadata for selected tables without touching the business database."""
+        """取消采集指定表,从管理库中删除对应的 meta_table 和 meta_column 记录。
+
+        不触及业务数据库,只清除管理库中的元数据。
+        """
         logger.info(
             "metadata uncollect_schema datasource_id=%s table_names=%s", datasource_id, table_names
         )
@@ -320,6 +369,7 @@ class MetadataService:
             if not rows:
                 continue
             table_id = rows[0]["id"]
+            # 先删字段再删表,事务保证原子性
             await db.execute_transaction(
                 [
                     ("DELETE FROM meta_column WHERE table_id = :tid", {"tid": table_id}),
@@ -354,7 +404,13 @@ class MetadataService:
         columns: list[dict],
         fk_map: dict[str, str],
     ) -> int:
+        """在单个事务中替换已采集表(先删字段再重建表记录再插字段)。
+
+        使用 execute_in_transaction 获得一个 SQLAlchemy session,
+        全部操作在同一事务内完成,保证原子性。
+        """
         async def callback(session):
+            # 1. 查找已有表记录
             existing = await session.execute(
                 text("SELECT id FROM meta_table WHERE datasource_id = :did AND table_name = :tn"),
                 {"did": datasource_id, "tn": table_name},
@@ -362,6 +418,7 @@ class MetadataService:
             row = existing.mappings().first()
             if row:
                 table_id = int(row["id"])
+                # 已有记录:更新表注释
                 await session.execute(
                     text(
                         "UPDATE meta_table SET table_comment = :tc "
@@ -370,6 +427,7 @@ class MetadataService:
                     {"did": datasource_id, "tn": table_name, "tc": table_comment},
                 )
             else:
+                # 新表:插入记录
                 inserted = await session.execute(
                     text(
                         "INSERT INTO meta_table (datasource_id, table_name, table_comment) "
@@ -379,10 +437,13 @@ class MetadataService:
                 )
                 table_id = int(inserted.lastrowid or 0)
 
+            # 2. 先删除该表的所有旧字段(确保 REPLACE 语义)
             await session.execute(
                 text("DELETE FROM meta_column WHERE table_id = :tid"),
                 {"tid": table_id},
             )
+
+            # 3. 插入新字段
             for col in columns:
                 cname = col["COLUMN_NAME"]
                 await session.execute(
@@ -407,11 +468,12 @@ class MetadataService:
         return await mgmt_db.execute_in_transaction(callback)
 
 
+# 全局单例
 _metadata_service: MetadataService | None = None
 
 
 def get_metadata_service() -> MetadataService:
-    """Return the process-wide metadata service singleton."""
+    """返回进程级元数据服务单例。"""
     global _metadata_service
     if _metadata_service is None:
         _metadata_service = MetadataService()

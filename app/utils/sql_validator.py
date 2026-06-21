@@ -1,9 +1,25 @@
+"""SQL 安全校验器 —— 保守的词法扫描,拦截危险 SQL。
+
+本模块在 SQL 执行前做安全校验,设计原则是"宁可误杀,不可放过":
+- 只允许单条 SELECT 查询。
+- 拦截 DML/DDL/权限操作(DROP/INSERT/DELETE/UPDATE/UNION 等)。
+- 拦截危险函数(SLEEP/LOAD_FILE/BENCHMARK 等)。
+- 拦截系统库和跨库访问。
+- 自动注入/截断 LIMIT(默认 1000)。
+- 注释和字符串被词法分析器正确跳过,避免注入绕过。
+
+词法扫描器(``tokenize_sql``)手工实现,不依赖第三方 SQL 解析库,
+保证轻量且可覆盖项目需要的所有 MySQL 语法。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+# SELECT 结果行数上限,防止大结果集溢出
 MAX_SELECT_LIMIT = 1000
 
+# 禁止的 SQL 关键字:DDL/DML/权限/文件操作/锁/预处理等
 FORBIDDEN_KEYWORDS = {
     "ALTER",
     "CALL",
@@ -29,6 +45,7 @@ FORBIDDEN_KEYWORDS = {
     "XA",
 }
 
+# 禁止的危险函数:时间盲注/文件读取/锁竞争等
 DANGEROUS_FUNCTIONS = {
     "BENCHMARK",
     "GET_LOCK",
@@ -38,6 +55,7 @@ DANGEROUS_FUNCTIONS = {
     "SYSDATE",
 }
 
+# 禁止访问的系统 schema
 SYSTEM_SCHEMAS = {
     "information_schema",
     "mysql",
@@ -45,7 +63,9 @@ SYSTEM_SCHEMAS = {
     "sys",
 }
 
+# FROM/JOIN 关键字:用于提取表名引用
 TABLE_SOURCE_KEYWORDS = {"FROM", "JOIN"}
+# 表名提取停止词:遇到这些关键字时停止向后扫描表名
 TABLE_SOURCE_STOPWORDS = {
     "WHERE",
     "GROUP",
@@ -137,6 +157,7 @@ def normalize_sql_for_execution(sql: str, max_limit: int = MAX_SELECT_LIMIT) -> 
 
 
 def extract_table_references(sql: str) -> list[str]:
+    """从 SQL 的 FROM/JOIN 子句中提取物理表名(用于权限校验)。"""
     """Return physical table names referenced by FROM/JOIN clauses."""
     tokens = tokenize_sql(sql)
     tables: list[str] = []
@@ -157,6 +178,18 @@ def extract_table_references(sql: str) -> list[str]:
 
 
 def tokenize_sql(sql: str) -> list[SqlToken]:
+    """SQL 词法扫描器 —— 把 SQL 字符串拆分为 token 列表。
+
+    支持的 token 类型:
+    - ``word``:标识符/关键字(字母/下划线开头,后跟字母/数字/下划线/$)
+    - ``identifier``:反引号包裹的标识符(``table``)
+    - ``string``:单引号/双引号字符串(支持转义和连续引号)
+    - ``number``:数字字面量
+    - ``symbol``:其他单字符运算符
+    - ``comment``:行注释(--/#)和块注释(/* */),会被过滤掉
+
+    注释在后续流程中被跳过,不参与安全校验。
+    """
     tokens: list[SqlToken] = []
     index = 0
     length = len(sql)
@@ -226,6 +259,7 @@ def tokenize_sql(sql: str) -> list[SqlToken]:
 
 
 def consume_quoted(sql: str, start: int, quote: str) -> int:
+    """消费一个引号字符串(支持转义 \\ 和连续引号 ''),返回结束位置。"""
     index = start + 1
     while index < len(sql):
         char = sql[index]
@@ -242,6 +276,7 @@ def consume_quoted(sql: str, start: int, quote: str) -> int:
 
 
 def consume_backtick_identifier(sql: str, start: int) -> int:
+    """消费一个反引号标识符(支持连续反引号转义 ```),返回结束位置。"""
     index = start + 1
     while index < len(sql):
         if sql[index] == "`":
@@ -299,6 +334,11 @@ def find_cross_schema_table_reference(tokens: list[SqlToken]) -> str:
 def enforce_top_level_limit(
     sql: str, tokens: list[SqlToken], max_limit: int
 ) -> SqlValidationResult:
+    """确保顶层查询有 LIMIT 且不超过 max_limit。
+
+    无 LIMIT 时自动追加;有 LIMIT 但超限时截断到 max_limit。
+    子查询中的 LIMIT 不受影响(通过 depth 计数括号层级)。
+    """
     limit_index = find_top_level_keyword(tokens, "LIMIT")
     if limit_index is None:
         return SqlValidationResult(True, "OK", f"{sql.rstrip()}\nLIMIT {max_limit}")

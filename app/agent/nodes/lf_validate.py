@@ -1,8 +1,15 @@
+"""LF 校验节点 —— 检查 LogicForm 引用的资产是否合法。
+
+校验规则由 SemanticRuntimeService.validate_logic_form 执行。
+校验失败 → 有修复机会时进入 lf_repair,否则进入 NL2SQL 兜底。
+校验通过 → 进入 lf_to_sql_compile 编译 SQL。
+"""
+
 import logging
 
 from app.models.knowledge import LogicForm, SemanticRuntime
 from app.services.semantic_runtime import get_semantic_runtime_service
-from app.utils.logging_helpers import json_for_log, log_node_end, log_node_start
+from app.utils.logging_helpers import json_for_log, log_node_end, log_node_start, log_node_error
 
 logger = logging.getLogger(__name__)
 

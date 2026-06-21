@@ -1,3 +1,16 @@
+"""SQL 执行节点 —— 安全校验、权限检查、执行查询并格式化结果。
+
+SQLExecuteNode 是问数链路的执行引擎,负责:
+1. SQL 安全校验(normalize_sql_for_execution):拦截 DML/DDL/危险函数,注入 LIMIT。
+2. 权限检查(validate_sql_access):验证 SQL 引用的表是否在 agent 白名单内。
+3. 执行查询:对业务库执行 SELECT,记录耗时、行数、SQL 预览。
+4. 行级脱敏(mask_rows):对配置了脱敏策略的列进行脱敏处理。
+5. 结果格式化(format_result):把原始行转为自然语言摘要。
+6. 慢查询告警:超过 SLOW_QUERY_THRESHOLD_SECONDS 时记录 warning。
+
+异常时记录错误并进入 lf_repair 修复链路。
+"""
+
 import logging
 import time
 
@@ -13,6 +26,7 @@ from app.utils.logging_helpers import (
 from app.utils.sql_validator import normalize_sql_for_execution
 
 logger = logging.getLogger(__name__)
+# 慢查询告警阈值(秒)
 SLOW_QUERY_THRESHOLD_SECONDS = 2.0
 
 
@@ -46,6 +60,7 @@ async def sql_execute_node(state: dict) -> dict:
         log_node_end(logger, "sql_execute", result)
         return result
 
+    # 第1步:SQL 安全校验 —— 拦截 DML/DDL/危险函数,注入 LIMIT
     validation = normalize_sql_for_execution(sql)
     logger.info(
         "sql normalize trace_id=%s ok=%s reason=%s original=%s normalized=%s",
@@ -56,6 +71,7 @@ async def sql_execute_node(state: dict) -> dict:
         truncate_text(validation.sql, 1600),
     )
     if not validation.ok:
+        # 安全校验失败:直接拦截,不进入修复链路(因为不是语义问题)
         result = {
             "sql_result": [],
             "sql_error": f"安全拦截: {validation.reason}",
@@ -65,6 +81,8 @@ async def sql_execute_node(state: dict) -> dict:
         log_node_end(logger, "sql_execute", result)
         return result
     safe_sql = validation.sql
+
+    # 第2步:权限校验 —— 检查 SQL 引用的表是否在 agent 白名单内
     access_ok, access_reason = await get_permission_service().validate_sql_access(
         agent_id, datasource_id, safe_sql
     )
@@ -94,6 +112,7 @@ async def sql_execute_node(state: dict) -> dict:
         log_node_end(logger, "sql_execute", result)
         return result
 
+    # 第3步:执行查询 —— 对业务库执行 SELECT,记录耗时和行数
     try:
         db = await get_datasource_db(datasource_id) if datasource_id else get_business_db()
         started_at = time.monotonic()
@@ -188,34 +207,6 @@ async def sql_execute_node(state: dict) -> dict:
         return result
 
 
-FIELD_LABELS = {
-    "approval_rate": "审批通过率",
-    "application_count": "申请笔数",
-    "disbursement_amount": "放款金额",
-    "outstanding_balance": "贷款余额",
-    "m1_plus_rate": "M1+逾期率",
-    "mob": "账龄",
-    "dpd": "逾期天数",
-    "vintage": "放款批次",
-    "pd": "预测违约概率",
-    "dti": "负债收入比",
-    "writeoff_amount": "核销金额",
-    "collection_recovery_rate": "催收回收率",
-    "product_type": "产品类型",
-    "application_product_type": "申请产品类型",
-    "application_region": "申请地区",
-    "application_risk_grade": "申请风险等级",
-    "region": "地区",
-    "channel": "渠道",
-    "risk_grade": "风险等级",
-    "overdue_bucket": "逾期阶段",
-    "assigned_team": "催收团队",
-    "collection_strategy": "催收策略",
-    "overdue_bucket_at_entry": "入催逾期阶段",
-    "customer_segment": "客户分层",
-}
-
-
 def format_result(results: list[dict], sql: str) -> str:
     """Generate a short natural-language answer from SQL result rows."""
     if not results:
@@ -251,8 +242,8 @@ def describe_single_row(row: dict) -> str:
 
 
 def field_label(key: str) -> str:
-    """Map technical result field names to user-facing Chinese labels."""
-    return FIELD_LABELS.get(key, key)
+    """Return a readable fallback label when no semantic label is available."""
+    return str(key or "")
 
 
 def is_number_like(value) -> bool:

@@ -1,3 +1,15 @@
+"""数据定位节点 —— 从已采集的表结构中筛选出与问题相关的候选表和字段。
+
+SchemaRecallNode 是语义增强后的第三个节点,负责:
+1. 文本匹配:把用户问题与表名/表注释/字段名/字段注释做 token 级匹配打分。
+2. 业务加权:从 semantic_runtime 中读取 recall 规则,对匹配的表做额外加分。
+3. 阈值筛选:按 required_score_ratio/optional_score_ratio 相对阈值分层筛选。
+4. 外键推断:自动发现候选表之间的外键关系,生成 JOIN Hint。
+5. 噪音控制:限制最多 max_tables 张表和 max_columns 个字段,避免大模型噪音。
+
+筛选结果存入 state.tables_columns 和 state.table_names,供 NL2LF 和 NL2SQL 兜底使用。
+"""
+
 from __future__ import annotations
 
 import logging
@@ -15,6 +27,7 @@ from app.services.system_parameter_service import get_system_parameter_service
 from app.config import get_settings
 from app.utils.logging_helpers import json_for_log, log_node_end, log_node_start, truncate_text
 
+# token 切分正则:英文/数字/下划线为一个 token,连续中文字符为一个 token
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+")
 logger = logging.getLogger(__name__)
 
@@ -87,6 +100,7 @@ async def schema_recall_node(state: dict) -> dict:
         json_for_log(recall_profiles),
     )
 
+    # 候选表打分:每张表 = 文本匹配分 + 业务优先级分 + 业务分组分
     table_scores: dict[str, dict[str, Any]] = {}
     column_hits: list[dict[str, Any]] = []
     joins: list[dict[str, Any]] = []
@@ -94,14 +108,17 @@ async def schema_recall_node(state: dict) -> dict:
     for table in schema:
         table_name = str(table.get("table_name") or "")
         table_comment = str(table.get("table_comment") or "")
+        # 信号1:表名/表注释与问题 token 的文本匹配分
         table_score, table_reasons = _score_text(
             [table_name, table_comment],
             tokens,
             semantic_terms,
         )
+        # 信号2:语义资产(指标/映射/关系)命中的业务优先级加分
         table_business = business_priority["tables"].get(table_name, {"score": 0.0, "reasons": []})
         table_score += float(table_business.get("score") or 0)
         table_reasons = [*table_business.get("reasons", []), *table_reasons]
+        # 信号3:recall 规则中的业务分组加分(如"贷款"分组加权)
         group_score, group_reasons = _score_business_groups(
             table_name, table_comment, business_groups
         )
@@ -117,14 +134,17 @@ async def schema_recall_node(state: dict) -> dict:
             "column_count": len(table.get("columns") or []),
         }
 
+        # 字段级打分:每列 = 文本匹配分 + profile 加分 + 业务优先级分 + 业务分组分
         for column in table.get("columns") or []:
             column_name = str(column.get("column_name") or "")
             column_comment = str(column.get("column_comment") or "")
+            # 信号1:字段名/字段注释/表名/表注释的文本匹配
             score, reasons = _score_text(
                 [table_name, table_comment, column_name, column_comment],
                 tokens,
                 semantic_terms,
             )
+            # 信号2:recall 规则中的 schema_hints 和 recall_profiles 加分
             profile_score, profile_reasons = _score_column_profile(
                 table_name,
                 column_name,
@@ -134,12 +154,14 @@ async def schema_recall_node(state: dict) -> dict:
             )
             score += profile_score
             reasons = [*profile_reasons, *reasons]
+            # 信号3:语义资产(指标/映射)命中的业务优先级加分
             column_business = business_priority["columns"].get(
                 (table_name, column_name),
                 {"score": 0.0, "reasons": []},
             )
             score += float(column_business.get("score") or 0)
             reasons = [*column_business.get("reasons", []), *reasons]
+            # 信号4:业务分组加分
             column_group_score, column_group_reasons = _score_business_groups(
                 f"{table_name}.{column_name}",
                 column_comment,
@@ -147,6 +169,7 @@ async def schema_recall_node(state: dict) -> dict:
             )
             score += column_group_score
             reasons = [*column_group_reasons, *reasons]
+            # 字段得分 > 0 时:给所在表加分(上限 6 分,防止单表因字段多而过度膨胀)
             if score > 0:
                 table_scores[table_name]["score"] += min(score, 6)
                 column_hits.append(

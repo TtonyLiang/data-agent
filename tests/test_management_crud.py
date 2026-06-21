@@ -433,6 +433,48 @@ async def test_model_config_connection_test_uses_openai_compatible_endpoint(monk
 
 
 @pytest.mark.asyncio
+async def test_model_config_embedding_test_uses_provider_adapter(monkeypatch):
+    class FakeModelConfigDB:
+        async def execute_query(self, sql: str, params: dict | None = None):
+            return [
+                {
+                    "id": params["id"],
+                    "name": "豆包向量",
+                    "model_type": "embedding",
+                    "provider": "字节跳动",
+                    "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+                    "model_name": "doubao-embedding-text-240515",
+                    "api_key": "secret-key",
+                    "api_key_enabled": 1,
+                    "embedding_dimension": 1024,
+                    "status": "active",
+                }
+            ]
+
+    calls = []
+
+    async def fake_request_embedding(**kwargs):
+        calls.append(kwargs)
+        return [0.1, 0.2, 0.3], {
+            "variant": "volcengine_multimodal_embeddings",
+            "status_code": 200,
+        }
+
+    monkeypatch.setattr(model_config_service, "get_management_db", lambda: FakeModelConfigDB())
+    monkeypatch.setattr(model_config_service, "request_embedding", fake_request_embedding)
+
+    result = await ModelConfigService().test_connection(1)
+
+    assert result["ok"] is True
+    assert result["variant"] == "volcengine_multimodal_embeddings"
+    assert calls[0]["provider"] == "字节跳动"
+    assert calls[0]["base_url"] == "https://ark.cn-beijing.volces.com/api/v3"
+    assert calls[0]["model"] == "doubao-embedding-text-240515"
+    assert calls[0]["headers"]["Authorization"] == "Bearer secret-key"
+    assert "secret-key" not in str(result)
+
+
+@pytest.mark.asyncio
 async def test_model_config_list_orders_by_id_asc(monkeypatch):
     class FakeModelConfigDB:
         def __init__(self):

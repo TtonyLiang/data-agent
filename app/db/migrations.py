@@ -1,9 +1,21 @@
+"""数据库迁移 —— 管理库的 DDL 自动迁移与默认数据播种。
+
+``run_management_migrations`` 在应用启动时(lifespan hook)自动执行:
+1. 建表:CREATE TABLE IF NOT EXISTS,幂等执行。
+2. 加列:ADD COLUMN IF NOT EXISTS,检查 INFORMATION_SCHEMA 后执行。
+3. 改列类型:MODIFY COLUMN,检查当前类型后执行。
+4. 播种默认数据:首次启动时插入默认模型配置和系统参数。
+5. 回填关联:为旧数据建立 agent 模型配置、语义层、数据源的关联记录。
+
+迁移脚本是幂等的,可安全重复执行。
+"""
+
 from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 
+from app.agent.prompts import default_prompt_templates
 from app.config import get_settings
 from app.db.mysql import get_management_db
 
@@ -11,7 +23,9 @@ logger = logging.getLogger(__name__)
 
 
 async def run_management_migrations() -> None:
+    """执行管理库迁移(启动时调用)。"""
     db = get_management_db()
+    # 建表语句(幂等)
     statements = [
         """
         CREATE TABLE IF NOT EXISTS model_config (
@@ -127,6 +141,7 @@ async def run_management_migrations() -> None:
     for statement in statements:
         await db.execute_query(statement)
 
+    # 加列(幂等:先检查 INFORMATION_SCHEMA)
     await add_column_if_missing(
         "agent",
         "chat_model_config_id",
@@ -186,6 +201,7 @@ async def run_management_migrations() -> None:
         "ALTER TABLE chat_history ADD COLUMN report_payload JSON DEFAULT NULL "
         "COMMENT '结构化分析报告' AFTER python_result",
     )
+    # 改列类型:sql_result 从 VARCHAR 升级为 LONGTEXT(支持大结果集)
     await ensure_column_type(
         "chat_history",
         "sql_result",
@@ -195,15 +211,20 @@ async def run_management_migrations() -> None:
             "COMMENT 'SQL执行结果(JSON)'"
         ),
     )
+
+    # 播种默认数据(首次启动时)
     await seed_default_model_configs()
     await seed_default_system_parameters()
+    await seed_default_prompt_templates()
+
+    # 回填关联(旧数据兼容)
     await backfill_agent_model_configs()
     await backfill_agent_semantic_domains()
     await backfill_agent_datasources()
-    await backfill_loan_domain_rules()
 
 
 async def add_column_if_missing(table: str, column: str, statement: str) -> None:
+    """幂等加列:先查 INFORMATION_SCHEMA,不存在时才执行 ALTER。"""
     db = get_management_db()
     exists = await db.execute_query(
         "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
@@ -215,6 +236,7 @@ async def add_column_if_missing(table: str, column: str, statement: str) -> None
 
 
 async def ensure_column_type(table: str, column: str, expected_type: str, statement: str) -> None:
+    """幂等改列类型:先查当前类型,不匹配时才执行 ALTER。"""
     db = get_management_db()
     rows = await db.execute_query(
         "SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
@@ -229,8 +251,10 @@ async def ensure_column_type(table: str, column: str, expected_type: str, statem
 
 
 async def seed_default_model_configs() -> None:
+    """首次启动时播种默认模型配置(从环境变量读取)。"""
     db = get_management_db()
     s = get_settings()
+    # 大语言模型
     chat_count = await db.execute_scalar(
         "SELECT COUNT(*) FROM model_config WHERE model_type = 'chat'"
     )
@@ -250,6 +274,7 @@ async def seed_default_model_configs() -> None:
                 "enabled": int(bool(s.llm_api_key)),
             },
         )
+    # 向量模型
     embedding_count = await db.execute_scalar(
         "SELECT COUNT(*) FROM model_config WHERE model_type = 'embedding'"
     )
@@ -273,6 +298,7 @@ async def seed_default_model_configs() -> None:
 
 
 async def seed_default_system_parameters() -> None:
+    """首次启动时播种默认系统参数(数据定位阈值)。"""
     db = get_management_db()
     settings = get_settings()
     params = [
@@ -316,7 +342,41 @@ async def seed_default_system_parameters() -> None:
     await db.execute_transaction(statements)
 
 
+async def seed_default_prompt_templates() -> None:
+    """Seed editable global prompt templates from app/agent/prompts/*.md."""
+    db = get_management_db()
+    statements = []
+    for item in default_prompt_templates():
+        exists = await db.execute_scalar(
+            "SELECT COUNT(*) FROM prompt_template "
+            "WHERE prompt_key = :prompt_key "
+            "AND agent_id IS NULL AND model_config_id IS NULL AND semantic_domain_id IS NULL",
+            {"prompt_key": item["prompt_key"]},
+        )
+        if exists:
+            continue
+        statements.append(
+            (
+                "INSERT INTO prompt_template "
+                "(prompt_key, name, description, agent_id, model_config_id, "
+                "semantic_domain_id, template_text, status) "
+                "VALUES (:prompt_key, :name, :description, NULL, NULL, NULL, "
+                ":template_text, 'active')",
+                {
+                    "prompt_key": item["prompt_key"],
+                    "name": item["name"],
+                    "description": f"{item['description']} 默认来源：app/agent/prompts/{item['filename']}",
+                    "template_text": item["template_text"],
+                },
+            )
+        )
+    if statements:
+        await db.execute_transaction(statements)
+        logger.info("seeded default prompt templates count=%s", len(statements))
+
+
 async def backfill_agent_model_configs() -> None:
+    """回填:为旧数据中没有 chat_model_config_id / embedding_model_config_id 的 agent 建立关联。"""
     db = get_management_db()
     await db.execute_query(
         "UPDATE agent SET chat_model_config_id = "
@@ -331,6 +391,7 @@ async def backfill_agent_model_configs() -> None:
 
 
 async def backfill_agent_semantic_domains() -> None:
+    """回填:为旧数据中没有 semantic_domain_id 的 agent 建立关联(取最新语义层)。"""
     db = get_management_db()
     await db.execute_query(
         "UPDATE agent a SET semantic_domain_id = "
@@ -341,64 +402,9 @@ async def backfill_agent_semantic_domains() -> None:
 
 
 async def backfill_agent_datasources() -> None:
+    """回填:为旧数据中 datasource.agent_id 有值但 agent_datasource 无记录的建立关联。"""
     db = get_management_db()
     await db.execute_query(
         "INSERT IGNORE INTO agent_datasource (agent_id, datasource_id) "
         "SELECT agent_id, id FROM datasource WHERE agent_id IS NOT NULL"
-    )
-
-
-async def backfill_loan_domain_rules() -> None:
-    """Upsert productized loan-domain rules into existing loan_risk semantic layers."""
-    semantic_path = Path("data/semantic/loan_risk.json")
-    if not semantic_path.exists():
-        logger.info("loan semantic rules backfill skipped: %s missing", semantic_path)
-        return
-    payload = json.loads(semantic_path.read_text(encoding="utf-8"))
-    rule_payloads = [
-        item
-        for item in payload.get("rules", [])
-        if str(item.get("rule_type") or "") in {"normalization", "recall", "rewrite"}
-    ]
-    if not rule_payloads:
-        return
-    db = get_management_db()
-    domains = await db.execute_query(
-        "SELECT id FROM semantic_domain WHERE domain_key = 'loan_risk'"
-    )
-    if not domains:
-        logger.info("loan semantic rules backfill skipped: no loan_risk domains")
-        return
-
-    statements: list[tuple[str, dict | None]] = []
-    for domain in domains:
-        domain_id = int(domain["id"])
-        for rule in rule_payloads:
-            statements.append(
-                (
-                    "INSERT INTO semantic_rule "
-                    "(domain_id, rule_key, rule_type, name, description, expression, applies_to, severity) "
-                    "VALUES (:domain_id, :rule_key, :rule_type, :name, :description, "
-                    ":expression, :applies_to, :severity) "
-                    "ON DUPLICATE KEY UPDATE "
-                    "rule_type = VALUES(rule_type), name = VALUES(name), "
-                    "description = VALUES(description), expression = VALUES(expression), "
-                    "applies_to = VALUES(applies_to), severity = VALUES(severity)",
-                    {
-                        "domain_id": domain_id,
-                        "rule_key": rule.get("rule_key"),
-                        "rule_type": rule.get("rule_type"),
-                        "name": rule.get("name"),
-                        "description": rule.get("description") or "",
-                        "expression": json.dumps(rule.get("expression") or {}, ensure_ascii=False),
-                        "applies_to": json.dumps(rule.get("applies_to") or [], ensure_ascii=False),
-                        "severity": rule.get("severity") or "info",
-                    },
-                )
-            )
-    await db.execute_transaction(statements)
-    logger.info(
-        "loan semantic rules backfilled domains=%s rules=%s",
-        len(domains),
-        len(rule_payloads),
     )

@@ -82,7 +82,7 @@
             <el-icon :size="28"><ChatDotRound /></el-icon>
           </div>
           <h3>输入自然语言，开始查询数据</h3>
-          <p>支持贷款风控指标、Vintage、逾期、核销和催收回收分析。</p>
+          <p>{{ semanticHintText }}</p>
           <div class="empty-examples">
             <el-button v-for="query in quickQueries.slice(0, 3)" :key="query" @click="useQuickQuery(query)">
               {{ query }}
@@ -665,7 +665,9 @@
     <el-dialog
       v-model="showReportDialog"
       class="report-dialog"
+      modal-class="report-dialog-overlay"
       width="min(1120px, 92vw)"
+      align-center
       append-to-body
       destroy-on-close
     >
@@ -839,6 +841,8 @@ const sessions = ref<SessionItem[]>([])
 const sessionId = ref<string>('')
 const messagesRef = ref<HTMLElement>()
 const semanticLabels = ref<Record<string, string>>({})
+const semanticExampleQueries = ref<string[]>([])
+const semanticHint = ref('')
 const resultPage = ref(1)
 const resultPageSize = ref(10)
 const visibleResultColumns = ref<string[]>([])
@@ -895,12 +899,17 @@ const ReportEChart = defineComponent({
   },
 })
 
-const quickQueries = [
-  '本月现金贷 M1+逾期率怎么算',
-  '按 Vintage 看放款后 MOB3 的风险表现',
-  '各催收团队的催收回收率排名',
-  '高 PD 客户的余额和逾期情况',
+const defaultQuickQueries = [
+  '按月份统计核心指标趋势',
+  '排名前三的分类分别是多少',
+  '不同类别的指标分布情况',
+  '最近三个月的异常变化有哪些',
 ]
+const quickQueries = computed(() => {
+  const configured = semanticExampleQueries.value.filter(Boolean)
+  return configured.length ? configured.slice(0, 4) : defaultQuickQueries
+})
+const semanticHintText = computed(() => semanticHint.value || '选择智能体和数据源后，可以用自然语言查询已授权的数据。')
 
 const filteredSessions = computed(() => {
   const keyword = sessionSearch.value.trim().toLowerCase()
@@ -1040,13 +1049,19 @@ async function loadSemanticLabels() {
     const domains = await fetchSemanticDomains(agentId.value)
     const domain = domains[0]
     if (!domain?.id) {
-      semanticLabels.value = defaultSemanticLabels()
+      semanticLabels.value = {}
+      semanticExampleQueries.value = []
+      semanticHint.value = ''
       return
     }
     const assets = await fetchSemanticAssets(domain.id)
     semanticLabels.value = buildSemanticLabels(assets)
+    semanticExampleQueries.value = buildSemanticExamples(assets)
+    semanticHint.value = domain.description || `${domain.name} 语义层已启用。`
   } catch {
-    semanticLabels.value = defaultSemanticLabels()
+    semanticLabels.value = {}
+    semanticExampleQueries.value = []
+    semanticHint.value = ''
   }
 }
 
@@ -1711,7 +1726,7 @@ function humanizeReportTitle(title: string, report: Record<string, unknown>): st
 }
 
 function reportFieldLabel(key: string, report?: Record<string, unknown>): string {
-  const label = semanticLabels.value[key] || defaultSemanticLabels()[key]
+  const label = semanticLabels.value[key]
   if (label) return label
   const pythonResult = report ? reportPythonResult(report) : null
   const candidates: ReportFieldDescriptor[] = [
@@ -1904,6 +1919,18 @@ function reportMarkdownBlocks(report: Record<string, unknown>): ReportMarkdownBl
       flushList()
       continue
     }
+    if (looksLikeRawEchartsJson(trimmed)) {
+      const rawChart = collectRawEchartsJson(lines, lineIndex)
+      if (rawChart) {
+        flushParagraph()
+        flushList()
+        if (!hasEquivalentChartBlock(blocks, rawChart.chart)) {
+          blocks.push(rawChart.chart)
+        }
+        lineIndex += rawChart.consumed - 1
+        continue
+      }
+    }
     if (isMarkdownTableLine(trimmed)) {
       flushParagraph()
       flushList()
@@ -1943,6 +1970,31 @@ function reportMarkdownBlocks(report: Record<string, unknown>): ReportMarkdownBl
 
 function reportBodyBlocks(report: Record<string, unknown>) {
   return reportMarkdownBlocks(report).filter(block => block.type !== 'title')
+}
+
+function looksLikeRawEchartsJson(text: string) {
+  return text.startsWith('{') && text.includes('"series"') && (
+    text.includes('"xAxis"') ||
+    text.includes('"yAxis"') ||
+    text.includes('"legend"') ||
+    text.includes('"tooltip"')
+  )
+}
+
+function collectRawEchartsJson(lines: string[], start: number) {
+  const collected: string[] = []
+  const maxLines = Math.min(lines.length, start + 120)
+  for (let index = start; index < maxLines; index += 1) {
+    collected.push(lines[index].trim())
+    const text = collected.join('\n')
+    const chart = chartFromCodeBlock(text, 'json')
+    if (chart) return { chart, consumed: index - start + 1 }
+  }
+  return null
+}
+
+function hasEquivalentChartBlock(blocks: ReportMarkdownBlock[], chart: ReportChartBlock) {
+  return blocks.some(block => block.type === 'chart' && block.title === chart.title)
 }
 
 function isMarkdownTableLine(line: string) {
@@ -2481,7 +2533,7 @@ function shouldFormatPercent(key: string, value: number) {
 }
 
 function columnTitle(key: string) {
-  return semanticLabels.value[key] || defaultSemanticLabels()[key] || key
+  return semanticLabels.value[key] || humanizeField(key)
 }
 
 function errorStageText(message: ChatMessage) {
@@ -2523,7 +2575,7 @@ function showRawErrorMessage(message: ChatMessage) {
 }
 
 function buildSemanticLabels(assets: Record<string, Record<string, unknown>[]>) {
-  const labels = defaultSemanticLabels()
+  const labels: Record<string, string> = {}
   for (const metric of assets.metric || []) {
     const key = String(metric.metric_key || '')
     const name = String(metric.name || '')
@@ -2531,38 +2583,33 @@ function buildSemanticLabels(assets: Record<string, Record<string, unknown>[]>) 
   }
   for (const mapping of assets.mapping || []) {
     const key = String(mapping.asset_key || '')
-    if (key && !labels[key]) labels[key] = humanizeField(key)
+    const name = String(mapping.name || mapping.description || mapping.column_name || '')
+    if (key && name && !labels[key]) labels[key] = name
   }
   return labels
 }
 
-function defaultSemanticLabels() {
-  return {
-    approval_rate: '审批通过率',
-    application_count: '申请笔数',
-    disbursement_amount: '放款金额',
-    outstanding_balance: '贷款余额',
-    m1_plus_rate: 'M1+逾期率',
-    mob: '账龄',
-    dpd: '逾期天数',
-    vintage: '放款批次',
-    pd: '预测违约概率',
-    dti: '负债收入比',
-    writeoff_amount: '核销金额',
-    collection_recovery_rate: '催收回收率',
-    product_type: '产品类型',
-    application_product_type: '申请产品类型',
-    application_region: '申请地区',
-    application_risk_grade: '申请风险等级',
-    region: '地区',
-    channel: '渠道',
-    risk_grade: '风险等级',
-    overdue_bucket: '逾期阶段',
-    assigned_team: '催收团队',
-    collection_strategy: '催收策略',
-    overdue_bucket_at_entry: '入催逾期阶段',
-    customer_segment: '客户分层',
-  } as Record<string, string>
+function buildSemanticExamples(assets: Record<string, Record<string, unknown>[]>) {
+  const examples: string[] = []
+  for (const template of assets.template || []) {
+    if (Array.isArray(template.examples)) {
+      examples.push(...template.examples.map(String))
+    }
+  }
+  for (const rule of assets.rule || []) {
+    const expression =
+      rule.expression && typeof rule.expression === 'object'
+        ? (rule.expression as Record<string, unknown>)
+        : {}
+    const rewrites = Array.isArray(expression.rewrites) ? expression.rewrites : []
+    for (const item of rewrites) {
+      if (!item || typeof item !== 'object') continue
+      const record = item as Record<string, unknown>
+      const template = String(record.template || '')
+      if (template && !template.includes('{')) examples.push(template)
+    }
+  }
+  return Array.from(new Set(examples)).slice(0, 4)
 }
 
 function humanizeField(key: string) {
@@ -3977,6 +4024,34 @@ onUnmounted(() => {
   gap: 14px;
 }
 
+:deep(.report-dialog.el-dialog) {
+  margin: 0 auto;
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+}
+
+:deep(.report-dialog .el-dialog__header) {
+  padding: 18px 22px 14px;
+  margin-right: 0;
+  border-bottom: 1px solid var(--wq-border);
+}
+
+:deep(.report-dialog .el-dialog__body) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 18px;
+  background: #f8fafc;
+}
+
+:deep(.report-dialog-overlay .el-overlay-dialog) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 24px;
+}
+
 .report-preview-header {
   padding: 14px;
   border: 1px solid var(--wq-border);
@@ -4197,9 +4272,9 @@ onUnmounted(() => {
 }
 
 .report-document {
-  max-height: min(78vh, 860px);
+  max-height: calc(100vh - 140px);
   overflow-y: auto;
-  padding: 4px 2px 0;
+  padding: 0;
   display: grid;
   gap: 18px;
 }

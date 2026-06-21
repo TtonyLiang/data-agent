@@ -3,72 +3,81 @@
     <div class="page-head">
       <div>
         <h2>系统参数</h2>
-        <p>控制运行时策略的全局参数。这里的配置优先于后端默认值。</p>
+        <p>统一维护运行参数和 Prompt 模板。这里的配置优先于后端默认值。</p>
       </div>
       <div class="head-actions">
-        <el-button :icon="Refresh" @click="loadParameters">刷新</el-button>
-        <el-button type="primary" :icon="Check" :loading="saving" @click="saveParameters">
+        <el-button v-if="activeTab === 'runtime'" :icon="Refresh" @click="loadParameters">刷新</el-button>
+        <el-button v-if="activeTab === 'runtime'" type="primary" :icon="Check" :loading="saving" @click="saveParameters">
           保存
         </el-button>
       </div>
     </div>
 
-    <div class="content">
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        title="数据定位召回策略"
-        description="候选表先按分数排序，再按最高分的相对阈值筛选。阈值越高，召回越严格，大模型上下文噪音越少。"
-      />
+    <el-tabs v-model="activeTab" class="settings-tabs">
+      <el-tab-pane label="运行参数" name="runtime">
+        <div class="content">
+          <el-alert
+            type="info"
+            :closable="false"
+            show-icon
+            title="数据定位召回策略"
+            description="候选表先按分数排序，再按最高分的相对阈值筛选。阈值越高，召回越严格，大模型上下文噪音越少。"
+          />
 
-      <el-form v-loading="loading" class="param-form" label-position="top">
-        <div class="param-grid">
-          <div v-for="item in schemaRecallParams" :key="item.key" class="param-row">
-            <div class="param-meta">
-              <h3>{{ item.name }}</h3>
-              <p>{{ item.description }}</p>
-              <el-tag size="small" effect="plain">{{ item.key }}</el-tag>
+          <el-form v-loading="loading" class="param-form" label-position="top">
+            <div class="param-grid">
+              <div v-for="item in schemaRecallParams" :key="item.key" class="param-row">
+                <div class="param-meta">
+                  <h3>{{ item.name }}</h3>
+                  <p>{{ item.description }}</p>
+                  <el-tag size="small" effect="plain">{{ item.key }}</el-tag>
+                </div>
+                <div class="param-control">
+                  <el-input-number
+                    v-if="item.value_type === 'int'"
+                    v-model="form[item.key]"
+                    :min="1"
+                    :max="50"
+                    :step="1"
+                    controls-position="right"
+                  />
+                  <el-input-number
+                    v-else-if="item.value_type === 'float'"
+                    v-model="form[item.key]"
+                    :min="0"
+                    :max="1"
+                    :step="0.01"
+                    :precision="2"
+                    controls-position="right"
+                  />
+                  <el-input v-else v-model="form[item.key]" />
+                </div>
+              </div>
             </div>
-            <div class="param-control">
-              <el-input-number
-                v-if="item.value_type === 'int'"
-                v-model="form[item.key]"
-                :min="1"
-                :max="50"
-                :step="1"
-                controls-position="right"
-              />
-              <el-input-number
-                v-else-if="item.value_type === 'float'"
-                v-model="form[item.key]"
-                :min="0"
-                :max="1"
-                :step="0.01"
-                :precision="2"
-                controls-position="right"
-              />
-              <el-input v-else v-model="form[item.key]" />
-            </div>
+          </el-form>
+
+          <div class="example-panel">
+            <h3>筛选示例</h3>
+            <p>
+              如果最高分是 2162，必须召回阈值 0.35，则强相关线是 756.7；可召回阈值 0.15，则补充线是 324.3。
+              分数低于补充线的表会被剔除，不再机械进入 TopN。
+            </p>
           </div>
         </div>
-      </el-form>
-
-      <div class="example-panel">
-        <h3>筛选示例</h3>
-        <p>
-          如果最高分是 2162，必须召回阈值 0.35，则强相关线是 756.7；可召回阈值 0.15，则补充线是 324.3。
-          分数低于补充线的表会被剔除，不再机械进入 TopN。
-        </p>
-      </div>
-    </div>
+      </el-tab-pane>
+      <el-tab-pane label="Prompt 模板" name="prompt">
+        <PromptConfig embedded />
+      </el-tab-pane>
+    </el-tabs>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Check, Refresh } from '@element-plus/icons-vue'
+import PromptConfig from './PromptConfig.vue'
 import {
   fetchSystemParameters,
   updateSystemParameters,
@@ -77,12 +86,27 @@ import {
 
 const loading = ref(false)
 const saving = ref(false)
+const route = useRoute()
+const router = useRouter()
+const activeTab = ref(route.query.tab === 'prompt' ? 'prompt' : 'runtime')
 const parameters = ref<SystemParameterItem[]>([])
 const form = reactive<Record<string, number | string | boolean | Record<string, unknown> | unknown[]>>({})
 
 const schemaRecallParams = computed(() =>
   parameters.value.filter((item) => item.category === 'schema_recall'),
 )
+
+watch(
+  () => route.query.tab,
+  (tab) => {
+    activeTab.value = tab === 'prompt' ? 'prompt' : 'runtime'
+  },
+)
+
+watch(activeTab, (tab) => {
+  const query = tab === 'prompt' ? { tab: 'prompt' } : {}
+  router.replace({ path: '/system-parameter', query })
+})
 
 async function loadParameters() {
   loading.value = true

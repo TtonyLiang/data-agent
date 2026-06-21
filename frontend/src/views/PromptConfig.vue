@@ -1,6 +1,6 @@
 <template>
-  <div class="page-shell">
-    <div class="page-header">
+  <div class="page-shell" :class="{ embedded }">
+    <div v-if="!embedded" class="page-header">
       <div>
         <span class="page-kicker">Prompt Center</span>
         <h2>Prompt 配置</h2>
@@ -16,8 +16,23 @@
       </div>
     </div>
 
+    <div v-else class="embedded-toolbar">
+      <div>
+        <h3>Prompt 模板</h3>
+        <p>按节点维护大模型提示词，可配置全局模板，也可限定智能体、模型或语义层。</p>
+      </div>
+      <div class="header-actions">
+        <el-select v-model="activePromptKey" clearable placeholder="全部节点" class="key-filter" @change="loadTemplates">
+          <el-option v-for="item in promptKeyOptions" :key="item.value" :label="item.label" :value="item.value" />
+        </el-select>
+        <el-button type="primary" @click="openCreate">
+          <el-icon><Plus /></el-icon> 新增模板
+        </el-button>
+      </div>
+    </div>
+
     <div class="table-surface">
-      <el-table :data="templates" border stripe>
+      <el-table v-loading="loading" :data="templates" border stripe>
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="name" label="名称" min-width="160" />
         <el-table-column label="节点" min-width="170">
@@ -46,6 +61,13 @@
             <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
+        <template #empty>
+          <div class="empty-state">
+            <p>还没有 Prompt 模板</p>
+            <span>可以新增全局模板，或按智能体、模型、语义层配置专用模板。</span>
+            <el-button type="primary" size="small" @click="openCreate">新增模板</el-button>
+          </div>
+        </template>
       </el-table>
     </div>
 
@@ -71,7 +93,7 @@
           <el-input v-model="form.name" placeholder="例如：信贷指标 LogicForm 生成模板" />
         </el-form-item>
         <el-form-item label="节点">
-          <el-select v-model="form.prompt_key" placeholder="选择生效节点">
+          <el-select v-model="form.prompt_key" placeholder="选择生效节点" @change="handlePromptKeyChange">
             <el-option v-for="item in promptKeyOptions" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
         </el-form-item>
@@ -135,23 +157,37 @@ import {
   fetchAgents,
   fetchAllSemanticDomains,
   fetchModelConfigs,
+  fetchPromptCatalog,
   fetchPromptTemplates,
   upsertPromptTemplate,
   type AgentItem,
   type ModelConfigItem,
+  type PromptCatalogItem,
   type PromptTemplateItem,
   type PromptTemplateRequest,
   type SemanticDomain,
 } from '../api'
 
-const promptKeyOptions = [
-  { label: '语义增强', value: 'semantic_enhance.system' },
-  { label: 'LogicForm 生成', value: 'nl2lf_generate.system' },
-  { label: 'NL2SQL 兜底', value: 'nl2sql_fallback.system' },
+withDefaults(defineProps<{ embedded?: boolean }>(), {
+  embedded: false,
+})
+
+const fallbackPromptKeyOptions = [
+  { label: '意图识别系统提示词', value: 'intent_recognition.system' },
+  { label: '语义增强系统提示词', value: 'semantic_enhance.system' },
+  { label: 'LogicForm 生成系统提示词', value: 'nl2lf_generate.system' },
+  { label: 'NL2SQL 兜底系统提示词', value: 'nl2sql_fallback.system' },
+  { label: 'Python 分析脚本生成系统提示词', value: 'phase3_python_generate.system' },
+  { label: 'Python 分析脚本生成用户提示词', value: 'phase3_python_generate.user' },
+  { label: 'Python 分析结果解释提示词', value: 'phase3_python_analyze.system' },
+  { label: '深度分析报告生成系统提示词', value: 'phase3_report_generator.system' },
+  { label: '深度分析报告生成用户提示词', value: 'phase3_report_generator.user' },
 ]
 
+const loading = ref(false)
 const activePromptKey = ref('')
 const templates = ref<PromptTemplateItem[]>([])
+const promptCatalog = ref<PromptCatalogItem[]>([])
 const agents = ref<AgentItem[]>([])
 const modelConfigs = ref<ModelConfigItem[]>([])
 const semanticDomains = ref<SemanticDomain[]>([])
@@ -159,35 +195,52 @@ const showDialog = ref(false)
 const showDetail = ref(false)
 const editingId = ref<number | null>(null)
 const detailTemplate = ref<PromptTemplateItem | null>(null)
-const form = ref<PromptTemplateRequest>(defaultForm())
 
 const agentMap = computed(() => new Map(agents.value.map(item => [item.id, item.name])))
 const modelMap = computed(() => new Map(modelConfigs.value.map(item => [item.id, item.name])))
 const domainMap = computed(() => new Map(semanticDomains.value.map(item => [item.id, item.name])))
+const catalogMap = computed(() => new Map(promptCatalog.value.map(item => [item.prompt_key, item])))
+const promptKeyOptions = computed(() => {
+  if (!promptCatalog.value.length) return fallbackPromptKeyOptions
+  return promptCatalog.value.map(item => ({ label: item.name, value: item.prompt_key }))
+})
+const form = ref<PromptTemplateRequest>(defaultForm())
 
 onMounted(async () => {
-  await Promise.all([loadTemplates(), loadScopeOptions()])
+  await Promise.all([loadPromptCatalog(), loadTemplates(), loadScopeOptions()])
 })
 
-function defaultForm(): PromptTemplateRequest {
+function defaultForm(promptKey = 'nl2lf_generate.system'): PromptTemplateRequest {
+  const preset = catalogMap.value.get(promptKey)
   return {
-    prompt_key: 'nl2lf_generate.system',
-    name: 'LogicForm 生成模板',
-    description: '',
+    prompt_key: promptKey,
+    name: preset?.name || fallbackPromptKeyOptions.find(item => item.value === promptKey)?.label || 'Prompt 模板',
+    description: preset?.description || '',
     agent_id: null,
     model_config_id: null,
     semantic_domain_id: null,
-    template_text: '',
+    template_text: preset?.template_text || '',
     status: 'active',
   }
 }
 
+async function loadPromptCatalog() {
+  try {
+    promptCatalog.value = await fetchPromptCatalog()
+  } catch {
+    promptCatalog.value = []
+  }
+}
+
 async function loadTemplates() {
+  loading.value = true
   try {
     templates.value = await fetchPromptTemplates(activePromptKey.value || undefined)
   } catch {
     ElMessage.error('Prompt 模板加载失败')
     templates.value = []
+  } finally {
+    loading.value = false
   }
 }
 
@@ -207,7 +260,7 @@ async function loadScopeOptions() {
 }
 
 function promptKeyLabel(key: string) {
-  return promptKeyOptions.find(item => item.value === key)?.label || key
+  return promptKeyOptions.value.find(item => item.value === key)?.label || key
 }
 
 function agentName(id: number) {
@@ -224,9 +277,13 @@ function domainName(id: number) {
 
 function openCreate() {
   editingId.value = null
-  form.value = defaultForm()
-  if (activePromptKey.value) form.value.prompt_key = activePromptKey.value
+  form.value = defaultForm(activePromptKey.value || promptKeyOptions.value[0]?.value || 'nl2lf_generate.system')
   showDialog.value = true
+}
+
+function handlePromptKeyChange(promptKey: string) {
+  if (editingId.value) return
+  form.value = defaultForm(promptKey)
 }
 
 function openDetail(template: PromptTemplateItem) {
@@ -292,6 +349,13 @@ async function handleDelete(template: PromptTemplateItem) {
   background: var(--wq-bg);
 }
 
+.page-shell.embedded {
+  height: auto;
+  overflow: visible;
+  padding: 0;
+  background: transparent;
+}
+
 .page-header {
   display: flex;
   justify-content: space-between;
@@ -326,6 +390,31 @@ async function handleDelete(template: PromptTemplateItem) {
   gap: 12px;
 }
 
+.embedded-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid var(--wq-border);
+  border-radius: 8px;
+  background: #fbfcff;
+}
+
+.embedded-toolbar h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  color: var(--wq-text);
+}
+
+.embedded-toolbar p {
+  margin: 0;
+  color: var(--wq-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
 .key-filter {
   width: 190px;
 }
@@ -336,6 +425,29 @@ async function handleDelete(template: PromptTemplateItem) {
   border-radius: var(--wq-radius);
   padding: 14px;
   box-shadow: var(--wq-shadow);
+}
+
+.embedded .table-surface {
+  box-shadow: none;
+}
+
+.empty-state {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: var(--wq-muted);
+}
+
+.empty-state p {
+  margin: 0;
+  color: var(--wq-text);
+  font-weight: 650;
+}
+
+.empty-state span {
+  font-size: 13px;
 }
 
 .scope-tags {

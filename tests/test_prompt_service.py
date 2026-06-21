@@ -50,3 +50,22 @@ async def test_prompt_service_falls_back_when_template_variable_is_invalid(monke
     )
 
     assert resolved == "默认 贷款风控"
+
+
+@pytest.mark.asyncio
+async def test_prompt_service_list_orders_all_templates_by_id(monkeypatch):
+    class ListPromptDB:
+        def __init__(self):
+            self.queries = []
+
+        async def execute_query(self, sql: str, params: dict | None = None):
+            self.queries.append((sql, params))
+            return []
+
+    db = ListPromptDB()
+    monkeypatch.setattr(prompt_service, "get_management_db", lambda: db)
+
+    await PromptService().list()
+
+    assert "ORDER BY id ASC" in db.queries[0][0]
+    assert "ORDER BY prompt_key" not in db.queries[0][0]

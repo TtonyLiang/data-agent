@@ -1,3 +1,14 @@
+"""NL2LF 生成节点 —— 把自然语言问题转为结构化 LogicForm。
+
+NL2LFGenerateNode 是问数链路的核心节点,负责:
+1. LLM 生成:调用大语言模型输出 JSON 格式的 LogicForm(metrics/dimensions/filters/sort/limit)。
+2. 配置化后处理:从 semantic_runtime 读取 normalization 规则,做指标/维度/过滤的归一化。
+3. 物理 Schema 增强:把 LogicForm 中的 asset_key 映射到物理表字段,补充缺失维度。
+4. 显式指标补全:用户明确提到的指标名(如"申请金额和申请笔数")必须出现在 LogicForm 中。
+
+LogicForm 是模型输出与确定性 SQL 编译之间的中间表示,避免让模型直接写 SQL。
+"""
+
 import json
 import logging
 import re
@@ -9,6 +20,7 @@ from app.agent.domain_rules import (
     canonicalize_field,
     contains_any,
     extract_top_limit as extract_configured_top_limit,
+    explicitly_mentioned_metrics,
     find_logic_form_rules,
     schema_hints_from_runtime,
 )
@@ -131,10 +143,11 @@ def normalize_logic_form(
     history: list[dict] | None = None,
     runtime: dict[str, Any] | None = None,
 ) -> LogicForm:
-    """Apply configured product semantics after LLM parsing."""
+    """LLM 输出后处理:应用配置化规则,归一化 LogicForm 各槽位。"""
     compact = question.lower().replace(" ", "")
     context_text = contextual_question_text(question, history)
     context_compact = context_text.lower().replace(" ", "")
+    # 初始化各槽位(LLM 输出的原始值)
     metrics = list(logic_form.metrics)
     dimensions = list(logic_form.dimensions)
     filters = list(logic_form.filters)
@@ -142,19 +155,32 @@ def normalize_logic_form(
     time_range = logic_form.time_range
     limit = logic_form.limit
     grain = logic_form.grain
+    initial_metrics = list(metrics)
     asks_trend = asks_trend_question(context_text)
+
+    # 第1步:从 semantic_runtime 中匹配适用的 normalization 规则
     matched_rules = find_logic_form_rules(
         runtime,
         question,
         history_text=contextual_question_text("", history),
     )
+    # 第2步:提取用户显式提及的指标(用于最终补全)
+    explicit_metrics = [
+        item
+        for item in explicitly_mentioned_metrics(runtime, question)
+        if item not in set(initial_metrics)
+    ]
     preserve_inferred_trend_window = False
+
+    # 第3步:逐条应用匹配到的规则
     for actions in matched_rules:
+        # 3a:字段别名映射(如 region → application_region)
         action_aliases = {
             str(source): str(target)
             for source, target in (actions.get("field_aliases") or {}).items()
             if source and target
         }
+        # 3b:指标动作(追加或替换)
         if actions.get("metrics"):
             configured_metrics = [
                 str(item) for item in actions.get("metrics") or [] if str(item or "")
@@ -164,13 +190,16 @@ def normalize_logic_form(
                 if actions.get("merge_metrics")
                 else configured_metrics
             )
+        # 3c:维度动作(增删)
         dimensions = apply_dimension_actions(
             context_text,
             dimensions,
             actions.get("dimensions"),
         )
+        # 3d:过滤条件动作(追加固定过滤 + 正则匹配过滤)
         filters = apply_filter_actions(filters, actions.get("filters"))
         filters = apply_regex_filter_actions(context_text, filters, actions.get("regex_filters"))
+        # 3e:字段别名全局替换(指标/维度/过滤/排序)
         if action_aliases:
             metrics = [canonicalize_field(item, action_aliases) for item in metrics]
             dimensions = [canonicalize_field(item, action_aliases) for item in dimensions]
@@ -182,11 +211,14 @@ def normalize_logic_form(
                 item.model_copy(update={"field": canonicalize_field(item.field, action_aliases)})
                 for item in sort
             ]
+        # 3f:时间粒度动作
         if actions.get("grain"):
             grain = str(actions.get("grain"))
+        # 3g:时间窗口动作(仅当 LLM 未输出 time_range 时才应用规则默认值)
         if actions.get("time_range") and not time_range:
             time_range = actions.get("time_range")
             preserve_inferred_trend_window = True
+        # 3h:排名动作(追加排序和 TopN 限制)
         if asks_ranking(context_compact):
             sort_field = str(actions.get("sort_field") or (metrics[0] if metrics else ""))
             if sort_field:
@@ -197,9 +229,14 @@ def normalize_logic_form(
                 or limit
                 or actions.get("default_limit")
             )
+        # 3i:移除维度动作
         if actions.get("remove_dimensions"):
             remove = set(actions.get("remove_dimensions") or [])
             dimensions = [item for item in dimensions if item not in remove]
+
+    # 第4步:补全用户显式提及的指标
+    if explicit_metrics:
+        metrics = unique_strings([*metrics, *explicit_metrics])
 
     filters = normalize_filter_values(filters, runtime)
 

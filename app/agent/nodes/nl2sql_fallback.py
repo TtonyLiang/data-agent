@@ -1,3 +1,14 @@
+"""NL2SQL 兜底节点 —— 当语义链路(LF 生成/校验/编译)失败时,直接让 LLM 生成 SQL。
+
+FallbackNode 是问数链路的安全网,负责:
+1. 收集已采集的表结构(schema)作为上下文。
+2. 调用大语言模型直接生成 SELECT SQL(不做 LogicForm 中间表示)。
+3. 对生成的 SQL 做安全校验(normalize_sql_for_execution)。
+4. 校验通过后进入 sql_execute 执行。
+
+触发条件:LF 校验失败且无修复机会、LF 编译异常、或语义一致性检查失败。
+"""
+
 import json
 import logging
 

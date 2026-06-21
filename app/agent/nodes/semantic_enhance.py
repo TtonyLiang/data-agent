@@ -1,3 +1,15 @@
+"""语义增强节点 —— 用配置化规则和 LLM 改写用户问题,提升下游召回与生成质量。
+
+SemanticEnhanceNode 是意图识别后的第二个节点,负责:
+1. 规则增强:从 semantic_runtime 中读取 rewrite 类型规则,用 any/all/none 条件匹配,
+   命中后追加业务术语(如"贷款风险"→追加"不良率""逾期"等同义词)。
+2. LLM 增强:规则无法覆盖时调用大语言模型做语义改写(流式 + reasoning)。
+3. 历史上下文:结合最近会话历史做追问消歧。
+4. 防御性校验:guard_enhanced_question 确保改写后的问题不丢失原始意图(TopN/指标/趋势)。
+
+改写后的问题存入 state.enhanced_question,供下游 schema_recall 和 nl2lf_generate 使用。
+"""
+
 from __future__ import annotations
 
 import json
@@ -8,7 +20,14 @@ from typing import Any
 
 from langchain_core.callbacks.manager import adispatch_custom_event
 
-from app.agent.domain_rules import contains_any
+from app.agent.domain_rules import (
+    GENERIC_COUNT_TERMS,
+    GENERIC_PRODUCT_TERMS,
+    GENERIC_REGION_TERMS,
+    GENERIC_TREND_TERMS,
+    contains_any,
+    explicitly_mentioned_metrics,
+)
 from app.agent.prompts import load_prompt
 from app.services.llm_service import get_llm_service
 from app.services.prompt_service import get_prompt_service
@@ -25,6 +44,7 @@ SEMANTIC_ENHANCE_PROMPT = load_prompt("semantic_enhance.system.md")
 logger = logging.getLogger(__name__)
 DOMAIN_REWRITE_CACHE_TTL_SECONDS = 300
 _domain_rewrite_cache: dict[int, tuple[float, list[dict[str, Any]]]] = {}
+DOMAIN_REWRITE_TERM_KEYS = ("count_terms", "trend_terms", "region_terms", "product_terms")
 
 
 async def semantic_enhance_node(state: dict) -> dict:
@@ -32,13 +52,14 @@ async def semantic_enhance_node(state: dict) -> dict:
     log_node_start(logger, "semantic_enhance", state, keys=("trace_id", "agent_id", "question"))
     question = str(state.get("question") or "").strip()
     history = state.get("chat_history") or []
+    runtime = state.get("semantic_runtime") or {}
     if not question:
         result = _build_result(question, question, "no_change", [], "原始问题为空，跳过语义增强。")
         log_node_end(logger, "semantic_enhance", result)
         return result
 
     domain_rewrites = await load_domain_rewrites(state.get("agent_id"))
-    deterministic = deterministic_enhancement(question, history, domain_rewrites)
+    deterministic = deterministic_enhancement(question, history, domain_rewrites, runtime)
     if deterministic:
         logger.info("semantic enhance deterministic candidate=%s", json_for_log(deterministic))
     if deterministic and should_short_circuit_enhancement(question, deterministic):
@@ -165,6 +186,7 @@ def deterministic_enhancement(
     question: str,
     history: list[dict],
     domain_rewrites: list[dict[str, Any]] | None = None,
+    runtime: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Handle common follow-up and domain rewrite cases with deterministic rules."""
     top_limit = extract_followup_top_limit(question)
@@ -189,10 +211,17 @@ def deterministic_enhancement(
 
     business_rewrite = common_business_rewrite(question, domain_rewrites or [])
     if business_rewrite and business_rewrite != question:
+        enhanced_question, extra_constraints = preserve_explicit_metric_mentions(
+            question,
+            business_rewrite,
+            runtime,
+        )
         return {
-            "enhanced_question": business_rewrite,
+            "enhanced_question": enhanced_question,
             "rewrite_type": "clarified",
-            "preserved_constraints": extract_preserved_constraints(question, business_rewrite),
+            "preserved_constraints": unique_list(
+                [*extract_preserved_constraints(question, enhanced_question), *extra_constraints]
+            ),
             "reason": "命中常见业务问法，已补全指标、维度和排序口径。",
             "source": "semantic_rule",
         }
@@ -218,16 +247,20 @@ def guard_enhanced_question(
 ) -> str:
     """Validate the model rewrite and fall back if it emits SQL or loses constraints."""
     cleaned = clean_enhanced_question(candidate)
+    # 防御1:空内容 → 回退到规则增强结果
     if not cleaned:
         return deterministic["enhanced_question"] if deterministic else question
+    # 防御2:LLM 误输出 SQL 代码 → 回退到规则增强结果
     lowered = cleaned.lower()
     if "select " in lowered or "```" in cleaned:
         return deterministic["enhanced_question"] if deterministic else question
 
+    # 防御3:TopN 保留 —— 用户追问"前10"但 LLM 改写丢掉了数字 → 回退
     top_limit = extract_followup_top_limit(question)
     if top_limit and deterministic:
         if not contains_top_limit(cleaned, top_limit):
             return deterministic["enhanced_question"]
+        # 用户改了 TopN(如"前5"→"前10"),保留新值
         previous_limit = extract_top_limit(last_user_data_question(history) or "")
         if (
             previous_limit
@@ -236,11 +269,12 @@ def guard_enhanced_question(
         ):
             return deterministic["enhanced_question"]
 
+    # 防御4:笔数纠正 —— 用户说"不是金额是笔数"但 LLM 改写没体现 → 追加说明
     if is_count_correction(question) and not contains_count_intent(cleaned):
         return (
             deterministic["enhanced_question"]
             if deterministic
-            else f"{cleaned}，统计口径为笔数/数量，不是金额。"
+            else f"{cleaned}，统计口径改为笔数/数量。"
         )
     return cleaned
 
@@ -272,6 +306,95 @@ def common_business_rewrite(
     return None
 
 
+def preserve_explicit_metric_mentions(
+    original_question: str,
+    rewritten_question: str,
+    runtime: dict[str, Any] | None,
+) -> tuple[str, list[str]]:
+    """Append explicitly requested metrics that a rewrite template did not mention."""
+    if not runtime:
+        return rewritten_question, []
+    original_metrics = explicitly_mentioned_metrics(runtime, original_question)
+    if not original_metrics:
+        return rewritten_question, []
+    rewritten_metrics = set(explicitly_mentioned_metrics(runtime, rewritten_question))
+    metric_names = {
+        str(item.get("metric_key") or ""): str(item.get("name") or item.get("metric_key") or "")
+        for item in (runtime.get("metrics", []) if isinstance(runtime, dict) else [])
+        if isinstance(item, dict) and item.get("metric_key")
+    }
+    missing = [metric for metric in original_metrics if metric not in rewritten_metrics]
+    if not missing:
+        return rewritten_question, []
+    labels = [metric_names.get(metric, metric) for metric in missing]
+    suffix = "，并同时查询" + "、".join(labels)
+    base = rewritten_question.rstrip("。；; ")
+    return f"{base}{suffix}。", [f"额外指标：{label}" for label in labels]
+
+
+def collect_domain_rewrites(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collect rewrite rules and enrich their matchers with domain term dictionaries."""
+    term_bank: dict[str, list[str]] = {key: [] for key in DOMAIN_REWRITE_TERM_KEYS}
+    for rule in rules:
+        expression = rule.get("expression") or {}
+        if not isinstance(expression, dict):
+            continue
+        collect_match_terms(expression, term_bank)
+        collect_match_terms(expression.get("match") or {}, term_bank)
+
+    rewrites: list[dict[str, Any]] = []
+    for rule in rules:
+        if rule.get("rule_type") != "rewrite":
+            continue
+        expression = rule.get("expression") or {}
+        if not isinstance(expression, dict):
+            continue
+        for item in expression.get("rewrites") or []:
+            if not isinstance(item, dict):
+                continue
+            enriched = dict(item)
+            enriched["match"] = enrich_rewrite_match(item.get("match") or {}, term_bank)
+            rewrites.append(enriched)
+    return rewrites
+
+
+def collect_match_terms(source: dict[str, Any], term_bank: dict[str, list[str]]) -> None:
+    """Merge semantic-rule term dictionaries into a shared domain bank."""
+    if not isinstance(source, dict):
+        return
+    for key in DOMAIN_REWRITE_TERM_KEYS:
+        values = source.get(key)
+        if isinstance(values, list):
+            term_bank[key].extend(str(value) for value in values if str(value).strip())
+
+
+def enrich_rewrite_match(
+    match: dict[str, Any],
+    term_bank: dict[str, list[str]],
+) -> dict[str, Any]:
+    """Attach domain-specific terms to declarative rewrite matchers."""
+    if not isinstance(match, dict):
+        match = {}
+    enriched = dict(match)
+    intents = set(enriched.get("intents") or [])
+    intent_to_key = {
+        "count": "count_terms",
+        "trend": "trend_terms",
+        "region": "region_terms",
+        "product": "product_terms",
+    }
+    for intent, key in intent_to_key.items():
+        if intent not in intents:
+            continue
+        enriched[key] = unique_list(
+            [
+                *[str(value) for value in enriched.get(key) or []],
+                *term_bank.get(key, []),
+            ]
+        )
+    return enriched
+
+
 async def load_domain_rewrites(agent_id: int | None) -> list[dict[str, Any]]:
     """Load semantic-enhancement rewrite rules from the agent-bound domain with a small cache."""
     if not agent_id:
@@ -287,15 +410,7 @@ async def load_domain_rewrites(agent_id: int | None) -> list[dict[str, Any]]:
             _domain_rewrite_cache[int(agent_id)] = (now, [])
             return []
         assets = await svc.list_assets(domain.id, "rule")
-        rewrites: list[dict[str, Any]] = []
-        for rule in assets.get("rule", []):
-            if rule.get("rule_type") != "rewrite":
-                continue
-            expression = rule.get("expression") or {}
-            if isinstance(expression, dict):
-                rewrites.extend(
-                    item for item in expression.get("rewrites") or [] if isinstance(item, dict)
-                )
+        rewrites = collect_domain_rewrites(assets.get("rule", []))
         _domain_rewrite_cache[int(agent_id)] = (now, rewrites)
         return rewrites
     except Exception as exc:
@@ -312,15 +427,13 @@ def rewrite_rule_matches(question: str, match: dict[str, Any]) -> bool:
     if match.get("all") and not all(contains_any(question, [term]) for term in match.get("all") or []):
         return False
     intents = set(match.get("intents") or [])
-    if "count" in intents and not contains_count_intent(question):
+    if "count" in intents and not contains_count_intent(question, match.get("count_terms")):
         return False
-    if "trend" in intents and not contains_trend_intent(question):
+    if "trend" in intents and not contains_trend_intent(question, match.get("trend_terms")):
         return False
-    if "region" in intents and not contains_region_intent(question):
+    if "region" in intents and not contains_region_intent(question, match.get("region_terms")):
         return False
-    if "product" in intents and not (
-        contains_product_type_intent(question) or contains_bucketed_loan_intent(question)
-    ):
+    if "product" in intents and not contains_product_type_intent(question, match.get("product_terms")):
         return False
     return True
 
@@ -344,10 +457,10 @@ def force_count_metric(previous_question: str) -> str:
     """Force a previous question to use count/volume semantics instead of amount."""
     text = str(previous_question or "").strip()
     if not text:
-        return "延续上一轮问题，但统计口径改为笔数/数量，不是金额。"
+        return "延续上一轮问题，但统计口径改为笔数/数量。"
     if contains_count_intent(text):
         return text
-    return f"{text}。本次统计口径必须是笔数/数量，不是金额。"
+    return f"{text}。本次统计口径必须是笔数/数量。"
 
 
 def extract_preserved_constraints(question: str, enhanced: str) -> list[str]:
@@ -427,71 +540,49 @@ def looks_like_data_context(text: str) -> bool:
             "分布",
             "金额",
             "余额",
-            "贷款",
-            "申请",
-            "逾期",
-            "回收",
-            "核销",
-            "vintage",
-            "mob",
-            "pd",
-            "dti",
-            "m1",
             "top",
         )
     )
 
 
 def is_count_correction(question: str) -> bool:
-    """Detect user corrections that clarify they wanted count rather than amount."""
+    """Detect user corrections that clarify they wanted count or volume semantics."""
     compact = compact_text(question)
-    return (
-        "不是金额" in compact
-        or "问的是笔数" in compact
-        or "要的是笔数" in compact
-        or ("笔数" in compact and "金额" in compact)
+    negation_terms = ("不是", "非", "不要", "无需", "不看", "不查", "别查", "别看")
+    return contains_count_intent(compact) and (
+        any(term in compact for term in negation_terms)
+        or "问的是" in compact
+        or "要的是" in compact
+        or "应该是" in compact
     )
 
 
-def contains_count_intent(text: str) -> bool:
+def contains_count_intent(text: str, extra_terms: list[str] | tuple[str, ...] | None = None) -> bool:
     """Detect words that indicate count or quantity semantics."""
     compact = compact_text(text)
-    return any(
-        token in compact
-        for token in ("笔数", "多少笔", "几笔", "数量", "申请数", "申请量", "进件量", "count")
-    )
+    terms = (*GENERIC_COUNT_TERMS, *(extra_terms or ()))
+    return any(str(token).lower() in compact for token in terms)
 
 
-def contains_region_intent(text: str) -> bool:
+def contains_region_intent(text: str, extra_terms: list[str] | tuple[str, ...] | None = None) -> bool:
     """Detect region or area grouping intent."""
     compact = compact_text(text)
-    return any(token in compact for token in ("区域", "地区", "region", "area"))
+    terms = (*GENERIC_REGION_TERMS, *(extra_terms or ()))
+    return any(str(token).lower() in compact for token in terms)
 
 
-def contains_product_type_intent(text: str) -> bool:
+def contains_product_type_intent(text: str, extra_terms: list[str] | tuple[str, ...] | None = None) -> bool:
     """Detect product-type grouping or filtering intent."""
     compact = compact_text(text)
-    return any(
-        token in compact for token in ("产品类型", "贷款产品", "产品", "producttype", "product")
-    )
+    terms = (*GENERIC_PRODUCT_TERMS, *(extra_terms or ()))
+    return any(str(token).lower() in compact for token in terms)
 
 
-def contains_bucketed_loan_intent(text: str) -> bool:
-    """Detect bucketed loan-amount grouping intent."""
-    compact = compact_text(text)
-    return any(
-        token in compact
-        for token in ("各个贷款", "各类贷款", "不同贷款", "每种贷款", "各贷款", "各项贷款")
-    )
-
-
-def contains_trend_intent(text: str) -> bool:
+def contains_trend_intent(text: str, extra_terms: list[str] | tuple[str, ...] | None = None) -> bool:
     """Detect trend or time-series wording."""
     compact = compact_text(text)
-    return any(
-        token in compact
-        for token in ("变化", "趋势", "走势", "波动", "按月", "按日", "同比", "环比", "trend")
-    )
+    terms = (*GENERIC_TREND_TERMS, *(extra_terms or ()))
+    return any(str(token).lower() in compact for token in terms)
 
 
 def chinese_number_to_int(text: str) -> int | None:

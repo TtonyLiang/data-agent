@@ -120,6 +120,13 @@ assert.ok(
 )
 
 assert.ok(
+  source.includes('looksLikeRawEchartsJson') &&
+    source.includes('collectRawEchartsJson') &&
+    source.includes('hasEquivalentChartBlock'),
+  'ChatView should consume raw ECharts JSON in report markdown instead of rendering it as text',
+)
+
+assert.ok(
   source.includes('normalizeChartKind') && source.includes('buildReportEchartsOption') && source.includes('prettifySeries'),
   'ChatView should honor backend-declared chart kinds and render report charts through ECharts',
 )

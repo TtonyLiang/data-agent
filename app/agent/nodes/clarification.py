@@ -1,3 +1,10 @@
+"""低置信度追问节点 —— 当意图识别置信度不足时,生成引导性追问。
+
+触发条件:意图识别返回 needs_clarification 时进入此节点。
+输出:question 字段填充为引导性追问文本,随后 graph 路由到 END,
+用户回复后重新进入意图识别。
+"""
+
 import logging
 
 from app.utils.logging_helpers import log_node_end, log_node_start
@@ -6,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 async def clarification_node(state: dict) -> dict:
-    """Stop the graph with a clarification request when schema recall confidence is too low."""
+    """低置信度追问:停止图执行,向用户发出引导性问题。"""
     log_node_start(
         logger,
         "clarification",

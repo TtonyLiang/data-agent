@@ -112,6 +112,7 @@ function stripAxiosConfig(calls) {
     status: 'active',
   })
   await api.testModelConfig(9)
+  await api.fetchPromptCatalog()
   await api.fetchPromptTemplates('nl2lf_generate.system')
   await api.upsertPromptTemplate({
     prompt_key: 'nl2lf_generate.system',
@@ -164,7 +165,7 @@ function stripAxiosConfig(calls) {
   await api.rollbackSemanticSnapshot(8, 3)
   await api.deleteSemanticAsset(8, 'metric', 11)
 
-  assert.deepEqual(stripAxiosConfig(axiosCalls).slice(0, 25), [
+  assert.deepEqual(stripAxiosConfig(axiosCalls).slice(0, 26), [
     ['put', '/agent/3', {
       name: '编辑后智能体',
       description: '',
@@ -185,6 +186,7 @@ function stripAxiosConfig(calls) {
       status: 'active',
     }],
     ['post', '/model-config/9/test', undefined],
+    ['get', '/prompt/catalog'],
     ['get', '/prompt/list'],
     ['post', '/prompt/templates', {
       prompt_key: 'nl2lf_generate.system',

@@ -1,3 +1,27 @@
+"""语义运行时服务 —— 结构化资产读取、校验与 LogicForm 编译。
+
+SemanticRuntimeService 是语义层的核心执行引擎,负责:
+1. 资产 CRUD:语义领域与 6 类资产(概念/关系/指标/规则/映射/模板)的增删改查。
+2. 运行时构建(``build_runtime``):加载指定领域的全部资产,组装 ``SemanticRuntime``。
+3. LogicForm 校验(``validate_logic_form``):检查指标/维度/过滤/排序引用的资产是否合法。
+4. LogicForm 编译(``compile_logic_form``):把校验通过的 LogicForm 确定性编译为 MySQL SELECT。
+5. 快照管理:语义层的版本快照、差异对比与一键回滚。
+6. Bundle 导入/导出:语义层资产的打包迁移。
+
+编译策略(``compile_logic_form``):
+- 指标支持同表多指标、跨表标量两种模式。
+- 维度/过滤通过 mapping 解析为物理表字段。
+- 关系通过 join_path 自动推导 JOIN 条件。
+- 时间窗口由 time_range 编译为 WHERE 日期谓词。
+- 输出 LIMIT 不超过 1000(由 max_limit 控制)。
+
+被以下节点直接调用:
+- ``semantic_runtime_recall``:build_runtime
+- ``lf_validate``:validate_logic_form
+- ``lf_to_sql_compile``:compile_logic_form
+- ``semantic_check``:validate_logic_form
+"""
+
 from __future__ import annotations
 
 import json
@@ -24,6 +48,7 @@ from app.utils.logging_helpers import json_for_log, truncate_text
 logger = logging.getLogger(__name__)
 
 
+# 每种资产类型在数据库中需要做 JSON 序列化的字段列表
 JSON_FIELDS: dict[str, tuple[str, ...]] = {
     "concept": ("synonyms", "metadata"),
     "relation": ("join_path", "conditions", "metadata"),
@@ -33,6 +58,7 @@ JSON_FIELDS: dict[str, tuple[str, ...]] = {
     "template": ("required_slots", "optional_slots", "compile_strategy", "examples"),
 }
 
+# 资产类型 → (物理表名, 唯一标识字段, Pydantic 模型类) 映射
 ASSET_TABLES = {
     "concept": ("semantic_concept", "concept_key", SemanticConcept),
     "relation": ("semantic_relation", "relation_key", SemanticRelation),
@@ -42,10 +68,15 @@ ASSET_TABLES = {
     "template": ("logic_form_template", "template_key", LogicFormTemplate),
 }
 
+# SQL 安全校验正则:标识符只允许字母/数字/下划线
 SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# 资产 key 只允许字母/数字/下划线
 SAFE_ASSET_KEY = re.compile(r"^[A-Za-z0-9_]+$")
+# SQL 表达式白名单:只允许安全字符(标识符/运算符/函数调用/引号)
 SAFE_SQL_EXPR = re.compile(r"^[A-Za-z0-9_`., ()+\-*/<>=!'\n\r\t{}%]+$")
+# LogicForm 允许的过滤操作符
 ALLOWED_OPERATORS = {"=", "!=", "<>", ">", ">=", "<", "<=", "in", "not in", "like"}
+# LogicForm 允许的相对时间周期标识
 ALLOWED_TIME_PERIODS = {"this_month", "last_month", "last_3_months", "recent_3_months"}
 
 
@@ -618,7 +649,18 @@ class SemanticRuntimeService:
         logic_form: LogicForm,
         runtime: SemanticRuntime,
     ) -> LogicFormValidation:
-        """Check that a LogicForm references known metrics, dimensions, filters, and sorts."""
+        """校验 LogicForm 引用的资产是否合法。
+
+        校验规则:
+        1. metrics 至少一个,且每个 metric_key 必须在 runtime.metrics 中存在。
+        2. dimensions 中的 asset_key 必须在 runtime.mappings 中存在且 role 合法。
+        3. filters 中的 operator 必须在 ALLOWED_OPERATORS 内,field 必须有对应 mapping。
+        4. sort.field 必须来自 metrics 或 dimensions。
+        5. grain 为 month/day 时,要求指标配置了 time_field。
+        6. time_range.period 必须在 ALLOWED_TIME_PERIODS 内(警告,不阻断)。
+
+        返回 LogicFormValidation,errors 为空表示校验通过。
+        """
         logger.info("semantic validate_logic_form input=%s", json_for_log(logic_form.model_dump()))
         metric_map = {metric.metric_key: metric for metric in runtime.metrics}
         mapping_map = {mapping.asset_key: mapping for mapping in runtime.mappings}
@@ -690,17 +732,33 @@ class SemanticRuntimeService:
         return result
 
     def compile_logic_form(self, logic_form: LogicForm, runtime: SemanticRuntime) -> CompiledQuery:
-        """Compile a validated LogicForm into deterministic MySQL SELECT SQL."""
+        """把校验通过的 LogicForm 确定性编译为 MySQL SELECT SQL。
+
+        编译流程:
+        1. 校验 LogicForm 引用的资产是否合法。
+        2. 判断指标是否跨表:跨表走标量子查询模式,同表走正常 JOIN 模式。
+        3. 对每个维度/指标/过滤,通过 mapping 解析为物理字段表达式。
+        4. 按 relationships 自动推导 JOIN 条件。
+        5. 编译时间窗口为 WHERE 日期谓词。
+        6. 注入 LIMIT(不超过 max_limit)。
+
+        跨表标量模式:每个指标各自独立子查询,最后 CROSS JOIN 合并为一行。
+        同表正常模式:base_table 为 FROM 起点,其他表通过 JOIN 接入。
+        """
         logger.info("semantic compile_logic_form input=%s", json_for_log(logic_form.model_dump()))
+        # 第1步:校验
         validation = self.validate_logic_form(logic_form, runtime)
         if not validation.valid:
             raise ValueError("；".join(validation.errors))
 
+        # 第2步:构建索引并提取基础表
         metric_map = {metric.metric_key: metric for metric in runtime.metrics}
         mapping_map = {mapping.asset_key: mapping for mapping in runtime.mappings}
         metrics = [metric_map[key] for key in logic_form.metrics]
         base_table = metrics[0].base_table
         metric_base_tables = {metric.base_table for metric in metrics}
+
+        # 判断是否跨表:不同指标来自不同事实表时,走标量子查询模式
         if len(metric_base_tables) > 1:
             if logic_form.dimensions:
                 raise ValueError("暂不支持跨事实表指标按维度分组，请减少指标或去掉分组维度")
@@ -718,15 +776,21 @@ class SemanticRuntimeService:
             )
             return compiled
 
+        # 正常模式:所有指标来自同一事实表
         table_aliases = {base_table: "t0"}
         joins: list[str] = []
         used_assets = list(validation.used_assets)
 
         def ensure_table(table_name: str) -> str:
-            """Return an alias for a table, creating the required JOIN when needed."""
+            """为表分配别名;若表未参与查询,自动通过关系路径推导 JOIN 并追加。
+
+            编译器按需调用此函数,保证只有被维度/过滤/时间字段引用的表才会 JOIN,
+            避免不必要的多表连接。
+            """
             if table_name in table_aliases:
                 return table_aliases[table_name]
             alias = f"t{len(table_aliases)}"
+            # 通过语义关系推导 JOIN 条件,找不到关系会抛异常
             join_condition = self._find_join_condition(
                 base_table, table_name, runtime, table_aliases
             )
@@ -734,9 +798,11 @@ class SemanticRuntimeService:
             joins.append(f"JOIN `{table_name}` {alias} ON {join_condition.format(target=alias)}")
             return alias
 
+        # 第3步:编译 SELECT 子句和 GROUP BY 子句
         select_parts: list[str] = []
         group_parts: list[str] = []
 
+        # 3a:时间粒度 —— grain=month/day 时,把 time_field 做 DATE_FORMAT 后加入 SELECT 和 GROUP BY
         if logic_form.grain:
             time_field = metrics[0].time_field
             if not time_field:
@@ -753,6 +819,7 @@ class SemanticRuntimeService:
             group_parts.append(time_expr)
             used_assets.append(f"grain:{logic_form.grain}")
 
+        # 3b:维度 —— 通过 mapping 解析为物理字段,维表在 ensure_table 时自动 JOIN
         for dimension in logic_form.dimensions:
             mapping = mapping_map[dimension]
             alias = ensure_table(mapping.table_name)
@@ -760,6 +827,7 @@ class SemanticRuntimeService:
             select_parts.append(f"{expr} AS `{dimension}`")
             group_parts.append(expr)
 
+        # 3c:指标 —— formula_sql 中 {base} 占位符替换为 base_table 别名
         for metric in metrics:
             if metric.base_table != base_table:
                 raise ValueError("暂不支持同一 LogicForm 混用不同事实表指标")
@@ -767,16 +835,18 @@ class SemanticRuntimeService:
             select_parts.append(f"{expr} AS `{metric.metric_key}`")
             used_assets.append(f"metric:{metric.metric_key}")
 
+        # 第4步:编译 WHERE 子句(指标默认过滤 + 用户过滤 + 时间窗口)
         where_parts: list[str] = []
+        # 4a:指标自带的 default_filters(如风控指标默认只算存量)
         for metric in metrics:
             where_parts.extend(
                 self._compile_filter(item, mapping_map, ensure_table)
                 for item in metric.default_filters
             )
-
+        # 4b:LogicForm 中的 filters(用户问题提取的过滤条件)
         for item in logic_form.filters:
             where_parts.append(self._compile_filter(item.model_dump(), mapping_map, ensure_table))
-
+        # 4c:时间窗口(time_range → WHERE 日期谓词)
         if logic_form.time_range:
             time_field = metrics[0].time_field
             if time_field:
@@ -784,6 +854,7 @@ class SemanticRuntimeService:
                     self._compile_time_range(time_field, logic_form.time_range, table_aliases)
                 )
 
+        # 第5步:组装 SQL 各子句
         sql_parts = [
             "SELECT " + ", ".join(select_parts),
             f"FROM `{base_table}` {table_aliases[base_table]}",
@@ -793,6 +864,7 @@ class SemanticRuntimeService:
             sql_parts.append("WHERE " + " AND ".join(part for part in where_parts if part))
         if group_parts:
             sql_parts.append("GROUP BY " + ", ".join(group_parts))
+        # 排序:LogicForm 有 sort 时按指定排序;grain 模式下按时间维度排序
         if logic_form.sort:
             order_parts = [f"`{sort.field}` {sort.direction.upper()}" for sort in logic_form.sort]
             sql_parts.append("ORDER BY " + ", ".join(order_parts))
@@ -800,6 +872,7 @@ class SemanticRuntimeService:
             order_parts = [f"`{'day' if logic_form.grain == 'day' else 'month'}` ASC"]
             order_parts.extend(f"`{dimension}` ASC" for dimension in logic_form.dimensions)
             sql_parts.append("ORDER BY " + ", ".join(order_parts))
+        # LIMIT:截断到 max_limit,避免大结果集
         if logic_form.limit:
             sql_parts.append(f"LIMIT {min(max(int(logic_form.limit), 1), 1000)}")
 
@@ -826,11 +899,14 @@ class SemanticRuntimeService:
         used_assets: list[str],
         warnings: list[str],
     ) -> CompiledQuery:
-        """Compile cross-table metrics into one scalar row.
+        """跨表标量指标编译 —— 多个指标来自不同事实表时,各指标独立子查询后 CROSS JOIN。
 
-        This covers questions like "高 PD 客户的余额和逾期情况", where the
-        requested metrics live on different fact tables and there is no group
-        dimension. Each metric gets its own semantically filtered subquery.
+        典型场景:"高 PD 客户的余额和逾期情况",其中"余额"和"逾期"分别在
+        不同的事实表上,且用户未指定分组维度,系统需要:
+        1. 每个指标独立生成一个带语义过滤的标量子查询。
+        2. 所有子查询通过 CROSS JOIN 合并为一行。
+
+        跨表模式下不支持 GROUP BY 维度(会抛异常)和排序(会加入 warnings)。
         """
         select_parts: list[str] = []
         subqueries: list[str] = []
@@ -1087,7 +1163,15 @@ class SemanticRuntimeService:
     def _compile_filter(
         self, item: dict[str, Any], mapping_map: dict[str, SemanticMapping], ensure_table
     ) -> str:
-        """Compile one LogicForm or default filter into a SQL predicate."""
+        """把一个 LogicForm 过滤条件编译为 SQL WHERE 谓词。
+
+        编译流程:
+        1. 从 mapping_map 中找到字段对应的物理映射。
+        2. 通过 ensure_table 确保字段所在表已参与查询(可能触发 JOIN)。
+        3. 按操作符类型生成 SQL:
+           - in/not in → 把列表值展开为 IN (val1, val2, ...)
+           - 其他 → {expr} {OPERATOR} {literal}
+        """
         field = str(item.get("field", ""))
         operator = str(item.get("operator", "=")).lower()
         value = item.get("value")
@@ -1108,7 +1192,14 @@ class SemanticRuntimeService:
     def _compile_time_range(
         self, time_field: str, time_range, table_aliases: dict[str, str]
     ) -> list[str]:
-        """Compile a relative time range into SQL date predicates."""
+        """把相对时间窗口编译为 WHERE 日期谓词列表。
+
+        支持:
+        - this_month:本月1日起到下月1日
+        - last_month:上月1日到本月1日
+        - last_3_months / recent_3_months:近3个月
+        - 显式 start/end:自定义时间区间
+        """
         table, column = self._split_qualified(time_field)
         if table not in table_aliases:
             raise ValueError(f"时间字段所在表未参与查询: {time_field}")
@@ -1133,7 +1224,13 @@ class SemanticRuntimeService:
         return []
 
     def _sql_literal(self, value: Any) -> str:
-        """Render a safe SQL literal for configured filter values."""
+        """把 Python 值渲染为安全的 SQL 字面量。
+
+        - None → NULL
+        - bool → 1/0
+        - 数字 → 直接转字符串
+        - 字符串 → 单引号包裹(内部单引号转义为 '')
+        """
         if value is None:
             return "NULL"
         if isinstance(value, bool):
