@@ -32,6 +32,10 @@
             <el-icon><Document /></el-icon>
             <span>Prompt 配置</span>
           </el-menu-item>
+          <el-menu-item index="/system-parameter" :disabled="isNavigationDisabled('/system-parameter')">
+            <el-icon><Setting /></el-icon>
+            <span>系统参数</span>
+          </el-menu-item>
           <el-menu-item index="/datasource" :disabled="isNavigationDisabled('/datasource')">
             <el-icon><Coin /></el-icon>
             <span>数据源</span>

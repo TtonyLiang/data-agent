@@ -1,4 +1,3 @@
-import asyncio
 import hashlib
 import logging
 import time
@@ -263,7 +262,7 @@ class LLMService:
             return cached
         client = self.get_client(**kwargs, streaming=False)
         lc_messages = self._to_lc_messages(messages)
-        resp = await asyncio.to_thread(client.invoke, lc_messages)
+        resp = await client.ainvoke(lc_messages)
         content = str(resp.content or "")
         self._cache_put(cache_key, content)
         self.log_response_text(content, model=kwargs.get("model"))
@@ -332,7 +331,7 @@ class LLMService:
                 return cached, ""
         client = self.get_client(**kwargs, streaming=False)
         lc_messages = self._to_lc_messages(messages)
-        resp = await asyncio.to_thread(client.invoke, lc_messages)
+        resp = await client.ainvoke(lc_messages)
         content = str(resp.content or "")
         reasoning = ""
         # MiMo 返回 reasoning_content 在 additional_kwargs 中

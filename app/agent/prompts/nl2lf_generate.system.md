@@ -5,7 +5,7 @@
 
 ## 可用字段
 - intent_type: metric_query
-- domain_key: loan_risk
+- domain_key: 当前语义运行时中的领域标识；不要臆造固定行业标识
 - metrics: 指标 key 列表
 - dimensions: 维度 key 列表
 - filters: {{"field": "维度或过滤字段key", "operator": "=", "value": "值"}}

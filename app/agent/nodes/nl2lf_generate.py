@@ -1,9 +1,17 @@
 import json
 import logging
 import re
+from typing import Any
 
 from langchain_core.callbacks.manager import adispatch_custom_event
 
+from app.agent.domain_rules import (
+    canonicalize_field,
+    contains_any,
+    extract_top_limit as extract_configured_top_limit,
+    find_logic_form_rules,
+    schema_hints_from_runtime,
+)
 from app.agent.prompts import load_prompt
 from app.models.knowledge import LogicFilter, LogicForm, LogicSort
 from app.services.llm_service import get_llm_service
@@ -37,7 +45,17 @@ async def nl2lf_generate_node(state: dict) -> dict:
     original_question = state.get("question", question)
     runtime = state.get("semantic_runtime") or {}
     history = state.get("chat_history", [])
-    runtime_context = build_runtime_context(runtime)
+    relevant_tables = state.get("relevant_tables") or []
+    relevant_columns = state.get("relevant_columns") or []
+    likely_joins = state.get("likely_joins") or []
+    schema_scope = state.get("schema_scope") or {}
+    runtime_context = build_runtime_context(
+        runtime,
+        relevant_tables=relevant_tables,
+        relevant_columns=relevant_columns,
+        likely_joins=likely_joins,
+        schema_scope=schema_scope,
+    )
     logger.info(
         "nl2lf runtime context chars=%s context=%s",
         len(runtime_context),
@@ -77,19 +95,32 @@ async def nl2lf_generate_node(state: dict) -> dict:
         logger.info("nl2lf parsed logic_form=%s", json_for_log(logic_form.model_dump()))
     except Exception as exc:
         log_node_error(logger, "nl2lf_generate", exc, state)
-        logic_form = fallback_logic_form(question)
+        logic_form = fallback_logic_form(question, runtime)
         logger.info("nl2lf fallback logic_form=%s", json_for_log(logic_form.model_dump()))
 
     if not logic_form.metrics:
-        logic_form = fallback_logic_form(question)
+        logic_form = fallback_logic_form(question, runtime)
         logger.info(
             "nl2lf empty metrics fallback logic_form=%s", json_for_log(logic_form.model_dump())
         )
 
-    logic_form = normalize_logic_form(question, logic_form, history)
+    logic_form = normalize_logic_form(question, logic_form, history, runtime)
+    logic_form = augment_logic_form_with_physical_schema(
+        question,
+        logic_form,
+        relevant_columns,
+        runtime,
+    )
     logger.info("nl2lf normalized logic_form=%s", json_for_log(logic_form.model_dump()))
 
     result = {"logic_form": logic_form.model_dump()}
+    if relevant_tables or relevant_columns or likely_joins:
+        result["schema_scope"] = {
+            "relevant_tables": relevant_tables,
+            "relevant_columns": relevant_columns,
+            "likely_joins": likely_joins,
+            "schema_scope": schema_scope,
+        }
     log_node_end(logger, "nl2lf_generate", result)
     return result
 
@@ -98,8 +129,9 @@ def normalize_logic_form(
     question: str,
     logic_form: LogicForm,
     history: list[dict] | None = None,
+    runtime: dict[str, Any] | None = None,
 ) -> LogicForm:
-    """Apply deterministic product semantics after LLM parsing."""
+    """Apply configured product semantics after LLM parsing."""
     compact = question.lower().replace(" ", "")
     context_text = contextual_question_text(question, history)
     context_compact = context_text.lower().replace(" ", "")
@@ -110,47 +142,67 @@ def normalize_logic_form(
     time_range = logic_form.time_range
     limit = logic_form.limit
     grain = logic_form.grain
-
-    asks_balance = "余额" in question or "balance" in compact
-    asks_overdue = "逾期" in question or "m1" in compact or "overdue" in compact
-    high_pd_segment = "高pd" in compact or ("高" in question and "pd" in compact)
-    asks_application_count = is_application_count_question(context_text)
     asks_trend = asks_trend_question(context_text)
-
-    if asks_balance and asks_overdue:
-        metrics = ["outstanding_balance", "m1_plus_rate"]
-
-    if asks_application_count:
-        metrics = ["application_count"]
-        dimensions = normalize_application_count_dimensions(dimensions)
-        trend_dimension = infer_application_count_dimension(context_text, dimensions)
-        if asks_trend:
-            dimensions = [trend_dimension] if trend_dimension else []
-            if not time_range:
-                time_range = {"type": "relative", "period": "recent_3_months"}
-            grain = "month"
-        elif trend_dimension:
-            dimensions = [trend_dimension]
-        filters = normalize_application_count_filters(filters)
-        if asks_ranking(context_compact):
-            sort = [LogicSort(field="application_count", direction="desc")]
-            limit = extract_top_limit(compact) or extract_top_limit(context_compact) or limit or 10
-
-    if high_pd_segment and not any(item.field == "risk_grade" for item in filters):
-        filters.append(LogicFilter(field="risk_grade", operator="=", value="D"))
-    if high_pd_segment:
-        filters = [
-            item.model_copy(update={"value": normalize_risk_grade_value(item.value)})
-            if item.field == "risk_grade"
-            else item
-            for item in filters
-        ]
-    if high_pd_segment:
-        dimensions = [item for item in dimensions if item != "risk_grade"]
-
-    preserve_inferred_trend_window = (
-        asks_application_count and asks_trend and grain in {"month", "day"}
+    matched_rules = find_logic_form_rules(
+        runtime,
+        question,
+        history_text=contextual_question_text("", history),
     )
+    preserve_inferred_trend_window = False
+    for actions in matched_rules:
+        action_aliases = {
+            str(source): str(target)
+            for source, target in (actions.get("field_aliases") or {}).items()
+            if source and target
+        }
+        if actions.get("metrics"):
+            configured_metrics = [
+                str(item) for item in actions.get("metrics") or [] if str(item or "")
+            ]
+            metrics = (
+                unique_strings([*metrics, *configured_metrics])
+                if actions.get("merge_metrics")
+                else configured_metrics
+            )
+        dimensions = apply_dimension_actions(
+            context_text,
+            dimensions,
+            actions.get("dimensions"),
+        )
+        filters = apply_filter_actions(filters, actions.get("filters"))
+        filters = apply_regex_filter_actions(context_text, filters, actions.get("regex_filters"))
+        if action_aliases:
+            metrics = [canonicalize_field(item, action_aliases) for item in metrics]
+            dimensions = [canonicalize_field(item, action_aliases) for item in dimensions]
+            filters = [
+                item.model_copy(update={"field": canonicalize_field(item.field, action_aliases)})
+                for item in filters
+            ]
+            sort = [
+                item.model_copy(update={"field": canonicalize_field(item.field, action_aliases)})
+                for item in sort
+            ]
+        if actions.get("grain"):
+            grain = str(actions.get("grain"))
+        if actions.get("time_range") and not time_range:
+            time_range = actions.get("time_range")
+            preserve_inferred_trend_window = True
+        if asks_ranking(context_compact):
+            sort_field = str(actions.get("sort_field") or (metrics[0] if metrics else ""))
+            if sort_field:
+                sort = [LogicSort(field=sort_field, direction=str(actions.get("sort_direction") or "desc"))]
+            limit = (
+                extract_configured_top_limit(compact)
+                or extract_configured_top_limit(context_compact)
+                or limit
+                or actions.get("default_limit")
+            )
+        if actions.get("remove_dimensions"):
+            remove = set(actions.get("remove_dimensions") or [])
+            dimensions = [item for item in dimensions if item not in remove]
+
+    filters = normalize_filter_values(filters, runtime)
+
     if time_range and not has_explicit_time_range(question) and not preserve_inferred_trend_window:
         time_range = None
 
@@ -195,56 +247,6 @@ def contextual_question_text(question: str, history: list[dict] | None = None) -
     return f"{recent} {question}"
 
 
-def is_application_count_question(text: str) -> bool:
-    """Detect whether the user asks for loan-application count semantics."""
-    compact = text.lower().replace(" ", "")
-    has_application = any(token in compact for token in ("贷款申请", "申请", "进件"))
-    asks_count = any(
-        token in compact
-        for token in (
-            "笔数",
-            "多少笔",
-            "几笔",
-            "申请数",
-            "申请量",
-            "进件量",
-            "进件笔数",
-            "count",
-        )
-    )
-    asks_application_ranking = has_application and any(
-        token in compact for token in ("最多", "排名", "排行", "top")
-    )
-    correction_to_count = any(
-        token in compact
-        for token in ("问的是笔数", "要的是笔数", "不是金额", "为什么查出来的是金额")
-    )
-    return has_application and (asks_count or asks_application_ranking or correction_to_count)
-
-
-def mentions_region(text: str) -> bool:
-    """Detect region dimension mentions."""
-    compact = text.lower().replace(" ", "")
-    return any(token in compact for token in ("地区", "区域", "region"))
-
-
-def mentions_product_type(text: str) -> bool:
-    """Detect product-type dimension mentions."""
-    compact = text.lower().replace(" ", "")
-    return any(
-        token in compact for token in ("产品类型", "贷款产品", "产品", "producttype", "product")
-    )
-
-
-def mentions_bucketed_loan(text: str) -> bool:
-    """Detect loan bucket or loan-type dimension mentions."""
-    compact = text.lower().replace(" ", "")
-    return any(
-        token in compact
-        for token in ("各个贷款", "各类贷款", "不同贷款", "每种贷款", "各贷款", "各项贷款")
-    )
-
-
 def asks_ranking(compact_text: str) -> bool:
     """Detect ranking or TopN intent."""
     return any(token in compact_text for token in ("最多", "排名", "排行", "top", "前"))
@@ -283,45 +285,46 @@ def extract_top_limit(compact_text: str) -> int | None:
     return None
 
 
-def normalize_application_count_filters(filters: list[LogicFilter]) -> list[LogicFilter]:
-    """Map generic filters to application-count-specific asset keys."""
-    normalized = []
-    for item in filters:
-        if item.field == "product_type":
-            normalized.append(item.model_copy(update={"field": "application_product_type"}))
-        elif item.field == "risk_grade":
-            normalized.append(item.model_copy(update={"field": "application_risk_grade"}))
+def augment_logic_form_with_physical_schema(
+    question: str,
+    logic_form: LogicForm,
+    relevant_columns: list[dict[str, Any]] | None,
+    runtime: dict[str, Any] | None = None,
+) -> LogicForm:
+    """Attach configured physical-schema hints so fallback can ground unresolved fields."""
+    hints = schema_hints_from_runtime(runtime, question)
+    if not hints:
+        return logic_form
+    dimensions = list(logic_form.dimensions)
+    for hint in hints:
+        if str(hint.get("dimension_mode") or "append") not in {"append", "replace"}:
+            continue
+        matched_columns = infer_schema_hint_columns(relevant_columns or [], hint)
+        if not matched_columns:
+            continue
+        if str(hint.get("dimension_mode") or "append") == "replace":
+            dimensions = matched_columns
         else:
-            normalized.append(item)
-    return normalized
+            dimensions = unique_strings([*dimensions, *matched_columns])
+    return logic_form.model_copy(update={"dimensions": dimensions})
 
 
-def normalize_application_count_dimensions(dimensions: list[str]) -> list[str]:
-    """Map generic dimensions to application-count-specific asset keys."""
-    normalized: list[str] = []
-    mapping = {
-        "region": "application_region",
-        "product_type": "application_product_type",
-        "risk_grade": "application_risk_grade",
-    }
-    for item in dimensions:
-        normalized.append(mapping.get(item, item))
-    return normalized
-
-
-def infer_application_count_dimension(text: str, dimensions: list[str]) -> str | None:
-    """Choose the best application-count dimension from question text."""
-    if (
-        "application_product_type" in dimensions
-        or mentions_product_type(text)
-        or mentions_bucketed_loan(text)
-    ):
-        return "application_product_type"
-    if "application_region" in dimensions or mentions_region(text):
-        return "application_region"
-    if "application_risk_grade" in dimensions:
-        return "application_risk_grade"
-    return None
+def infer_schema_hint_columns(
+    relevant_columns: list[dict[str, Any]],
+    hint: dict[str, Any],
+) -> list[str]:
+    """Pick physical columns that match a configured schema hint."""
+    terms = [str(item) for item in hint.get("column_terms") or [] if str(item or "")]
+    if not terms:
+        return []
+    matched: list[str] = []
+    for item in relevant_columns:
+        column_name = str(item.get("column_name") or item.get("column") or "")
+        column_comment = str(item.get("column_comment") or item.get("comment") or "")
+        label = f"{column_name} {column_comment}".lower()
+        if contains_any(label, terms):
+            matched.append(column_name)
+    return unique_strings(matched)
 
 
 def has_explicit_time_range(question: str) -> bool:
@@ -348,21 +351,135 @@ def has_explicit_time_range(question: str) -> bool:
     )
 
 
-def normalize_risk_grade_value(value):
-    """Normalize risk-grade synonyms to configured grade values."""
-    text = str(value).strip().lower()
-    if text in {"high", "高", "高风险", "d", "4"}:
-        return "D"
-    if text in {"medium_high", "较高", "中高", "c", "3"}:
-        return "C"
-    if text in {"medium", "中", "b", "2"}:
-        return "B"
-    if text in {"low", "低", "a", "1"}:
-        return "A"
-    return value
+def apply_dimension_actions(
+    question: str,
+    current_dimensions: list[str],
+    action: Any,
+) -> list[str]:
+    """Apply configured dimension replacement or inference actions."""
+    if not isinstance(action, dict):
+        return current_dimensions
+    mode = str(action.get("mode") or "replace")
+    values = [str(item) for item in action.get("values") or [] if str(item or "")]
+    if action.get("infer_from_terms"):
+        inferred = infer_configured_dimension(question, action.get("infer_from_terms") or {})
+        if inferred:
+            values = [inferred]
+    if mode == "append":
+        return unique_strings([*current_dimensions, *values])
+    if mode == "replace":
+        return values
+    return current_dimensions
 
 
-def build_runtime_context(runtime: dict) -> str:
+def infer_configured_dimension(question: str, candidates: dict[str, Any]) -> str | None:
+    """Infer a configured dimension key from user wording."""
+    for dimension, terms in candidates.items():
+        if contains_any(question, [str(item) for item in terms or []]):
+            return str(dimension)
+    return None
+
+
+def apply_filter_actions(
+    current_filters: list[LogicFilter],
+    configured_filters: Any,
+) -> list[LogicFilter]:
+    """Merge configured filters into the LogicForm filters."""
+    filters = list(current_filters)
+    if not isinstance(configured_filters, list):
+        return filters
+    existing_fields = {item.field for item in filters}
+    for item in configured_filters:
+        if not isinstance(item, dict):
+            continue
+        field = str(item.get("field") or "")
+        if not field or field in existing_fields:
+            continue
+        filters.append(
+            LogicFilter(
+                field=field,
+                operator=str(item.get("operator") or "="),
+                value=item.get("value"),
+            )
+        )
+        existing_fields.add(field)
+    return filters
+
+
+def apply_regex_filter_actions(
+    question: str,
+    current_filters: list[LogicFilter],
+    regex_filters: Any,
+) -> list[LogicFilter]:
+    """Extract configured regex filters from the question."""
+    filters = list(current_filters)
+    if not isinstance(regex_filters, list):
+        return filters
+    existing_fields = {item.field for item in filters}
+    for item in regex_filters:
+        if not isinstance(item, dict):
+            continue
+        field = str(item.get("field") or "")
+        pattern = str(item.get("pattern") or "")
+        if not field or not pattern or field in existing_fields:
+            continue
+        match = re.search(pattern, question, flags=re.IGNORECASE)
+        if not match:
+            continue
+        group = int(item.get("group") or 1)
+        value: Any = match.group(group)
+        if item.get("value_type") == "int":
+            value = int(value)
+        filters.append(
+            LogicFilter(
+                field=field,
+                operator=str(item.get("operator") or "="),
+                value=value,
+            )
+        )
+        existing_fields.add(field)
+    return filters
+
+
+def normalize_filter_values(
+    filters: list[LogicFilter],
+    runtime: dict[str, Any] | None,
+) -> list[LogicFilter]:
+    """Normalize configured filter values such as risk-grade aliases."""
+    value_aliases: dict[str, dict[str, Any]] = {}
+    for rule in (runtime or {}).get("rules", []) if isinstance(runtime, dict) else []:
+        if rule.get("rule_type") != "normalization":
+            continue
+        expression = rule.get("expression") or {}
+        if isinstance(expression, dict):
+            for field, aliases in (expression.get("value_aliases") or {}).items():
+                if isinstance(aliases, dict):
+                    value_aliases[str(field)] = aliases
+    normalized = []
+    for item in filters:
+        aliases = value_aliases.get(item.field) or {}
+        key = str(item.value).strip().lower()
+        value = aliases.get(key, item.value)
+        normalized.append(item.model_copy(update={"value": value}))
+    return normalized
+
+
+def unique_strings(values: list[str]) -> list[str]:
+    result = []
+    for value in values:
+        if value and value not in result:
+            result.append(value)
+    return result
+
+
+def build_runtime_context(
+    runtime: dict,
+    *,
+    relevant_tables: list[dict] | None = None,
+    relevant_columns: list[dict] | None = None,
+    likely_joins: list[dict] | None = None,
+    schema_scope: dict | None = None,
+) -> str:
     """Serialize the semantic runtime subset used by the NL2LF prompt."""
     metrics = [
         {
@@ -391,8 +508,45 @@ def build_runtime_context(runtime: dict) -> str:
         }
         for item in runtime.get("rules", [])
     ]
+    physical_schema = {
+        "scope": schema_scope or {},
+        "tables": [
+            {
+                "table_name": item.get("table_name") or item.get("table"),
+                "table_comment": item.get("table_comment") or item.get("comment"),
+                "score": item.get("score"),
+                "reason": item.get("reason"),
+                "column_count": item.get("column_count"),
+            }
+            for item in (relevant_tables or [])
+        ],
+        "columns": [
+            {
+                "table_name": item.get("table_name") or item.get("table"),
+                "column_name": item.get("column_name") or item.get("column"),
+                "column_comment": item.get("column_comment") or item.get("comment"),
+                "data_type": item.get("data_type"),
+                "score": item.get("score"),
+                "reason": item.get("reason"),
+            }
+            for item in (relevant_columns or [])
+        ],
+        "joins": [
+            {
+                "left": item.get("left"),
+                "right": item.get("right"),
+                "reason": item.get("reason"),
+            }
+            for item in (likely_joins or [])
+        ],
+    }
     return json.dumps(
-        {"metrics": metrics, "dimensions_and_filters": dimensions, "rules": rules},
+        {
+            "metrics": metrics,
+            "dimensions_and_filters": dimensions,
+            "rules": rules,
+            "physical_schema": physical_schema,
+        },
         ensure_ascii=False,
     )
 
@@ -417,21 +571,31 @@ def build_user_prompt(
 
 def parse_logic_form(response: str) -> LogicForm:
     """Parse a LogicForm JSON response from model output."""
-    text = response.strip()
-    if "```" in text:
-        text = text.split("```", 2)[1]
-        if text.startswith("json"):
-            text = text[4:].strip()
+    text = extract_json_object(response)
     return LogicForm(**json.loads(text))
 
 
-def fallback_logic_form(question: str) -> LogicForm:
-    """Produce a deterministic LogicForm when model parsing fails."""
+def extract_json_object(response: str) -> str:
+    text = (response or "").strip()
+    if not text:
+        raise ValueError("模型未返回 LogicForm JSON")
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", text, flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        text = fenced.group(1).strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("模型返回中未找到 JSON 对象")
+    return text[start : end + 1]
+
+
+def fallback_logic_form(question: str, runtime: dict[str, Any] | None = None) -> LogicForm:
+    """Produce a minimal configured LogicForm when model parsing fails."""
     normalized = question.lower()
     compact = normalized.replace(" ", "")
     filters = []
     dimensions = []
-    metrics = ["outstanding_balance"]
+    metrics = []
     sort = []
     limit = None
     time_range = None
@@ -444,57 +608,57 @@ def fallback_logic_form(question: str) -> LogicForm:
     elif "近三个月" in compact or "近3个月" in compact:
         time_range = {"type": "relative", "period": "recent_3_months"}
 
-    if "现金贷" in question:
-        filters.append({"field": "product_type", "operator": "=", "value": "现金贷"})
-
-    mob_match = re.search(r"mob\s*(\d+)", normalized)
-    if mob_match:
-        filters.append({"field": "mob", "operator": "=", "value": int(mob_match.group(1))})
-
-    if is_application_count_question(question):
-        metrics = ["application_count"]
-        dimension = infer_application_count_dimension(question, dimensions)
-        if asks_trend_question(question):
-            dimensions = [dimension] if dimension else []
-            grain = "month"
-            if not time_range:
-                time_range = {"type": "relative", "period": "recent_3_months"}
-        elif dimension:
-            dimensions = [dimension]
-        sort = (
-            [{"field": "application_count", "direction": "desc"}] if asks_ranking(compact) else []
-        )
-        limit = extract_top_limit(compact) or limit
+    for actions in find_logic_form_rules(runtime, question):
+        action_aliases = {
+            str(source): str(target)
+            for source, target in (actions.get("field_aliases") or {}).items()
+            if source and target
+        }
+        if actions.get("metrics"):
+            configured_metrics = [
+                str(item) for item in actions.get("metrics") or [] if str(item or "")
+            ]
+            metrics = (
+                unique_strings([*metrics, *configured_metrics])
+                if actions.get("merge_metrics")
+                else configured_metrics
+            )
+        dimensions = apply_dimension_actions(question, dimensions, actions.get("dimensions"))
+        configured_filters = actions.get("filters")
         filters = [
-            {
-                **item,
-                "field": "application_product_type"
-                if item.get("field") == "product_type"
-                else item.get("field"),
-            }
-            for item in filters
+            item.model_dump()
+            for item in apply_filter_actions(
+                [LogicFilter(**item) for item in filters],
+                configured_filters,
+            )
         ]
-    elif "催收" in question and "回收率" in question:
-        metrics = ["collection_recovery_rate"]
-        if "团队" in question:
-            dimensions.append("assigned_team")
-        sort = [{"field": "collection_recovery_rate", "direction": "desc"}]
-        limit = 20
-    elif "vintage" in normalized or "放款批次" in question or "批次" in question:
-        metrics = ["m1_plus_rate"]
-        dimensions = ["vintage", "mob"]
-    elif "m1" in normalized or "逾期率" in question:
-        metrics = ["m1_plus_rate"]
-    elif "放款金额" in question or "发放金额" in question:
-        metrics = ["disbursement_amount"]
-    elif "审批通过率" in question or "通过率" in question:
-        metrics = ["approval_rate"]
-    elif "核销" in question:
-        metrics = ["writeoff_amount"]
-    elif "pd" in normalized or "违约概率" in question:
-        metrics = ["pd"]
-    elif "dti" in normalized or "负债收入比" in question:
-        metrics = ["dti"]
+        filters = [
+            item.model_dump()
+            for item in apply_regex_filter_actions(
+                question,
+                [LogicFilter(**item) for item in filters],
+                actions.get("regex_filters"),
+            )
+        ]
+        if action_aliases:
+            metrics = [canonicalize_field(item, action_aliases) for item in metrics]
+            dimensions = [canonicalize_field(item, action_aliases) for item in dimensions]
+            filters = [
+                {**item, "field": canonicalize_field(str(item.get("field") or ""), action_aliases)}
+                for item in filters
+            ]
+        if actions.get("grain"):
+            grain = str(actions.get("grain"))
+        if actions.get("time_range") and not time_range:
+            time_range = actions.get("time_range")
+        if asks_ranking(compact):
+            sort_field = str(actions.get("sort_field") or (metrics[0] if metrics else ""))
+            if sort_field:
+                sort = [{"field": sort_field, "direction": str(actions.get("sort_direction") or "desc")}]
+            limit = extract_configured_top_limit(compact) or actions.get("default_limit") or limit
+        if actions.get("remove_dimensions"):
+            remove = set(actions.get("remove_dimensions") or [])
+            dimensions = [item for item in dimensions if item not in remove]
 
     return LogicForm(
         metrics=metrics,

@@ -20,7 +20,7 @@ WenQu 是一个面向业务人员和数据分析人员的智能问数系统。�
 flowchart LR
   U["用户"] --> FE["前端管理台 / ChatView"]
 
-  FE --> API["FastAPI 后端<br/>app/main.py + app/api/*"]
+  FE --> API["FastAPI 后端<br/>Bearer 鉴权 / CORS / 限流<br/>app/main.py + app/api/*"]
   API --> GRAPH["LangGraph 问数工作流<br/>app/agent/graph.py"]
 
   GRAPH --> AGENT["智能体配置<br/>Agent / 模型 / 数据源 / 语义层绑定"]
@@ -29,7 +29,7 @@ flowchart LR
   GRAPH --> LLM["大语言模型服务<br/>LLMService"]
   GRAPH --> EXEC["Python 安全执行器<br/>PythonExecutor"]
 
-  AGENT --> MGMT[("管理库 MySQL<br/>agent/model/datasource/semantic/chat_history")]
+  AGENT --> MGMT[("管理库 MySQL<br/>agent/model/datasource/semantic/chat_history<br/>密码与 API Key 加密落盘")]
   SEM --> MGMT
   META --> MGMT
   META --> BIZ[("业务库 MySQL<br/>已采集表结构 + 真实业务数据")]
@@ -44,6 +44,7 @@ flowchart LR
 - `AgentList`：智能体管理，绑定数据源、模型和语义层。
 - `ModelConfig`：模型配置，区分大语言模型和向量模型。
 - `PromptConfig`：Prompt 模板配置，按节点、智能体、模型和语义层覆盖系统提示词。
+- `SystemParameterConfig`：系统参数配置，当前用于调整数据定位召回阈值和最多候选表数。
 - `DatasourceConfig`：数据源管理，读取表清单、选择采集表、查看字段详情。
 - `KnowledgeConfig`：语义层配置，维护领域、指标、映射、规则、关系和模板。
 
@@ -77,6 +78,23 @@ erDiagram
 - 语义层表达业务口径，例如指标、维度、映射、规则、关系。
 - 模型配置分为大语言模型和向量模型。大语言模型用于理解、生成 LogicForm 或兜底 SQL；向量模型用于知识召回。
 - 会话历史保存用户问题、最终回答、SQL、结果、思考过程、分析报告，保证历史恢复。
+
+## 3.1 安全与运行保护
+
+后端在 FastAPI 层提供最小运行保护：
+
+- `/health` 保持公开，用于本地和部署探活。
+- 其他 `/api/*` 端点在配置 `ADMIN_API_KEY` 后要求 `Authorization: Bearer <token>`；开发环境可留空跳过，生产环境 `DEBUG=false` 时必须配置。
+- CORS 来源由 `CORS_ALLOWED_ORIGINS` 白名单控制，不允许 `* + credentials` 的危险组合。
+- 进程内限流按 token/IP 与接口路径控制请求频率，流式问数接口额外限制同时运行的 stream 数。
+- `datasource.password` 与 `model_config.api_key` 使用 `enc:v1:` 前缀密文落盘，旧明文数据兼容读取，重新保存后转为密文。
+- 生产模式缺少 `ADMIN_API_KEY`、`SECRET_ENCRYPTION_KEY` 或仍使用默认 MySQL 密码时拒绝启动。
+
+SQL 与 Python 执行阶段继续采用纵深防护：
+
+- SQL 仅允许单条只读 SELECT，自动注入/截断 LIMIT，拦截系统库、跨库访问、危险函数与 MySQL 文件/预处理关键字。
+- SQL 执行有连接超时和查询超时配置；执行失败重试耗尽后直接返回失败态，不再继续生成成功报告。
+- Python 分析只处理 SQL 结果集，不直接访问业务库；本地执行器限制导入、AST、超时、内存和工作目录，生产推荐 worker 或高隔离后端。
 
 ## 4. 问数主流程
 
@@ -138,7 +156,7 @@ flowchart TD
 | 意图识别 | 不一定 | 明显问数走规则，不明显才调用模型 |
 | 语义增强 | 是 | 把原始问题改写成更完整的业务自然语言；失败时规则兜底 |
 | 知识召回 | 否 | 主要依赖语义资产和向量召回；向量召回可能调用向量模型 |
-| 数据定位 | 否 | 基于已采集 schema、注释、语义资产和外键关系排序 |
+| 数据定位 | 否 | 基于已采集 schema、注释、语义资产和外键关系排序；召回数量与分数阈值由系统参数配置 |
 | LogicForm 生成 | 是 | 将自然语言转换成结构化查询意图 |
 | 语义校验 | 否 | 检查指标、维度、过滤、时间口径是否合法 |
 | SQL 编译 | 否 | 命中语义层后，SQL 由 LogicForm 确定性编译生成 |
@@ -174,7 +192,7 @@ flowchart LR
 
 ## 6.6 深度分析节点与 Python 模板
 
-深度分析实现位于 `app/agent/nodes/analysis_pipeline.py`，不再使用开发阶段的 `phase3.py` 作为主实现命名；`phase3.py` 仅作为临时兼容导出层。兜底 Python 分析脚本统一放在 `app/agent/python_templates/`，当前包括通用分析模板和多序列趋势模板。节点只负责选择“大模型生成脚本”或“安全模板兜底”，模板本体不再写在节点代码中。
+深度分析实现位于 `app/agent/nodes/analysis_pipeline.py`，不再使用开发阶段的 `phase3.py` 作为主实现命名；旧兼容导出文件已确认无引用并删除。兜底 Python 分析脚本统一放在 `app/agent/python_templates/`，当前包括通用分析模板和多序列趋势模板。节点只负责选择“大模型生成脚本”或“安全模板兜底”，模板本体不再写在节点代码中。
 
 Python 分析执行采用轻量 ReAct 修复闭环：脚本执行失败时，节点先记录错误观察，再携带失败脚本、stderr 和样例数据调用大模型重写脚本；重写脚本通过安全校验后再次执行。若修复仍失败，则切换安全模板兜底；全部失败时才进入报告生成，并将报告状态标记为 `analysis_failed`，报告正文显示“分析执行提示”而不是假装深度分析成功。
 
@@ -220,6 +238,8 @@ LIMIT 3
 
 - 只使用已采集 schema。
 - 优先使用“数据定位”召回的候选表和字段。
+- 数据定位按候选表最高分做相对阈值筛选：达到“必须召回阈值”的表优先保留，介于“可召回阈值”和“必须召回阈值”之间的表只在名额不足时补充，低于“可召回阈值”的表不进入上下文。
+- `schema_recall.max_tables`、`schema_recall.required_score_ratio`、`schema_recall.optional_score_ratio` 通过系统参数页面维护，默认值分别为 `6`、`0.35`、`0.15`。
 - 生成单条只读 SELECT。
 - 后续需要继续接入更严格的 SQL AST 安全校验。
 

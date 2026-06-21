@@ -1,5 +1,10 @@
 from app.agent.nodes import semantic_runtime_recall
-from app.agent.nodes.nl2lf_generate import fallback_logic_form, normalize_logic_form
+from app.agent.nodes.nl2lf_generate import (
+    augment_logic_form_with_physical_schema,
+    build_runtime_context,
+    fallback_logic_form,
+    normalize_logic_form,
+)
 from app.agent.nodes.semantic_enhance import deterministic_enhancement
 from app.models.knowledge import (
     LogicForm,
@@ -28,6 +33,15 @@ def build_runtime() -> SemanticRuntime:
         mappings=[SemanticMapping(domain_id=1, **item) for item in payload["mappings"]],
         templates=[LogicFormTemplate(domain_id=1, **item) for item in payload["templates"]],
     )
+
+
+def build_domain_rewrites() -> list[dict]:
+    runtime = build_runtime().model_dump()
+    rewrites = []
+    for rule in runtime.get("rules", []):
+        if rule.get("rule_type") == "rewrite":
+            rewrites.extend((rule.get("expression") or {}).get("rewrites") or [])
+    return rewrites
 
 
 def test_loan_risk_semantic_file_contains_core_assets():
@@ -154,7 +168,7 @@ def test_semantic_runtime_recall_prefers_agent_bound_domain(monkeypatch):
 def test_m1_plus_cash_loan_logic_form_compiles_to_joined_sql():
     runtime = build_runtime()
     svc = SemanticRuntimeService()
-    logic_form = fallback_logic_form("本月现金贷 M1+逾期率怎么算")
+    logic_form = fallback_logic_form("本月现金贷 M1+逾期率怎么算", runtime.model_dump())
 
     validation = svc.validate_logic_form(logic_form, runtime)
     compiled = svc.compile_logic_form(logic_form, runtime)
@@ -173,7 +187,7 @@ def test_m1_plus_cash_loan_logic_form_compiles_to_joined_sql():
 def test_vintage_mob_logic_form_compiles_with_dimensions():
     runtime = build_runtime()
     svc = SemanticRuntimeService()
-    logic_form = fallback_logic_form("按 Vintage 看放款后 MOB3 的风险表现")
+    logic_form = fallback_logic_form("按 Vintage 看放款后 MOB3 的风险表现", runtime.model_dump())
 
     validation = svc.validate_logic_form(logic_form, runtime)
     compiled = svc.compile_logic_form(logic_form, runtime)
@@ -200,10 +214,70 @@ def test_pd_logic_form_allows_vintage_dimension():
     assert "`disburse_month` AS `vintage`" in compiled.sql
 
 
+def test_build_runtime_context_includes_relevant_columns():
+    context = build_runtime_context(
+        {"metrics": [], "mappings": [], "rules": []},
+        relevant_tables=[
+            {"table_name": "loan_application_indicator", "table_comment": "贷款申请审批指标表"}
+        ],
+        relevant_columns=[
+            {
+                "table_name": "loan_application_indicator",
+                "column_name": "customer_age",
+                "column_comment": "客户年龄",
+            }
+        ],
+        likely_joins=[{"left": "loan_application_indicator.customer_id", "right": "customer.id"}],
+        schema_scope={"mode": "semantic_guided"},
+    )
+
+    assert "customer_age" in context
+    assert "客户年龄" in context
+    assert "physical_schema" in context
+
+
+def test_age_intent_can_attach_physical_schema_dimension():
+    logic_form = LogicForm(metrics=["application_count"], dimensions=["application_product_type"])
+
+    augmented = augment_logic_form_with_physical_schema(
+        "贷款申请产品类型和客户年龄分布有什么关系",
+        logic_form,
+        [
+            {
+                "table_name": "loan_application_indicator",
+                "column_name": "customer_age",
+                "column_comment": "客户年龄",
+            }
+        ],
+        build_runtime().model_dump(),
+    )
+
+    assert "customer_age" in augmented.dimensions
+
+
+def test_physical_schema_dimension_requires_semantic_hint():
+    logic_form = LogicForm(metrics=["application_count"], dimensions=["application_product_type"])
+
+    augmented = augment_logic_form_with_physical_schema(
+        "贷款申请产品类型和客户年龄分布有什么关系",
+        logic_form,
+        [
+            {
+                "table_name": "loan_application_indicator",
+                "column_name": "customer_age",
+                "column_comment": "客户年龄",
+            }
+        ],
+        {"rules": []},
+    )
+
+    assert augmented.dimensions == ["application_product_type"]
+
+
 def test_collection_recovery_rate_logic_form_compiles_with_sort():
     runtime = build_runtime()
     svc = SemanticRuntimeService()
-    logic_form = fallback_logic_form("各催收团队的催收回收率排名")
+    logic_form = fallback_logic_form("各催收团队的催收回收率排名", runtime.model_dump())
 
     validation = svc.validate_logic_form(logic_form, runtime)
     compiled = svc.compile_logic_form(logic_form, runtime)
@@ -219,7 +293,7 @@ def test_collection_recovery_rate_logic_form_compiles_with_sort():
 def test_application_count_by_region_top3_logic_form_compiles_to_count():
     runtime = build_runtime()
     svc = SemanticRuntimeService()
-    logic_form = fallback_logic_form("贷款排名前三的申请区域是什么，分别申请了多少笔")
+    logic_form = fallback_logic_form("贷款排名前三的申请区域是什么，分别申请了多少笔", runtime.model_dump())
 
     validation = svc.validate_logic_form(logic_form, runtime)
     compiled = svc.compile_logic_form(logic_form, runtime)
@@ -249,7 +323,7 @@ def test_application_count_followup_corrects_amount_metric_with_history():
         {"role": "assistant", "content": "按地区返回了放款金额前三。"},
     ]
 
-    normalized = normalize_logic_form("我问的是笔数，为什么查出来的是金额", logic_form, history)
+    normalized = normalize_logic_form("我问的是笔数，为什么查出来的是金额", logic_form, history, build_runtime().model_dump())
 
     assert normalized.metrics == ["application_count"]
     assert normalized.dimensions == ["application_region"]
@@ -269,7 +343,7 @@ def test_application_count_followup_top5_overrides_previous_top3():
         {"role": "assistant", "content": "前三个申请区域分别是华南、东北、西北。"},
     ]
 
-    normalized = normalize_logic_form("前五呢", logic_form, history)
+    normalized = normalize_logic_form("前五呢", logic_form, history, build_runtime().model_dump())
 
     assert normalized.metrics == ["application_count"]
     assert normalized.dimensions == ["application_region"]
@@ -293,7 +367,11 @@ def test_semantic_enhancement_resolves_top5_followup():
 
 
 def test_semantic_enhancement_clarifies_application_count_region_question():
-    result = deterministic_enhancement("贷款排名前三的申请区域是什么，分别申请了多少笔", [])
+    result = deterministic_enhancement(
+        "贷款排名前三的申请区域是什么，分别申请了多少笔",
+        [],
+        build_domain_rewrites(),
+    )
 
     assert result is not None
     assert "申请笔数" in result["enhanced_question"]
@@ -302,7 +380,7 @@ def test_semantic_enhancement_clarifies_application_count_region_question():
 
 
 def test_semantic_enhancement_clarifies_application_count_trend_question():
-    result = deterministic_enhancement("各个贷款申请量变化", [])
+    result = deterministic_enhancement("各个贷款申请量变化", [], build_domain_rewrites())
 
     assert result is not None
     assert result["enhanced_question"] == "查询贷款申请按月份统计各贷款产品类型的申请笔数变化趋势。"
@@ -311,7 +389,7 @@ def test_semantic_enhancement_clarifies_application_count_trend_question():
 def test_application_count_trend_logic_form_compiles_to_monthly_sql():
     runtime = build_runtime()
     svc = SemanticRuntimeService()
-    logic_form = fallback_logic_form("各个贷款申请量变化")
+    logic_form = fallback_logic_form("各个贷款申请量变化", runtime.model_dump())
 
     validation = svc.validate_logic_form(logic_form, runtime)
     compiled = svc.compile_logic_form(logic_form, runtime)
@@ -339,7 +417,7 @@ def test_application_count_trend_normalize_keeps_default_recent_window():
         limit=None,
     )
 
-    normalized = normalize_logic_form("各个贷款申请量变化趋势", logic_form)
+    normalized = normalize_logic_form("各个贷款申请量变化趋势", logic_form, runtime=build_runtime().model_dump())
 
     assert normalized.metrics == ["application_count"]
     assert normalized.dimensions == ["application_product_type"]
@@ -380,7 +458,7 @@ def test_high_pd_balance_and_overdue_logic_form_is_normalized():
         sort=[{"field": "pd", "direction": "desc"}],
     )
 
-    normalized = normalize_logic_form("高 PD 客户的余额和逾期情况", logic_form)
+    normalized = normalize_logic_form("高 PD 客户的余额和逾期情况", logic_form, runtime=build_runtime().model_dump())
 
     assert normalized.metrics == ["outstanding_balance", "m1_plus_rate"]
     assert normalized.dimensions == []
@@ -398,3 +476,10 @@ def test_unknown_metric_is_rejected_before_sql_compilation():
 
     assert not validation.valid
     assert "未知指标: drop_table" in validation.errors
+
+
+def test_fallback_without_domain_runtime_does_not_guess_loan_metric():
+    logic_form = fallback_logic_form("帮我看一下今天的销售情况")
+
+    assert logic_form.metrics == []
+    assert "outstanding_balance" not in logic_form.metrics

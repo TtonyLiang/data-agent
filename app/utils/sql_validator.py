@@ -13,14 +13,20 @@ FORBIDDEN_KEYWORDS = {
     "EXEC",
     "EXECUTE",
     "GRANT",
+    "HANDLER",
     "INSERT",
     "INTO",
+    "INFILE",
     "LOCK",
+    "OUTFILE",
+    "PREPARE",
     "REPLACE",
     "REVOKE",
     "TRUNCATE",
     "UNION",
     "UPDATE",
+    "DUMPFILE",
+    "XA",
 }
 
 DANGEROUS_FUNCTIONS = {

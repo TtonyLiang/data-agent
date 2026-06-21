@@ -39,7 +39,6 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
         runtime = await svc.build_runtime(
             agent_id=agent_id,
             datasource_id=datasource_id,
-            domain_key="loan_risk",
             domain_id=domain_id,
         )
     except Exception as exc:

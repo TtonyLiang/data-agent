@@ -112,7 +112,7 @@
   修复失败后切换安全模板兜底，全部失败才生成带 `analysis_failed` 状态的降级报告。
 - [x] 深度分析模块工程化整理:
   主实现从开发阶段命名 `phase3.py` 迁到 `analysis_pipeline.py`；
-  兜底 Python 脚本模板外置到 `app/agent/python_templates/`，节点只负责 LLM 生成与模板兜底选择。
+  旧兼容导出文件已确认无引用并删除；兜底 Python 脚本模板外置到 `app/agent/python_templates/`，节点只负责 LLM 生成与模板兜底选择。
 - [x] 动态图表与分析模式:
   根据排名、趋势、分布、异常等语义推断分析模式；Python 输出 `insights/charts/tables/echarts_option`，安全模板也能输出排名/趋势图表 payload。
 - [x] 后端流式 Markdown 报告:
@@ -130,6 +130,9 @@
   兜底只使用已采集 schema，生成单条只读 SELECT，经过 SQL 安全校验后再执行
 - [x] 数据定位 / 表召回:
   在知识召回后召回候选表、字段和关联提示，作为 LogicForm 和 NL2SQL 兜底的物理 schema grounding 上下文。
+- [x] 数据定位召回参数配置化:
+  新增系统参数页面和 `system_parameter` 管理库表，支持配置最多候选表数、必须召回相对分阈值和可召回相对分阈值；
+  候选表按最高分相对阈值筛选，避免低分表机械进入上下文造成噪音。
 - [x] 多轮追问语义增强:
   “前五呢”“我问的是笔数不是金额”等短追问会结合最近对话补全业务对象、指标、维度和 TopN 口径后再进入召回与生成。
 - [x] SemanticCheck 自动修复增强:
@@ -166,6 +169,19 @@
 
 ## 已知问题 / 风险收口 ✅ 已完成
 
+- [x] 2026-06 code review P0/P1/P2 安全整改:
+  已完成最小 Bearer 鉴权中间件、配置化 CORS、进程内限流与流式并发保护、数据源密码/模型 API Key `enc:v1:` 加密落盘与旧明文兼容读取；
+  修复 SQL 执行失败重试耗尽后继续生成“假成功报告”的路由问题，非流式 LLM 调用改用原生 `ainvoke`，避免默认线程池阻塞。
+- [x] 2026-06 code review 健壮性整改:
+  SQL 安全黑名单补齐 MySQL 文件/预处理等危险关键字；Python 执行器拦截 dunder 逃逸和 null byte 等异常；
+  管理库关键多语句写入增加事务封装，数据源连接缓存加并发锁；历史报告 payload 截断后仍保持合法 JSON。
+- [x] 2026-06 code review 配置与日志整改:
+  新增 `ADMIN_API_KEY`、`SECRET_ENCRYPTION_KEY`、`CORS_ALLOWED_ORIGINS`、`API_RATE_LIMIT_PER_MINUTE`、`CHAT_STREAM_MAX_CONCURRENT`、MySQL 超时配置；
+  日志脱敏关键词扩展到 `dsn/connection_string/private_key/credential` 等字段，生产模式缺少关键安全配置会拒绝启动。
+- [ ] code review 后续重构:
+  `app/main.py` 和 `frontend/src/views/ChatView.vue` 仍较大，后续按 API/SSE/history/trace helper 与 Chat 子组件逐步拆分；
+  贷款申请数、排名、趋势、MOB、高 PD、催收回收率、业务表召回和客户年龄字段提示等核心业务口径已下沉到语义层规则；
+  后续继续把前端示例文案、管理台默认模板和报表建议从信贷样例泛化为行业模板，复杂 SQL 安全校验可继续评估 AST 解析库。
 - [x] 推理模型 reasoning_content 控制:
   LLM prompt 日志、SSE 日志、reasoning trace 和 streamText 都增加长度上限；历史会话恢复保留最近有效内容，避免超长思考过程拖垮日志和前端。
 - [x] 超宽表和超大结果集体验:

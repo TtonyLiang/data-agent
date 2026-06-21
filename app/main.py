@@ -24,6 +24,7 @@ from app.config import get_settings
 from app.db.migrations import run_management_migrations
 from app.db.mysql import get_management_db
 from app.logging_config import configure_file_logging
+from app.security import auth_and_rate_limit_middleware
 from app.services.datasource_service import get_datasource_service
 
 configure_file_logging()
@@ -46,6 +47,7 @@ CUSTOM_STREAM_NODES = {
 async def lifespan(app: FastAPI):
     """Run startup database migrations through FastAPI's lifespan hook."""
     try:
+        get_settings().validate_startup_safety()
         await run_management_migrations()
     except Exception:
         logger.exception("management database migration failed")
@@ -93,11 +95,12 @@ def classify_error(exc: Exception, node: str = "") -> dict[str, str]:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=get_settings().cors_allowed_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.middleware("http")(auth_and_rate_limit_middleware)
 
 # 编译 LangGraph
 _graph = None
@@ -1499,11 +1502,7 @@ def compact_json_text(value: Any, max_chars: int) -> Any:
         parsed = json.loads(value)
     except json.JSONDecodeError:
         return f"{value[:max_chars]}... [truncated {len(value) - max_chars} chars]"
-    compacted = compact_history_value(parsed)
-    compacted_text = json.dumps(compacted, ensure_ascii=False)
-    if len(compacted_text) <= max_chars:
-        return compacted_text
-    return f"{compacted_text[:max_chars]}... [truncated {len(compacted_text) - max_chars} chars]"
+    return dump_bounded_json(compact_history_value(parsed), max_chars)
 
 
 def compact_report_payload_text(value: Any, max_chars: int) -> Any:
@@ -1524,7 +1523,36 @@ def compact_report_payload_text(value: Any, max_chars: int) -> Any:
     compacted_text = json.dumps(compacted, ensure_ascii=False)
     if len(compacted_text) <= max_chars:
         return compacted_text
-    return compact_json_text(compacted_text, max_chars)
+    if isinstance(compacted, dict):
+        compacted["truncated"] = True
+        for key in ("markdown", "body", "summary", "final_answer"):
+            if isinstance(compacted.get(key), str):
+                compacted[key] = truncate_preserving_text(compacted[key], 4000)
+        for key in ("sections", "charts", "tables", "rows"):
+            if isinstance(compacted.get(key), list):
+                original_len = len(compacted[key])
+                compacted[key] = compacted[key][:20]
+                if original_len > len(compacted[key]):
+                    compacted[f"{key}_truncated_count"] = original_len - len(compacted[key])
+    return dump_bounded_json(compacted, max_chars)
+
+
+def dump_bounded_json(value: Any, max_chars: int) -> str:
+    text = json.dumps(value, ensure_ascii=False)
+    if len(text) <= max_chars:
+        return text
+    fallback = {
+        "truncated": True,
+        "original_chars": len(text),
+        "preview": truncate_preserving_text(text, min(max_chars - 80, 4000)),
+    }
+    return json.dumps(fallback, ensure_ascii=False)
+
+
+def truncate_preserving_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}... [truncated {len(text) - max_chars} chars]"
 
 
 def compact_history_value(value: Any) -> Any:
@@ -1561,6 +1589,7 @@ from app.api.feedback import router as feedback_router  # noqa: E402
 from app.api.model_config import router as model_config_router  # noqa: E402
 from app.api.prompt import router as prompt_router  # noqa: E402
 from app.api.semantic import router as semantic_router  # noqa: E402
+from app.api.system_parameter import router as system_parameter_router  # noqa: E402
 
 app.include_router(agent_router, prefix="/api/agent", tags=["智能体"])
 app.include_router(ds_router, prefix="/api/datasource", tags=["数据源"])
@@ -1568,6 +1597,7 @@ app.include_router(feedback_router, prefix="/api/feedback", tags=["反馈"])
 app.include_router(model_config_router, prefix="/api/model-config", tags=["模型配置"])
 app.include_router(prompt_router, prefix="/api/prompt", tags=["Prompt配置"])
 app.include_router(semantic_router, prefix="/api/semantic", tags=["知识召回"])
+app.include_router(system_parameter_router, prefix="/api/system", tags=["系统参数"])
 
 
 if __name__ == "__main__":

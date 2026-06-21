@@ -181,6 +181,7 @@ def build_mvp_graph() -> StateGraph:
         {
             "success": "planner",
             "retry": "lf_repair",
+            "failed": END,
         },
     )
     graph.add_edge("lf_repair", "lf_validate")
@@ -236,4 +237,6 @@ def route_after_sql_execute(state: AgentState) -> str:
         return "success"
     if state.get("sql_error") and state.get("sql_retry_count", 0) < MAX_SQL_RETRIES:
         return "retry"
+    if state.get("sql_error"):
+        return "failed"
     return "success"

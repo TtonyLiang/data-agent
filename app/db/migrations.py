@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 
 from app.config import get_settings
 from app.db.mysql import get_management_db
@@ -108,6 +110,19 @@ async def run_management_migrations() -> None:
             INDEX idx_feedback_trace (trace_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户反馈'
         """,
+        """
+        CREATE TABLE IF NOT EXISTS system_parameter (
+            param_key VARCHAR(128) PRIMARY KEY COMMENT '参数Key',
+            name VARCHAR(256) NOT NULL COMMENT '参数名称',
+            value_json JSON NOT NULL COMMENT '参数值',
+            value_type VARCHAR(32) NOT NULL DEFAULT 'string' COMMENT 'int/float/bool/string/json',
+            category VARCHAR(64) NOT NULL DEFAULT 'general' COMMENT '参数分组',
+            description TEXT COMMENT '参数说明',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_system_parameter_category (category)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统参数'
+        """,
     ]
     for statement in statements:
         await db.execute_query(statement)
@@ -181,9 +196,11 @@ async def run_management_migrations() -> None:
         ),
     )
     await seed_default_model_configs()
+    await seed_default_system_parameters()
     await backfill_agent_model_configs()
     await backfill_agent_semantic_domains()
     await backfill_agent_datasources()
+    await backfill_loan_domain_rules()
 
 
 async def add_column_if_missing(table: str, column: str, statement: str) -> None:
@@ -255,6 +272,50 @@ async def seed_default_model_configs() -> None:
         )
 
 
+async def seed_default_system_parameters() -> None:
+    db = get_management_db()
+    settings = get_settings()
+    params = [
+        {
+            "key": "schema_recall.max_tables",
+            "name": "数据定位最多候选表数",
+            "value": settings.schema_recall_max_tables,
+            "value_type": "int",
+            "category": "schema_recall",
+            "description": "数据定位阶段最多保留多少张候选表。值越大上下文越全，但会增加大模型噪音。",
+        },
+        {
+            "key": "schema_recall.required_score_ratio",
+            "name": "必须召回相对分阈值",
+            "value": settings.schema_recall_required_score_ratio,
+            "value_type": "float",
+            "category": "schema_recall",
+            "description": "候选表分数达到最高分的该比例时，视为强相关表，优先召回。",
+        },
+        {
+            "key": "schema_recall.optional_score_ratio",
+            "name": "可召回相对分阈值",
+            "value": settings.schema_recall_optional_score_ratio,
+            "value_type": "float",
+            "category": "schema_recall",
+            "description": "候选表分数低于该比例时剔除；介于可召回和必须召回之间时，只在表数不足时补充。",
+        },
+    ]
+    statements = [
+        (
+            "INSERT IGNORE INTO system_parameter "
+            "(param_key, name, value_json, value_type, category, description) "
+            "VALUES (:key, :name, :value_json, :value_type, :category, :description)",
+            {
+                **item,
+                "value_json": json.dumps(item["value"], ensure_ascii=False),
+            },
+        )
+        for item in params
+    ]
+    await db.execute_transaction(statements)
+
+
 async def backfill_agent_model_configs() -> None:
     db = get_management_db()
     await db.execute_query(
@@ -284,4 +345,60 @@ async def backfill_agent_datasources() -> None:
     await db.execute_query(
         "INSERT IGNORE INTO agent_datasource (agent_id, datasource_id) "
         "SELECT agent_id, id FROM datasource WHERE agent_id IS NOT NULL"
+    )
+
+
+async def backfill_loan_domain_rules() -> None:
+    """Upsert productized loan-domain rules into existing loan_risk semantic layers."""
+    semantic_path = Path("data/semantic/loan_risk.json")
+    if not semantic_path.exists():
+        logger.info("loan semantic rules backfill skipped: %s missing", semantic_path)
+        return
+    payload = json.loads(semantic_path.read_text(encoding="utf-8"))
+    rule_payloads = [
+        item
+        for item in payload.get("rules", [])
+        if str(item.get("rule_type") or "") in {"normalization", "recall", "rewrite"}
+    ]
+    if not rule_payloads:
+        return
+    db = get_management_db()
+    domains = await db.execute_query(
+        "SELECT id FROM semantic_domain WHERE domain_key = 'loan_risk'"
+    )
+    if not domains:
+        logger.info("loan semantic rules backfill skipped: no loan_risk domains")
+        return
+
+    statements: list[tuple[str, dict | None]] = []
+    for domain in domains:
+        domain_id = int(domain["id"])
+        for rule in rule_payloads:
+            statements.append(
+                (
+                    "INSERT INTO semantic_rule "
+                    "(domain_id, rule_key, rule_type, name, description, expression, applies_to, severity) "
+                    "VALUES (:domain_id, :rule_key, :rule_type, :name, :description, "
+                    ":expression, :applies_to, :severity) "
+                    "ON DUPLICATE KEY UPDATE "
+                    "rule_type = VALUES(rule_type), name = VALUES(name), "
+                    "description = VALUES(description), expression = VALUES(expression), "
+                    "applies_to = VALUES(applies_to), severity = VALUES(severity)",
+                    {
+                        "domain_id": domain_id,
+                        "rule_key": rule.get("rule_key"),
+                        "rule_type": rule.get("rule_type"),
+                        "name": rule.get("name"),
+                        "description": rule.get("description") or "",
+                        "expression": json.dumps(rule.get("expression") or {}, ensure_ascii=False),
+                        "applies_to": json.dumps(rule.get("applies_to") or [], ensure_ascii=False),
+                        "severity": rule.get("severity") or "info",
+                    },
+                )
+            )
+    await db.execute_transaction(statements)
+    logger.info(
+        "loan semantic rules backfilled domains=%s rules=%s",
+        len(domains),
+        len(rule_payloads),
     )

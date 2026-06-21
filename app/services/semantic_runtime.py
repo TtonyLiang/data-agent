@@ -79,10 +79,12 @@ class SemanticRuntimeService:
     async def get_domain_by_key(
         self,
         agent_id: int,
-        domain_key: str = "loan_risk",
+        domain_key: str | None = None,
         datasource_id: int | None = None,
     ) -> SemanticDomain | None:
         """Find the best active semantic domain for agent, key, and optional datasource."""
+        if not domain_key:
+            return None
         db = get_management_db()
         params: dict[str, Any] = {"aid": agent_id, "domain_key": domain_key}
         datasource_filter = ""
@@ -554,7 +556,7 @@ class SemanticRuntimeService:
         self,
         agent_id: int,
         datasource_id: int | None = None,
-        domain_key: str = "loan_risk",
+        domain_key: str | None = None,
         domain_id: int | None = None,
     ) -> SemanticRuntime:
         """Load the executable semantic runtime used by graph nodes."""
@@ -571,7 +573,7 @@ class SemanticRuntimeService:
         if domain is None:
             domain = await self.get_domain_by_key(agent_id, domain_key, datasource_id)
         if domain is None:
-            raise ValueError(f"未找到语义领域: {domain_key}")
+            raise ValueError("未找到智能体绑定的语义层")
 
         runtime = SemanticRuntime(
             domain=domain,

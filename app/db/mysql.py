@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time as monotonic_time
 from datetime import date, datetime, time
@@ -34,7 +35,14 @@ class MySQLClient:
         """Create an async SQLAlchemy engine and keep a redacted URL for diagnostics."""
         self._safe_url = redact_db_url(db_url)
         logger.info("mysql client init url=%s", self._safe_url)
-        self._engine = create_async_engine(db_url, pool_size=5, max_overflow=10, echo=False)
+        settings = get_settings()
+        self._engine = create_async_engine(
+            db_url,
+            pool_size=5,
+            max_overflow=10,
+            echo=False,
+            connect_args={"connect_timeout": settings.mysql_connect_timeout_seconds},
+        )
         self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
     async def execute_query(self, sql: str, params: dict | None = None) -> list[dict]:
@@ -55,6 +63,7 @@ class MySQLClient:
                 json_for_log(params or {}),
             )
         async with self._session_factory() as session:
+            await self._apply_query_timeout(session)
             result = await session.execute(text(sql), params or {})
             if result.returns_rows:
                 columns = result.keys()
@@ -93,6 +102,7 @@ class MySQLClient:
                 json_for_log(params or {}),
             )
         async with self._session_factory() as session:
+            await self._apply_query_timeout(session)
             result = await session.execute(text(sql), params or {})
             await session.commit()
             lastrowid = int(result.lastrowid or 0)
@@ -122,6 +132,7 @@ class MySQLClient:
                 json_for_log(params or {}),
             )
         async with self._session_factory() as session:
+            await self._apply_query_timeout(session)
             result = await session.execute(text(sql), params or {})
             value = result.scalar()
             logger.info(
@@ -132,6 +143,55 @@ class MySQLClient:
             )
             return value
 
+    async def execute_transaction(self, statements: list[tuple[str, dict | None]]) -> None:
+        """Execute statements atomically in one session."""
+        if not statements:
+            return
+        started_at = monotonic_time.monotonic()
+        logger.info(
+            "mysql transaction start url=%s statements=%s",
+            self._safe_url,
+            len(statements),
+        )
+        async with self._session_factory() as session:
+            async with session.begin():
+                await self._apply_query_timeout(session)
+                for sql, params in statements:
+                    await session.execute(text(sql), params or {})
+        logger.info(
+            "mysql transaction end url=%s duration_ms=%s statements=%s",
+            self._safe_url,
+            round((monotonic_time.monotonic() - started_at) * 1000, 2),
+            len(statements),
+        )
+
+    async def execute_in_transaction(self, callback):
+        """Run a caller-provided coroutine with one transactional session."""
+        started_at = monotonic_time.monotonic()
+        logger.info("mysql transaction callback start url=%s", self._safe_url)
+        async with self._session_factory() as session:
+            async with session.begin():
+                await self._apply_query_timeout(session)
+                result = await callback(session)
+        logger.info(
+            "mysql transaction callback end url=%s duration_ms=%s",
+            self._safe_url,
+            round((monotonic_time.monotonic() - started_at) * 1000, 2),
+        )
+        return result
+
+    async def _apply_query_timeout(self, session) -> None:
+        timeout_ms = int(get_settings().mysql_query_timeout_seconds * 1000)
+        if timeout_ms <= 0:
+            return
+        try:
+            await session.execute(
+                text("SET SESSION MAX_EXECUTION_TIME = :timeout_ms"),
+                {"timeout_ms": timeout_ms},
+            )
+        except Exception as exc:
+            logger.debug("mysql query timeout setting skipped url=%s error=%s", self._safe_url, exc)
+
     async def close(self):
         """Dispose the underlying SQLAlchemy async engine."""
         logger.info("mysql client close url=%s", self._safe_url)
@@ -141,6 +201,7 @@ class MySQLClient:
 _business_db: MySQLClient | None = None
 _management_db: MySQLClient | None = None
 _datasource_dbs: dict[int, MySQLClient] = {}
+_datasource_locks: dict[int, asyncio.Lock] = {}
 
 
 def get_business_db() -> MySQLClient:
@@ -190,7 +251,12 @@ def build_mysql_async_url(
 
 async def get_datasource_db(datasource_id: int) -> MySQLClient:
     """Return a cached MySQL client for a configured datasource."""
-    if datasource_id not in _datasource_dbs:
+    if datasource_id in _datasource_dbs:
+        return _datasource_dbs[datasource_id]
+    lock = _datasource_locks.setdefault(datasource_id, asyncio.Lock())
+    async with lock:
+        if datasource_id in _datasource_dbs:
+            return _datasource_dbs[datasource_id]
         from app.services.datasource_service import get_datasource_service
 
         ds = await get_datasource_service().get(datasource_id)
@@ -217,7 +283,7 @@ async def get_datasource_db(datasource_id: int) -> MySQLClient:
                 database_name=ds.database_name,
             )
         )
-    return _datasource_dbs[datasource_id]
+        return _datasource_dbs[datasource_id]
 
 
 async def invalidate_datasource_db(datasource_id: int):
@@ -230,6 +296,7 @@ async def invalidate_datasource_db(datasource_id: int):
     client = _datasource_dbs.pop(datasource_id, None)
     if client is not None:
         await client.close()
+    _datasource_locks.pop(datasource_id, None)
 
 
 def redact_db_url(db_url: str) -> str:

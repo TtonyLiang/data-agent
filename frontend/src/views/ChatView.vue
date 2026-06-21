@@ -325,7 +325,7 @@
                   <header class="inline-report-head">
                     <span>{{ reportStatusText(msg.report_payload) }} · {{ reportGenerationText(msg.report_payload) }}</span>
                     <h4>{{ reportDisplayTitle(msg.report_payload) }}</h4>
-                    <p>{{ reportSummary(msg.report_payload) }}</p>
+                    <p><InlineMarkdown :text="reportSummary(msg.report_payload)" /></p>
                     <div class="report-meta-line">
                       <span>生成时间：{{ reportGeneratedAt(msg.report_payload) }}</span>
                       <span>结果行数：{{ reportRowCount(msg.report_payload) }}</span>
@@ -374,12 +374,14 @@
                           <table class="report-data-table">
                             <thead>
                               <tr>
-                                <th v-for="column in block.columns" :key="column">{{ column }}</th>
+                                <th v-for="column in block.columns" :key="column">{{ stripInlineMarkdown(String(column)) }}</th>
                               </tr>
                             </thead>
                             <tbody>
                               <tr v-for="(row, rowIndex) in block.rows" :key="rowIndex">
-                                <td v-for="(cell, cellIndex) in row" :key="cellIndex">{{ cell }}</td>
+                                <td v-for="(cell, cellIndex) in row" :key="cellIndex">
+                                  <InlineMarkdown :text="String(cell ?? '')" />
+                                </td>
                               </tr>
                             </tbody>
                           </table>
@@ -631,9 +633,13 @@
                 :class="['report-md-block', `report-md-${block.type}`]"
               >
                 <strong v-if="block.type === 'heading'">{{ stripInlineMarkdown(block.text) }}</strong>
-                <p v-else-if="block.type === 'paragraph'">{{ stripInlineMarkdown(block.text) }}</p>
+                <p v-else-if="block.type === 'paragraph'">
+                  <InlineMarkdown :text="block.text" />
+                </p>
                 <ul v-else-if="block.type === 'list'">
-                  <li v-for="item in block.items" :key="item">{{ stripInlineMarkdown(item) }}</li>
+                  <li v-for="item in block.items" :key="item">
+                    <InlineMarkdown :text="item" />
+                  </li>
                 </ul>
                 <div v-else-if="block.type === 'chart'" class="report-mini-chart">
                   <strong>{{ block.title }}</strong>
@@ -672,7 +678,7 @@
         <header class="report-paper-head">
           <span>{{ reportStatusText(expandedReport) }} · {{ reportGenerationText(expandedReport) }}</span>
           <h1>{{ reportDisplayTitle(expandedReport) }}</h1>
-          <p>{{ reportSummary(expandedReport) }}</p>
+          <p><InlineMarkdown :text="reportSummary(expandedReport)" /></p>
           <div class="report-meta-line">
             <span>生成时间：{{ reportGeneratedAt(expandedReport) }}</span>
             <span>结果行数：{{ reportRowCount(expandedReport) }}</span>
@@ -722,12 +728,14 @@
                 <table class="report-data-table">
                   <thead>
                     <tr>
-                      <th v-for="column in block.columns" :key="column">{{ column }}</th>
+                      <th v-for="column in block.columns" :key="column">{{ stripInlineMarkdown(String(column)) }}</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr v-for="(row, rowIndex) in block.rows" :key="rowIndex">
-                      <td v-for="(cell, cellIndex) in row" :key="cellIndex">{{ cell }}</td>
+                      <td v-for="(cell, cellIndex) in row" :key="cellIndex">
+                        <InlineMarkdown :text="String(cell ?? '')" />
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -767,7 +775,9 @@
               </thead>
               <tbody>
                 <tr v-for="(row, rowIndex) in table.rows" :key="rowIndex">
-                  <td v-for="column in table.columns" :key="column">{{ formatReportValue(row[column]) }}</td>
+                  <td v-for="column in table.columns" :key="column">
+                    <InlineMarkdown :text="formatReportValue(row[column])" />
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -778,7 +788,9 @@
           <h2>分析过程摘要</h2>
           <p>这里展示统计脚本产出的业务摘要，原始技术 JSON 不在报告正文中直接暴露。</p>
           <ul>
-            <li v-for="item in reportAnalysisSummary(expandedReport)" :key="item">{{ item }}</li>
+            <li v-for="item in reportAnalysisSummary(expandedReport)" :key="item">
+              <InlineMarkdown :text="item" />
+            </li>
           </ul>
         </section>
       </div>
@@ -1736,6 +1748,23 @@ function stripInlineMarkdown(text: string): string {
   return inlineMarkdownParts(text).map(part => part.text).join('')
 }
 
+const InlineMarkdown = defineComponent({
+  name: 'InlineMarkdown',
+  props: {
+    text: {
+      type: String,
+      default: '',
+    },
+  },
+  setup(props) {
+    return () => inlineMarkdownParts(props.text).map((part, index) => {
+      if (part.type === 'bold') return h('strong', { key: index }, part.text)
+      if (part.type === 'code') return h('code', { key: index }, part.text)
+      return h('span', { key: index }, part.text)
+    })
+  },
+})
+
 function reportSummary(report: Record<string, unknown>) {
   const text = String(report.summary || '')
   if (text) return stripInlineMarkdown(text)
@@ -2182,12 +2211,12 @@ function buildReportEchartsOption(chart: ReportChartBlock): Record<string, unkno
     title: undefined,
     series: prettifySeries(base.series, kind),
     grid: kind === 'pie' ? undefined : {
-      top: 22,
+      ...(isPlainObject(base.grid) ? base.grid : {}),
+      top: Math.max(toFiniteNumber(isPlainObject(base.grid) ? base.grid.top : undefined) || 0, 46),
       right: 18,
       bottom: 54,
       left: 46,
       containLabel: true,
-      ...(isPlainObject(base.grid) ? base.grid : {}),
     },
     xAxis: kind === 'pie' ? undefined : prettifyAxis(base.xAxis, 'x'),
     yAxis: kind === 'pie' ? undefined : prettifyAxis(base.yAxis, 'y'),
@@ -2284,6 +2313,17 @@ function prettifyAxis(axis: unknown, direction: 'x' | 'y') {
     splitLine: direction === 'y'
       ? { show: true, lineStyle: { color: '#e9eef8', type: 'dashed' }, ...(isPlainObject(base.splitLine) ? base.splitLine : {}) }
       : { show: false, ...(isPlainObject(base.splitLine) ? base.splitLine : {}) },
+    ...(direction === 'y'
+      ? {
+          nameGap: Math.max(toFiniteNumber(base.nameGap) || 0, 18),
+          nameTextStyle: {
+            color: '#98a2b3',
+            fontSize: 12,
+            padding: [0, 0, 8, 0],
+            ...(isPlainObject(base.nameTextStyle) ? base.nameTextStyle : {}),
+          },
+        }
+      : {}),
   }
 }
 

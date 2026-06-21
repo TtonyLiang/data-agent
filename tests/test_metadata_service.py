@@ -57,6 +57,39 @@ class FakeManagementDB:
         self.queries.append((sql, params))
         return 7
 
+    async def execute_transaction(self, statements):
+        for sql, params in statements:
+            await self.execute_query(sql, params)
+
+    async def execute_in_transaction(self, callback):
+        return await callback(FakeTransactionSession(self))
+
+
+class FakeResult:
+    def __init__(self, rows=None, lastrowid=0):
+        self._rows = rows or []
+        self.lastrowid = lastrowid
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class FakeTransactionSession:
+    def __init__(self, db: FakeManagementDB):
+        self.db = db
+
+    async def execute(self, sql, params=None):
+        sql_text = str(sql)
+        rows = await self.db.execute_query(sql_text, params)
+        if sql_text.startswith("INSERT INTO meta_table"):
+            return FakeResult(lastrowid=7)
+        if rows:
+            return FakeResult(rows)
+        return FakeResult()
+
 
 class FakeSchemaManagementDB:
     async def execute_query(self, sql: str, params: dict | None = None):

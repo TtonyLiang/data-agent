@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -40,6 +41,8 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     rag_score_threshold: float = 0.3
     schema_recall_max_tables: int = 6
+    schema_recall_required_score_ratio: float = 0.35
+    schema_recall_optional_score_ratio: float = 0.15
     schema_recall_max_columns: int = 24
     nl2sql_schema_context_max_tables: int = 6
     nl2sql_schema_context_max_columns: int = 32
@@ -60,6 +63,18 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 4400
     debug: bool = True
+    admin_api_key: str = ""
+    secret_encryption_key: str = ""
+    cors_allowed_origins: list[str] = [
+        "http://localhost:4399",
+        "http://127.0.0.1:4399",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
+    api_rate_limit_per_minute: int = 120
+    chat_stream_max_concurrent: int = 8
+    mysql_connect_timeout_seconds: int = 10
+    mysql_query_timeout_seconds: int = 30
 
     # Phase 3 Python executor
     python_executor_backend: str = "local"  # local / worker / container
@@ -76,6 +91,29 @@ class Settings(BaseSettings):
     python_repair_error_chars: int = 2400
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    @field_validator("cors_allowed_origins", mode="before")
+    @classmethod
+    def parse_cors_allowed_origins(cls, value):
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    def validate_startup_safety(self) -> None:
+        """Reject production startup when critical safety settings are missing."""
+        if self.debug:
+            return
+        errors = []
+        if not self.admin_api_key.strip():
+            errors.append("ADMIN_API_KEY")
+        if not self.secret_encryption_key.strip():
+            errors.append("SECRET_ENCRYPTION_KEY")
+        if self.mysql_password == "root" or self.management_mysql_password == "root":
+            errors.append("non-default MySQL passwords")
+        if errors:
+            raise RuntimeError(
+                "生产模式缺少安全配置: " + ", ".join(errors)
+            )
 
     @property
     def business_db_url(self) -> str:

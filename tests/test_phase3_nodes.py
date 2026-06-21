@@ -424,6 +424,42 @@ async def test_distribution_mode_fallback_chart_prefers_pie():
 
 
 @pytest.mark.asyncio
+async def test_report_handles_python_metrics_dict_from_llm_script():
+    state = {
+        "question": "贷款排名前三的申请区域是什么，分别申请了多少笔",
+        "logic_form": {"metrics": ["application_count"], "dimensions": ["application_region"]},
+        "compiled_sql": (
+            "SELECT region AS application_region, COUNT(*) AS application_count "
+            "FROM loan_application_indicator GROUP BY region LIMIT 3"
+        ),
+        "sql_result": [
+            {"application_region": "华南", "application_count": 4423},
+            {"application_region": "东北", "application_count": 4358},
+            {"application_region": "西北", "application_count": 4323},
+        ],
+        "plan": {"mode": "ranking", "mode_label": "排名分析"},
+        "python_result": {
+            "status": "success",
+            "metrics": {
+                "field": "application_count",
+                "count": 3,
+                "sum": 13104,
+                "avg": 4368,
+                "min": 4323,
+                "max": 4423,
+            },
+            "dimensions": ["application_region"],
+            "insights": ["贷款申请笔数最多的区域是 华南，共 4423 笔。"],
+        },
+    }
+
+    result = await report_generator_node(state)
+
+    assert "首位 application_region 为 华南" in result["report_payload"]["summary"]
+    assert "数值字段 1 个" in result["report_payload"]["analysis_process"]["steps"][1]["result"]
+
+
+@pytest.mark.asyncio
 async def test_multi_series_trend_analysis_and_report_are_structured():
     state = {
         "question": "各个贷款申请量变化趋势",
@@ -483,6 +519,20 @@ def test_restricted_executor_rejects_unapproved_imports():
 
     with pytest.raises(PythonExecutionError):
         executor.execute("import os\nprint('{}')", [])
+
+
+def test_restricted_executor_rejects_dunder_escape():
+    executor = RestrictedLocalPythonExecutor()
+
+    with pytest.raises(PythonExecutionError):
+        executor.execute("x = (1).__class__.__bases__[0]\nprint('{}')", [])
+
+
+def test_restricted_executor_reports_null_byte_as_code_error():
+    executor = RestrictedLocalPythonExecutor()
+
+    with pytest.raises(PythonExecutionError, match="语法错误"):
+        executor.execute("print('x')\x00", [])
 
 
 def test_python_fallback_templates_are_externalized():

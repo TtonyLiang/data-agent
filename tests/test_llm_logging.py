@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import time
 from types import SimpleNamespace
 
 from app.services.llm_service import LLMService
@@ -108,8 +107,8 @@ def test_llm_service_achat_does_not_block_event_loop(monkeypatch):
         content = "ok"
 
     class FakeClient:
-        def invoke(self, messages):
-            time.sleep(0.03)
+        async def ainvoke(self, messages):
+            await asyncio.sleep(0.03)
             return FakeResponse()
 
     service = LLMService()
@@ -128,7 +127,7 @@ def test_llm_service_achat_uses_short_ttl_cache(monkeypatch):
     class FakeClient:
         calls = 0
 
-        def invoke(self, messages):
+        async def ainvoke(self, messages):
             self.calls += 1
             return FakeResponse()
 

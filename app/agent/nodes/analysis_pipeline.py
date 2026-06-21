@@ -588,8 +588,8 @@ def profile_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def computed_items(python_result: dict[str, Any]) -> list[str]:
     """Summarize which analysis artifacts were produced."""
-    metrics = python_result.get("metrics") or []
-    dimensions = python_result.get("dimensions") or []
+    metrics = normalize_analysis_items(python_result.get("metrics"))
+    dimensions = normalize_analysis_items(python_result.get("dimensions"))
     items = [
         f"数值字段统计 {len(metrics)} 个",
         f"维度字段识别 {len(dimensions)} 个",
@@ -1200,7 +1200,7 @@ def _report_summary(
         return f"{metric_text}{dimension_text} 共返回 {len(rows)} 行趋势明细，{lead}"
     metric_text = f"围绕 {', '.join(metric_keys)}" if metric_keys else "围绕本次查询结果"
     dimension_text = f"，按 {', '.join(dimension_keys)} 展开" if dimension_keys else ""
-    metric_count = len(python_result.get("metrics") or [])
+    metric_count = len(normalize_analysis_items(python_result.get("metrics")))
     top_sentence = _top_row_sentence(rows, python_result)
     suffix = f"已完成 {metric_count} 个数值字段的基础统计。"
     return f"{metric_text}{dimension_text} 共返回 {len(rows)} 行数据，{top_sentence}{suffix}"
@@ -1220,7 +1220,7 @@ def _report_highlights(
                 {"label": "趋势序列数", "value": len(series_summary), "field": "series_count"}
             )
         return highlights
-    for metric in (python_result.get("metrics") or [])[:3]:
+    for metric in normalize_analysis_items(python_result.get("metrics"))[:3]:
         if not isinstance(metric, dict):
             continue
         field = metric.get("field", "")
@@ -1266,7 +1266,7 @@ def _report_executive_summary(
                 {"label": "趋势序列", "value": len(python_result.get("series_summary") or [])},
             ],
         }
-    metrics = python_result.get("metrics") or []
+    metrics = normalize_analysis_items(python_result.get("metrics"))
     if metrics:
         top_metric = metrics[0]
         if isinstance(top_metric, dict) and top_metric.get("max") is not None:
@@ -1332,8 +1332,8 @@ def _report_process(
             "title": "步骤2：基础画像",
             "text": "识别数值列、维度列，并对结果集做基础统计。",
             "result": (
-                f"数值字段 {len(python_result.get('metrics') or [])} 个，"
-                f"维度字段 {len(python_result.get('dimensions') or [])} 个。"
+                f"数值字段 {len(normalize_analysis_items(python_result.get('metrics')))} 个，"
+                f"维度字段 {len(normalize_analysis_items(python_result.get('dimensions')))} 个。"
             ),
         },
         {
@@ -1381,9 +1381,12 @@ def _report_interpretation(
         if insights:
             return {"title": "结果解读", "bullets": insights[:6]}
 
-    metric = (python_result.get("metrics") or [{}])[0] if python_result.get("metrics") else {}
+    metrics = normalize_analysis_items(python_result.get("metrics"))
+    metric = metrics[0] if metrics else {}
     dimension_item = (
-        python_result.get("dimensions") or profile.get("dimension_columns") or [None]
+        normalize_analysis_items(python_result.get("dimensions"))
+        or profile.get("dimension_columns")
+        or [None]
     )[0]
     dimension_column = _result_field_name(dimension_item)
     metric_field = _result_field_name(metric)
@@ -1488,7 +1491,7 @@ def _report_charts(
     generated_charts = normalize_python_charts(python_result.get("charts") or [])
     if generated_charts:
         return generated_charts
-    metrics = python_result.get("metrics") or []
+    metrics = normalize_analysis_items(python_result.get("metrics"))
     if not rows or not metrics:
         return []
     metric = metrics[0]
@@ -1496,7 +1499,9 @@ def _report_charts(
     if not metric_field:
         return []
     dimension_item = (
-        python_result.get("dimensions") or profile.get("dimension_columns") or [None]
+        normalize_analysis_items(python_result.get("dimensions"))
+        or profile.get("dimension_columns")
+        or [None]
     )[0]
     dimension_column = _result_field_name(dimension_item)
     if not dimension_column:
@@ -1701,8 +1706,8 @@ def _top_row_sentence(rows: list[dict[str, Any]], python_result: dict[str, Any])
     """Describe the leading row for ranking-style summaries."""
     if not rows:
         return ""
-    dimensions = python_result.get("dimensions") or []
-    metrics = python_result.get("metrics") or []
+    dimensions = normalize_analysis_items(python_result.get("dimensions"))
+    metrics = normalize_analysis_items(python_result.get("metrics"))
     if not dimensions or not metrics:
         return ""
     dimension = _result_field_name(dimensions[0])
@@ -1728,6 +1733,19 @@ def _result_field_name(value: Any) -> str:
             if isinstance(field, str) and field:
                 return field
     return ""
+
+
+def normalize_analysis_items(value: Any) -> list[Any]:
+    """Normalize Python analysis metrics/dimensions to a list shape."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, dict):
+        return [value]
+    return [value]
 
 
 def _format_number(value: Any) -> str:

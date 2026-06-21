@@ -14,6 +14,11 @@ SENSITIVE_KEYWORDS = (
     "pwd",
     "secret",
     "token",
+    "dsn",
+    "connection_string",
+    "private_key",
+    "credential",
+    "credentials",
 )
 SENSITIVE_VALUE_PATTERNS = (
     (re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"), "1**********"),

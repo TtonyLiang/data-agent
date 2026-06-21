@@ -7,72 +7,1477 @@
     "description": "面向贷款申请、放款、还款、风险快照和催收处置的 Data Agent 语义运行时。"
   },
   "concepts": [
-    {"concept_key": "LoanApplication", "concept_type": "object", "name": "贷款申请", "description": "客户提交的贷款申请及审批结果。", "synonyms": ["申请", "进件", "审批申请"]},
-    {"concept_key": "LoanAccount", "concept_type": "object", "name": "贷款账户", "description": "审批通过后形成的贷款借据和当前余额状态。", "synonyms": ["借据", "贷款", "账户"]},
-    {"concept_key": "RepaymentPeriod", "concept_type": "object", "name": "还款期次", "description": "每一笔贷款的分期应还、实还和逾期表现。", "synonyms": ["期次", "账单", "还款计划"]},
-    {"concept_key": "CustomerRiskSnapshot", "concept_type": "object", "name": "客户月度风险快照", "description": "客户在某个月的风险评分、负债压力和行为表现。", "synonyms": ["客户风险", "月度风险", "风险画像"]},
-    {"concept_key": "CollectionCase", "concept_type": "object", "name": "催收案件", "description": "逾期账户进入催收后的分案、触达、承诺和回收情况。", "synonyms": ["催收", "催收工单", "入催案件"]},
-    {"concept_key": "ApplySubmitted", "concept_type": "event", "name": "提交申请", "description": "客户发起贷款申请。", "synonyms": ["申请提交", "进件"]},
-    {"concept_key": "ApplicationApproved", "concept_type": "event", "name": "审批通过", "description": "申请被审批通过并授予额度。", "synonyms": ["批核", "通过"]},
-    {"concept_key": "LoanDisbursed", "concept_type": "event", "name": "放款", "description": "贷款本金实际发放给客户。", "synonyms": ["发放", "放款成功"]},
-    {"concept_key": "RepaymentDue", "concept_type": "event", "name": "到期应还", "description": "还款期次到达应还日。", "synonyms": ["应还", "账单到期"]},
-    {"concept_key": "RepaymentPaid", "concept_type": "event", "name": "还款入账", "description": "客户完成部分或全部还款。", "synonyms": ["实还", "还款"]},
-    {"concept_key": "OverdueEntered", "concept_type": "event", "name": "进入逾期", "description": "贷款或期次产生逾期天数。", "synonyms": ["逾期", "DPD"]},
-    {"concept_key": "CollectionStarted", "concept_type": "event", "name": "入催", "description": "逾期账户进入催收处置。", "synonyms": ["分案", "进入催收"]},
-    {"concept_key": "WriteOffConfirmed", "concept_type": "event", "name": "核销确认", "description": "账户进入损失确认口径。", "synonyms": ["坏账核销", "核销"]},
-    {"concept_key": "ApprovalStatus", "concept_type": "state", "name": "审批状态", "description": "申请的审批状态。", "synonyms": ["审批结果"]},
-    {"concept_key": "LoanStatus", "concept_type": "state", "name": "贷款当前状态", "description": "贷款账户当前生命周期状态。", "synonyms": ["账户状态"]},
-    {"concept_key": "OverdueBucket", "concept_type": "state", "name": "逾期阶段", "description": "按逾期天数划分的 M0/M1/M2/M3/M4+ 阶段。", "synonyms": ["M段", "逾期桶"]},
-    {"concept_key": "CollectionStatus", "concept_type": "state", "name": "催收案件状态", "description": "催收案件当前处理状态。", "synonyms": ["案件状态"]},
-    {"concept_key": "RiskGrade", "concept_type": "state", "name": "风险等级", "description": "客户、申请或账户的风险分层。", "synonyms": ["评级", "风控等级"]}
+    {
+      "concept_key": "LoanApplication",
+      "concept_type": "object",
+      "name": "贷款申请",
+      "description": "客户提交的贷款申请及审批结果。",
+      "synonyms": [
+        "申请",
+        "进件",
+        "审批申请"
+      ]
+    },
+    {
+      "concept_key": "LoanAccount",
+      "concept_type": "object",
+      "name": "贷款账户",
+      "description": "审批通过后形成的贷款借据和当前余额状态。",
+      "synonyms": [
+        "借据",
+        "贷款",
+        "账户"
+      ]
+    },
+    {
+      "concept_key": "RepaymentPeriod",
+      "concept_type": "object",
+      "name": "还款期次",
+      "description": "每一笔贷款的分期应还、实还和逾期表现。",
+      "synonyms": [
+        "期次",
+        "账单",
+        "还款计划"
+      ]
+    },
+    {
+      "concept_key": "CustomerRiskSnapshot",
+      "concept_type": "object",
+      "name": "客户月度风险快照",
+      "description": "客户在某个月的风险评分、负债压力和行为表现。",
+      "synonyms": [
+        "客户风险",
+        "月度风险",
+        "风险画像"
+      ]
+    },
+    {
+      "concept_key": "CollectionCase",
+      "concept_type": "object",
+      "name": "催收案件",
+      "description": "逾期账户进入催收后的分案、触达、承诺和回收情况。",
+      "synonyms": [
+        "催收",
+        "催收工单",
+        "入催案件"
+      ]
+    },
+    {
+      "concept_key": "ApplySubmitted",
+      "concept_type": "event",
+      "name": "提交申请",
+      "description": "客户发起贷款申请。",
+      "synonyms": [
+        "申请提交",
+        "进件"
+      ]
+    },
+    {
+      "concept_key": "ApplicationApproved",
+      "concept_type": "event",
+      "name": "审批通过",
+      "description": "申请被审批通过并授予额度。",
+      "synonyms": [
+        "批核",
+        "通过"
+      ]
+    },
+    {
+      "concept_key": "LoanDisbursed",
+      "concept_type": "event",
+      "name": "放款",
+      "description": "贷款本金实际发放给客户。",
+      "synonyms": [
+        "发放",
+        "放款成功"
+      ]
+    },
+    {
+      "concept_key": "RepaymentDue",
+      "concept_type": "event",
+      "name": "到期应还",
+      "description": "还款期次到达应还日。",
+      "synonyms": [
+        "应还",
+        "账单到期"
+      ]
+    },
+    {
+      "concept_key": "RepaymentPaid",
+      "concept_type": "event",
+      "name": "还款入账",
+      "description": "客户完成部分或全部还款。",
+      "synonyms": [
+        "实还",
+        "还款"
+      ]
+    },
+    {
+      "concept_key": "OverdueEntered",
+      "concept_type": "event",
+      "name": "进入逾期",
+      "description": "贷款或期次产生逾期天数。",
+      "synonyms": [
+        "逾期",
+        "DPD"
+      ]
+    },
+    {
+      "concept_key": "CollectionStarted",
+      "concept_type": "event",
+      "name": "入催",
+      "description": "逾期账户进入催收处置。",
+      "synonyms": [
+        "分案",
+        "进入催收"
+      ]
+    },
+    {
+      "concept_key": "WriteOffConfirmed",
+      "concept_type": "event",
+      "name": "核销确认",
+      "description": "账户进入损失确认口径。",
+      "synonyms": [
+        "坏账核销",
+        "核销"
+      ]
+    },
+    {
+      "concept_key": "ApprovalStatus",
+      "concept_type": "state",
+      "name": "审批状态",
+      "description": "申请的审批状态。",
+      "synonyms": [
+        "审批结果"
+      ]
+    },
+    {
+      "concept_key": "LoanStatus",
+      "concept_type": "state",
+      "name": "贷款当前状态",
+      "description": "贷款账户当前生命周期状态。",
+      "synonyms": [
+        "账户状态"
+      ]
+    },
+    {
+      "concept_key": "OverdueBucket",
+      "concept_type": "state",
+      "name": "逾期阶段",
+      "description": "按逾期天数划分的 M0/M1/M2/M3/M4+ 阶段。",
+      "synonyms": [
+        "M段",
+        "逾期桶"
+      ]
+    },
+    {
+      "concept_key": "CollectionStatus",
+      "concept_type": "state",
+      "name": "催收案件状态",
+      "description": "催收案件当前处理状态。",
+      "synonyms": [
+        "案件状态"
+      ]
+    },
+    {
+      "concept_key": "RiskGrade",
+      "concept_type": "state",
+      "name": "风险等级",
+      "description": "客户、申请或账户的风险分层。",
+      "synonyms": [
+        "评级",
+        "风控等级"
+      ]
+    }
   ],
   "relations": [
-    {"relation_key": "application_to_account", "relation_type": "join_path", "source_concept": "LoanApplication", "target_concept": "LoanAccount", "name": "申请到账户", "description": "审批通过的申请可形成贷款账户。", "join_path": [{"left": "loan_application_indicator.application_id", "right": "loan_account_indicator.application_id"}]},
-    {"relation_key": "account_to_repayment", "relation_type": "join_path", "source_concept": "LoanAccount", "target_concept": "RepaymentPeriod", "name": "账户到还款期次", "description": "一个贷款账户包含多个还款期次。", "join_path": [{"left": "loan_account_indicator.loan_id", "right": "loan_repayment_period_indicator.loan_id"}]},
-    {"relation_key": "account_to_collection", "relation_type": "join_path", "source_concept": "LoanAccount", "target_concept": "CollectionCase", "name": "账户到催收案件", "description": "逾期账户可以进入一个或多个催收案件。", "join_path": [{"left": "loan_account_indicator.loan_id", "right": "collection_case_indicator.loan_id"}]},
-    {"relation_key": "account_to_customer_risk", "relation_type": "join_path", "source_concept": "LoanAccount", "target_concept": "CustomerRiskSnapshot", "name": "客户到月度风险快照", "description": "贷款账户可通过客户ID连接到客户月度风险快照。", "join_path": [{"left": "loan_account_indicator.customer_id", "right": "customer_risk_monthly_indicator.customer_id"}]}
+    {
+      "relation_key": "application_to_account",
+      "relation_type": "join_path",
+      "source_concept": "LoanApplication",
+      "target_concept": "LoanAccount",
+      "name": "申请到账户",
+      "description": "审批通过的申请可形成贷款账户。",
+      "join_path": [
+        {
+          "left": "loan_application_indicator.application_id",
+          "right": "loan_account_indicator.application_id"
+        }
+      ]
+    },
+    {
+      "relation_key": "account_to_repayment",
+      "relation_type": "join_path",
+      "source_concept": "LoanAccount",
+      "target_concept": "RepaymentPeriod",
+      "name": "账户到还款期次",
+      "description": "一个贷款账户包含多个还款期次。",
+      "join_path": [
+        {
+          "left": "loan_account_indicator.loan_id",
+          "right": "loan_repayment_period_indicator.loan_id"
+        }
+      ]
+    },
+    {
+      "relation_key": "account_to_collection",
+      "relation_type": "join_path",
+      "source_concept": "LoanAccount",
+      "target_concept": "CollectionCase",
+      "name": "账户到催收案件",
+      "description": "逾期账户可以进入一个或多个催收案件。",
+      "join_path": [
+        {
+          "left": "loan_account_indicator.loan_id",
+          "right": "collection_case_indicator.loan_id"
+        }
+      ]
+    },
+    {
+      "relation_key": "account_to_customer_risk",
+      "relation_type": "join_path",
+      "source_concept": "LoanAccount",
+      "target_concept": "CustomerRiskSnapshot",
+      "name": "客户到月度风险快照",
+      "description": "贷款账户可通过客户ID连接到客户月度风险快照。",
+      "join_path": [
+        {
+          "left": "loan_account_indicator.customer_id",
+          "right": "customer_risk_monthly_indicator.customer_id"
+        }
+      ]
+    }
   ],
   "metrics": [
-    {"metric_key": "approval_rate", "name": "审批通过率", "description": "approved 申请数 / 全部申请数。", "synonyms": ["通过率", "审批率", "申请通过率"], "metric_type": "ratio", "formula_sql": "SUM(CASE WHEN {base}.`approval_status` = 'approved' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0)", "base_table": "loan_application_indicator", "time_field": "loan_application_indicator.apply_date", "dimensions": ["channel", "region", "risk_grade"]},
-    {"metric_key": "application_count", "name": "申请笔数", "description": "贷款申请提交的笔数，按申请表 application_id 计数。", "synonyms": ["申请数", "申请量", "申请笔数", "进件量", "进件笔数", "贷款申请笔数", "贷款申请数"], "metric_type": "count", "formula_sql": "COUNT(*)", "base_table": "loan_application_indicator", "time_field": "loan_application_indicator.apply_date", "dimensions": ["application_region", "channel", "application_product_type", "application_risk_grade"]},
-    {"metric_key": "disbursement_amount", "name": "放款金额", "description": "实际发放给客户的贷款本金金额。", "synonyms": ["放款本金", "贷款金额", "发放金额"], "metric_type": "measure", "formula_sql": "SUM({base}.`loan_amount`)", "base_table": "loan_account_indicator", "time_field": "loan_account_indicator.disburse_date", "dimensions": ["product_type", "vintage", "mob", "region", "channel", "risk_grade"]},
-    {"metric_key": "outstanding_balance", "name": "余额", "description": "当前仍未偿还的贷款本金余额。", "synonyms": ["贷款余额", "剩余本金", "未还本金"], "metric_type": "measure", "formula_sql": "SUM({base}.`remaining_principal`)", "base_table": "loan_account_indicator", "time_field": "loan_account_indicator.snapshot_date", "dimensions": ["product_type", "vintage", "mob", "region", "channel", "risk_grade"]},
-    {"metric_key": "m1_plus_rate", "name": "M1+逾期率", "description": "M1+贷款余额 / 对应贷款余额，M1+ 表示逾期阶段为 M1、M2、M3、M4+。", "synonyms": ["M1+", "M1以上", "30+逾期", "逾期率"], "metric_type": "ratio", "formula_sql": "SUM(CASE WHEN {base}.`overdue_bucket` IN ('M1', 'M2', 'M3', 'M4+') THEN {base}.`remaining_principal_after` ELSE 0 END) / NULLIF(SUM({base}.`remaining_principal_after`), 0)", "base_table": "loan_repayment_period_indicator", "time_field": "loan_repayment_period_indicator.due_date", "dimensions": ["product_type", "vintage", "mob", "region", "overdue_bucket"]},
-    {"metric_key": "mob", "name": "MOB", "description": "放款后经过的月数。", "synonyms": ["账龄", "贷款账龄"], "metric_type": "dimension_metric", "formula_sql": "MAX({base}.`mob`)", "base_table": "loan_account_indicator", "time_field": "loan_account_indicator.snapshot_date", "dimensions": ["product_type", "vintage", "region"]},
-    {"metric_key": "dpd", "name": "DPD", "description": "当前逾期天数。", "synonyms": ["逾期天数", "days past due"], "metric_type": "measure", "formula_sql": "MAX({base}.`current_overdue_days`)", "base_table": "loan_account_indicator", "time_field": "loan_account_indicator.snapshot_date", "dimensions": ["product_type", "vintage", "mob", "region"]},
-    {"metric_key": "vintage", "name": "Vintage", "description": "按放款月份或放款批次观察风险表现。", "synonyms": ["放款批次", "放款月份"], "metric_type": "dimension_metric", "formula_sql": "COUNT(*)", "base_table": "loan_account_indicator", "time_field": "loan_account_indicator.disburse_date", "dimensions": ["vintage", "mob", "product_type", "region"]},
-    {"metric_key": "pd", "name": "PD", "description": "预测违约概率。", "synonyms": ["违约概率", "预测违约概率"], "metric_type": "measure", "formula_sql": "AVG({base}.`model_pd`)", "base_table": "loan_application_indicator", "time_field": "loan_application_indicator.apply_date", "dimensions": ["channel", "region", "risk_grade", "vintage"]},
-    {"metric_key": "dti", "name": "DTI", "description": "负债收入比。", "synonyms": ["负债收入比", "debt to income"], "metric_type": "measure", "formula_sql": "AVG({base}.`dti`)", "base_table": "customer_risk_monthly_indicator", "time_field": "customer_risk_monthly_indicator.stat_month", "dimensions": ["region", "customer_segment", "risk_grade"]},
-    {"metric_key": "writeoff_amount", "name": "核销金额", "description": "已进入核销口径的贷款金额。", "synonyms": ["坏账金额", "核销", "writeoff amount"], "metric_type": "measure", "formula_sql": "SUM({base}.`writeoff_amount`)", "base_table": "loan_account_indicator", "time_field": "loan_account_indicator.snapshot_date", "default_filters": [{"field": "is_written_off", "operator": "=", "value": 1}], "dimensions": ["product_type", "vintage", "mob", "region"]},
-    {"metric_key": "collection_recovery_rate", "name": "催收回收率", "description": "回收本金 / 入催逾期本金。", "synonyms": ["回收率", "催回率", "collection recovery rate"], "metric_type": "ratio", "formula_sql": "SUM({base}.`recovered_principal`) / NULLIF(SUM({base}.`entry_overdue_principal`), 0)", "base_table": "collection_case_indicator", "time_field": "collection_case_indicator.case_start_date", "dimensions": ["assigned_team", "collection_strategy", "overdue_bucket_at_entry", "product_type", "region"]}
+    {
+      "metric_key": "approval_rate",
+      "name": "审批通过率",
+      "description": "approved 申请数 / 全部申请数。",
+      "synonyms": [
+        "通过率",
+        "审批率",
+        "申请通过率"
+      ],
+      "metric_type": "ratio",
+      "formula_sql": "SUM(CASE WHEN {base}.`approval_status` = 'approved' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0)",
+      "base_table": "loan_application_indicator",
+      "time_field": "loan_application_indicator.apply_date",
+      "dimensions": [
+        "channel",
+        "region",
+        "risk_grade"
+      ]
+    },
+    {
+      "metric_key": "application_count",
+      "name": "申请笔数",
+      "description": "贷款申请提交的笔数，按申请表 application_id 计数。",
+      "synonyms": [
+        "申请数",
+        "申请量",
+        "申请笔数",
+        "进件量",
+        "进件笔数",
+        "贷款申请笔数",
+        "贷款申请数"
+      ],
+      "metric_type": "count",
+      "formula_sql": "COUNT(*)",
+      "base_table": "loan_application_indicator",
+      "time_field": "loan_application_indicator.apply_date",
+      "dimensions": [
+        "application_region",
+        "channel",
+        "application_product_type",
+        "application_risk_grade"
+      ]
+    },
+    {
+      "metric_key": "disbursement_amount",
+      "name": "放款金额",
+      "description": "实际发放给客户的贷款本金金额。",
+      "synonyms": [
+        "放款本金",
+        "贷款金额",
+        "发放金额"
+      ],
+      "metric_type": "measure",
+      "formula_sql": "SUM({base}.`loan_amount`)",
+      "base_table": "loan_account_indicator",
+      "time_field": "loan_account_indicator.disburse_date",
+      "dimensions": [
+        "product_type",
+        "vintage",
+        "mob",
+        "region",
+        "channel",
+        "risk_grade"
+      ]
+    },
+    {
+      "metric_key": "outstanding_balance",
+      "name": "余额",
+      "description": "当前仍未偿还的贷款本金余额。",
+      "synonyms": [
+        "贷款余额",
+        "剩余本金",
+        "未还本金"
+      ],
+      "metric_type": "measure",
+      "formula_sql": "SUM({base}.`remaining_principal`)",
+      "base_table": "loan_account_indicator",
+      "time_field": "loan_account_indicator.snapshot_date",
+      "dimensions": [
+        "product_type",
+        "vintage",
+        "mob",
+        "region",
+        "channel",
+        "risk_grade"
+      ]
+    },
+    {
+      "metric_key": "m1_plus_rate",
+      "name": "M1+逾期率",
+      "description": "M1+贷款余额 / 对应贷款余额，M1+ 表示逾期阶段为 M1、M2、M3、M4+。",
+      "synonyms": [
+        "M1+",
+        "M1以上",
+        "30+逾期",
+        "逾期率"
+      ],
+      "metric_type": "ratio",
+      "formula_sql": "SUM(CASE WHEN {base}.`overdue_bucket` IN ('M1', 'M2', 'M3', 'M4+') THEN {base}.`remaining_principal_after` ELSE 0 END) / NULLIF(SUM({base}.`remaining_principal_after`), 0)",
+      "base_table": "loan_repayment_period_indicator",
+      "time_field": "loan_repayment_period_indicator.due_date",
+      "dimensions": [
+        "product_type",
+        "vintage",
+        "mob",
+        "region",
+        "overdue_bucket"
+      ]
+    },
+    {
+      "metric_key": "mob",
+      "name": "MOB",
+      "description": "放款后经过的月数。",
+      "synonyms": [
+        "账龄",
+        "贷款账龄"
+      ],
+      "metric_type": "dimension_metric",
+      "formula_sql": "MAX({base}.`mob`)",
+      "base_table": "loan_account_indicator",
+      "time_field": "loan_account_indicator.snapshot_date",
+      "dimensions": [
+        "product_type",
+        "vintage",
+        "region"
+      ]
+    },
+    {
+      "metric_key": "dpd",
+      "name": "DPD",
+      "description": "当前逾期天数。",
+      "synonyms": [
+        "逾期天数",
+        "days past due"
+      ],
+      "metric_type": "measure",
+      "formula_sql": "MAX({base}.`current_overdue_days`)",
+      "base_table": "loan_account_indicator",
+      "time_field": "loan_account_indicator.snapshot_date",
+      "dimensions": [
+        "product_type",
+        "vintage",
+        "mob",
+        "region"
+      ]
+    },
+    {
+      "metric_key": "vintage",
+      "name": "Vintage",
+      "description": "按放款月份或放款批次观察风险表现。",
+      "synonyms": [
+        "放款批次",
+        "放款月份"
+      ],
+      "metric_type": "dimension_metric",
+      "formula_sql": "COUNT(*)",
+      "base_table": "loan_account_indicator",
+      "time_field": "loan_account_indicator.disburse_date",
+      "dimensions": [
+        "vintage",
+        "mob",
+        "product_type",
+        "region"
+      ]
+    },
+    {
+      "metric_key": "pd",
+      "name": "PD",
+      "description": "预测违约概率。",
+      "synonyms": [
+        "违约概率",
+        "预测违约概率"
+      ],
+      "metric_type": "measure",
+      "formula_sql": "AVG({base}.`model_pd`)",
+      "base_table": "loan_application_indicator",
+      "time_field": "loan_application_indicator.apply_date",
+      "dimensions": [
+        "channel",
+        "region",
+        "risk_grade",
+        "vintage"
+      ]
+    },
+    {
+      "metric_key": "dti",
+      "name": "DTI",
+      "description": "负债收入比。",
+      "synonyms": [
+        "负债收入比",
+        "debt to income"
+      ],
+      "metric_type": "measure",
+      "formula_sql": "AVG({base}.`dti`)",
+      "base_table": "customer_risk_monthly_indicator",
+      "time_field": "customer_risk_monthly_indicator.stat_month",
+      "dimensions": [
+        "region",
+        "customer_segment",
+        "risk_grade"
+      ]
+    },
+    {
+      "metric_key": "writeoff_amount",
+      "name": "核销金额",
+      "description": "已进入核销口径的贷款金额。",
+      "synonyms": [
+        "坏账金额",
+        "核销",
+        "writeoff amount"
+      ],
+      "metric_type": "measure",
+      "formula_sql": "SUM({base}.`writeoff_amount`)",
+      "base_table": "loan_account_indicator",
+      "time_field": "loan_account_indicator.snapshot_date",
+      "default_filters": [
+        {
+          "field": "is_written_off",
+          "operator": "=",
+          "value": 1
+        }
+      ],
+      "dimensions": [
+        "product_type",
+        "vintage",
+        "mob",
+        "region"
+      ]
+    },
+    {
+      "metric_key": "collection_recovery_rate",
+      "name": "催收回收率",
+      "description": "回收本金 / 入催逾期本金。",
+      "synonyms": [
+        "回收率",
+        "催回率",
+        "collection recovery rate"
+      ],
+      "metric_type": "ratio",
+      "formula_sql": "SUM({base}.`recovered_principal`) / NULLIF(SUM({base}.`entry_overdue_principal`), 0)",
+      "base_table": "collection_case_indicator",
+      "time_field": "collection_case_indicator.case_start_date",
+      "dimensions": [
+        "assigned_team",
+        "collection_strategy",
+        "overdue_bucket_at_entry",
+        "product_type",
+        "region"
+      ]
+    }
   ],
   "rules": [
-    {"rule_key": "m1_plus_definition", "rule_type": "definition", "name": "M1+口径", "description": "M1+ 通常表示逾期阶段为 M1、M2、M3、M4+，或 DPD 大于 30 天。", "expression": {"overdue_bucket": ["M1", "M2", "M3", "M4+"]}, "applies_to": ["m1_plus_rate"]},
-    {"rule_key": "vintage_grouping", "rule_type": "definition", "name": "Vintage 默认口径", "description": "Vintage 默认按放款月份 disburse_month 分组，并结合 MOB 观察风险表现。", "expression": {"default_dimensions": ["vintage", "mob"]}, "applies_to": ["vintage", "m1_plus_rate"]},
-    {"rule_key": "balance_priority", "rule_type": "definition", "name": "余额优先字段", "description": "账户当前余额优先使用 loan_account_indicator.remaining_principal。", "expression": {"field": "loan_account_indicator.remaining_principal"}, "applies_to": ["outstanding_balance"]},
-    {"rule_key": "writeoff_filter", "rule_type": "filter", "name": "核销识别", "description": "核销贷款使用 is_written_off = 1 识别。", "expression": {"field": "is_written_off", "operator": "=", "value": 1}, "applies_to": ["writeoff_amount"]},
-    {"rule_key": "collection_recovery_formula", "rule_type": "definition", "name": "催收回收率公式", "description": "催收回收率 = recovered_principal / entry_overdue_principal。", "expression": {"numerator": "recovered_principal", "denominator": "entry_overdue_principal"}, "applies_to": ["collection_recovery_rate"]},
-    {"rule_key": "default_snapshot_date", "rule_type": "time", "name": "默认快照日期", "description": "未指定时间时，账户和催收快照类指标使用表内最新 snapshot_date 口径。", "expression": {"default": "latest_snapshot_date"}, "applies_to": ["outstanding_balance", "writeoff_amount", "dpd"]}
+    {
+      "rule_key": "m1_plus_definition",
+      "rule_type": "definition",
+      "name": "M1+口径",
+      "description": "M1+ 通常表示逾期阶段为 M1、M2、M3、M4+，或 DPD 大于 30 天。",
+      "expression": {
+        "overdue_bucket": [
+          "M1",
+          "M2",
+          "M3",
+          "M4+"
+        ]
+      },
+      "applies_to": [
+        "m1_plus_rate"
+      ]
+    },
+    {
+      "rule_key": "vintage_grouping",
+      "rule_type": "definition",
+      "name": "Vintage 默认口径",
+      "description": "Vintage 默认按放款月份 disburse_month 分组，并结合 MOB 观察风险表现。",
+      "expression": {
+        "default_dimensions": [
+          "vintage",
+          "mob"
+        ]
+      },
+      "applies_to": [
+        "vintage",
+        "m1_plus_rate"
+      ]
+    },
+    {
+      "rule_key": "balance_priority",
+      "rule_type": "definition",
+      "name": "余额优先字段",
+      "description": "账户当前余额优先使用 loan_account_indicator.remaining_principal。",
+      "expression": {
+        "field": "loan_account_indicator.remaining_principal"
+      },
+      "applies_to": [
+        "outstanding_balance"
+      ]
+    },
+    {
+      "rule_key": "writeoff_filter",
+      "rule_type": "filter",
+      "name": "核销识别",
+      "description": "核销贷款使用 is_written_off = 1 识别。",
+      "expression": {
+        "field": "is_written_off",
+        "operator": "=",
+        "value": 1
+      },
+      "applies_to": [
+        "writeoff_amount"
+      ]
+    },
+    {
+      "rule_key": "collection_recovery_formula",
+      "rule_type": "definition",
+      "name": "催收回收率公式",
+      "description": "催收回收率 = recovered_principal / entry_overdue_principal。",
+      "expression": {
+        "numerator": "recovered_principal",
+        "denominator": "entry_overdue_principal"
+      },
+      "applies_to": [
+        "collection_recovery_rate"
+      ]
+    },
+    {
+      "rule_key": "default_snapshot_date",
+      "rule_type": "time",
+      "name": "默认快照日期",
+      "description": "未指定时间时，账户和催收快照类指标使用表内最新 snapshot_date 口径。",
+      "expression": {
+        "default": "latest_snapshot_date"
+      },
+      "applies_to": [
+        "outstanding_balance",
+        "writeoff_amount",
+        "dpd"
+      ]
+    },
+    {
+      "rule_key": "loan_application_count_normalization",
+      "rule_type": "normalization",
+      "name": "申请笔数问法归一化",
+      "description": "把贷款申请/进件数量类问题归一化为 application_count，并按问题选择申请区域、申请产品类型或申请风险等级维度。",
+      "expression": {
+        "match": {
+          "all": [
+            "申请"
+          ],
+          "intents": [
+            "count"
+          ],
+          "count_terms": [
+            "申请数",
+            "申请量",
+            "进件量",
+            "进件笔数",
+            "贷款申请数",
+            "贷款申请笔数"
+          ],
+          "product_terms": [
+            "产品类型",
+            "贷款产品",
+            "各个贷款",
+            "各类贷款",
+            "不同贷款",
+            "每种贷款",
+            "各贷款",
+            "各项贷款",
+            "product"
+          ]
+        },
+        "logic_form": {
+          "metrics": [
+            "application_count"
+          ],
+          "dimensions": {
+            "mode": "replace",
+            "infer_from_terms": {
+              "application_product_type": [
+                "产品类型",
+                "贷款产品",
+                "各个贷款",
+                "各类贷款",
+                "不同贷款",
+                "每种贷款",
+                "各贷款",
+                "各项贷款",
+                "product"
+              ],
+              "application_region": [
+                "申请区域",
+                "区域",
+                "地区",
+                "region",
+                "area"
+              ],
+              "application_risk_grade": [
+                "申请风险",
+                "风险等级",
+                "risk_grade"
+              ]
+            }
+          },
+          "field_aliases": {
+            "region": "application_region",
+            "product_type": "application_product_type",
+            "risk_grade": "application_risk_grade"
+          },
+          "sort_field": "application_count",
+          "sort_direction": "desc",
+          "default_limit": 10
+        }
+      },
+      "applies_to": [
+        "application_count",
+        "application_region",
+        "application_product_type",
+        "application_risk_grade"
+      ]
+    },
+    {
+      "rule_key": "loan_application_count_trend_normalization",
+      "rule_type": "normalization",
+      "name": "申请量趋势问法归一化",
+      "description": "贷款申请量趋势默认按月分析；用户说各类/不同贷款时按申请产品类型拆分。",
+      "expression": {
+        "match": {
+          "all": [
+            "申请"
+          ],
+          "intents": [
+            "count",
+            "trend"
+          ],
+          "count_terms": [
+            "申请数",
+            "申请量",
+            "进件量",
+            "进件笔数",
+            "贷款申请数",
+            "贷款申请笔数"
+          ],
+          "product_terms": [
+            "产品类型",
+            "贷款产品",
+            "各个贷款",
+            "各类贷款",
+            "不同贷款",
+            "每种贷款",
+            "各贷款",
+            "各项贷款",
+            "product"
+          ]
+        },
+        "logic_form": {
+          "metrics": [
+            "application_count"
+          ],
+          "dimensions": {
+            "mode": "replace",
+            "infer_from_terms": {
+              "application_product_type": [
+                "产品类型",
+                "贷款产品",
+                "各个贷款",
+                "各类贷款",
+                "不同贷款",
+                "每种贷款",
+                "各贷款",
+                "各项贷款",
+                "product"
+              ],
+              "application_region": [
+                "申请区域",
+                "区域",
+                "地区",
+                "region",
+                "area"
+              ]
+            }
+          },
+          "field_aliases": {
+            "region": "application_region",
+            "product_type": "application_product_type"
+          },
+          "grain": "month",
+          "time_range": {
+            "type": "relative",
+            "period": "recent_3_months"
+          },
+          "sort_field": "application_count",
+          "sort_direction": "desc"
+        }
+      },
+      "applies_to": [
+        "application_count",
+        "application_product_type",
+        "application_region"
+      ]
+    },
+    {
+      "rule_key": "loan_balance_overdue_normalization",
+      "rule_type": "normalization",
+      "name": "余额与逾期组合问法归一化",
+      "description": "用户同时关注余额和逾期时，归一化为贷款余额与 M1+ 逾期率两个核心指标。",
+      "expression": {
+        "match": {
+          "any": [
+            "余额",
+            "balance"
+          ],
+          "all": [
+            "逾期"
+          ]
+        },
+        "logic_form": {
+          "metrics": [
+            "outstanding_balance",
+            "m1_plus_rate"
+          ]
+        }
+      },
+      "applies_to": [
+        "outstanding_balance",
+        "m1_plus_rate"
+      ]
+    },
+    {
+      "rule_key": "loan_high_pd_segment_normalization",
+      "rule_type": "normalization",
+      "name": "高 PD 客群归一化",
+      "description": "高 PD 客群按风险等级 D 过滤，并避免把 risk_grade 再作为分组维度。",
+      "expression": {
+        "match": {
+          "all": [
+            "高",
+            "pd"
+          ]
+        },
+        "logic_form": {
+          "filters": [
+            {
+              "field": "risk_grade",
+              "operator": "=",
+              "value": "D"
+            }
+          ],
+          "remove_dimensions": [
+            "risk_grade"
+          ],
+          "value_aliases": {
+            "risk_grade": {
+              "high": "D",
+              "高": "D",
+              "高风险": "D",
+              "d": "D",
+              "4": "D",
+              "medium_high": "C",
+              "较高": "C",
+              "中高": "C",
+              "c": "C",
+              "3": "C",
+              "medium": "B",
+              "中": "B",
+              "b": "B",
+              "2": "B",
+              "low": "A",
+              "低": "A",
+              "a": "A",
+              "1": "A"
+            }
+          }
+        }
+      },
+      "applies_to": [
+        "pd",
+        "outstanding_balance",
+        "m1_plus_rate",
+        "risk_grade"
+      ]
+    },
+    {
+      "rule_key": "loan_mob_filter_normalization",
+      "rule_type": "normalization",
+      "name": "MOB 过滤归一化",
+      "description": "从 MOB3、MOB 3 等问法提取 mob 过滤条件。",
+      "expression": {
+        "match": {
+          "any": [
+            "mob",
+            "MOB"
+          ]
+        },
+        "logic_form": {
+          "regex_filters": [
+            {
+              "field": "mob",
+              "operator": "=",
+              "pattern": "mob\\s*(\\d+)",
+              "group": 1,
+              "value_type": "int"
+            }
+          ]
+        }
+      },
+      "applies_to": [
+        "mob",
+        "vintage",
+        "m1_plus_rate"
+      ]
+    },
+    {
+      "rule_key": "loan_vintage_default_dimensions_normalization",
+      "rule_type": "normalization",
+      "name": "Vintage 分析默认维度",
+      "description": "Vintage/放款批次风险问题默认按 vintage 和 mob 展开。",
+      "expression": {
+        "match": {
+          "any": [
+            "vintage",
+            "放款批次",
+            "批次"
+          ]
+        },
+        "logic_form": {
+          "metrics": [
+            "m1_plus_rate"
+          ],
+          "dimensions": {
+            "mode": "replace",
+            "values": [
+              "vintage",
+              "mob"
+            ]
+          }
+        }
+      },
+      "applies_to": [
+        "vintage",
+        "mob",
+        "m1_plus_rate"
+      ]
+    },
+    {
+      "rule_key": "loan_collection_recovery_normalization",
+      "rule_type": "normalization",
+      "name": "催收回收率排名归一化",
+      "description": "催收团队回收率问题归一化为 collection_recovery_rate，并按团队排序。",
+      "expression": {
+        "match": {
+          "all": [
+            "催收",
+            "回收率"
+          ]
+        },
+        "logic_form": {
+          "metrics": [
+            "collection_recovery_rate"
+          ],
+          "dimensions": {
+            "mode": "replace",
+            "infer_from_terms": {
+              "assigned_team": [
+                "团队",
+                "催收团队"
+              ]
+            }
+          },
+          "sort_field": "collection_recovery_rate",
+          "sort_direction": "desc",
+          "default_limit": 20
+        }
+      },
+      "applies_to": [
+        "collection_recovery_rate",
+        "assigned_team"
+      ]
+    },
+    {
+      "rule_key": "loan_business_recall_groups",
+      "rule_type": "recall",
+      "name": "信贷业务召回分组",
+      "description": "用于数据定位阶段的业务分组加权，降低全库 schema 噪音。",
+      "expression": {
+        "business_groups": [
+          {
+            "key": "application",
+            "label": "申请/审批",
+            "aliases": [
+              "申请",
+              "进件",
+              "审批"
+            ],
+            "terms": [
+              "application",
+              "apply",
+              "approval",
+              "申请",
+              "进件",
+              "审批"
+            ],
+            "weight": 18
+          },
+          {
+            "key": "account",
+            "label": "放款/账户",
+            "aliases": [
+              "放款",
+              "发放",
+              "借据",
+              "余额",
+              "本金"
+            ],
+            "terms": [
+              "account",
+              "loan",
+              "balance",
+              "disbursement",
+              "放款",
+              "余额",
+              "借据",
+              "本金"
+            ],
+            "weight": 18
+          },
+          {
+            "key": "repayment",
+            "label": "还款/逾期",
+            "aliases": [
+              "还款",
+              "逾期",
+              "m1",
+              "m2",
+              "m3",
+              "dpd",
+              "mob",
+              "vintage"
+            ],
+            "terms": [
+              "repayment",
+              "overdue",
+              "dpd",
+              "mob",
+              "vintage",
+              "还款",
+              "逾期",
+              "账龄",
+              "批次"
+            ],
+            "weight": 18
+          },
+          {
+            "key": "collection",
+            "label": "催收/回收",
+            "aliases": [
+              "催收",
+              "回收",
+              "入催"
+            ],
+            "terms": [
+              "collection",
+              "recovery",
+              "催收",
+              "回收",
+              "入催"
+            ],
+            "weight": 18
+          },
+          {
+            "key": "customer",
+            "label": "客户/风险",
+            "aliases": [
+              "客户",
+              "客群",
+              "分层",
+              "风险",
+              "年龄",
+              "age",
+              "客龄"
+            ],
+            "terms": [
+              "customer",
+              "segment",
+              "risk",
+              "age",
+              "客户",
+              "客群",
+              "风险",
+              "年龄",
+              "客龄"
+            ],
+            "weight": 18
+          }
+        ],
+        "schema_hints": [
+          {
+            "key": "customer_age_dimension",
+            "label": "客户年龄字段",
+            "match_terms": [
+              "年龄",
+              "客龄",
+              "age",
+              "年龄分布"
+            ],
+            "column_terms": [
+              "customer_age",
+              "age",
+              "年龄",
+              "客龄"
+            ],
+            "dimension_mode": "append",
+            "weight": 42,
+            "reason": "问题要求客户年龄字段"
+          }
+        ],
+        "recall_profiles": [
+          {
+            "key": "count_intent",
+            "label": "数量口径",
+            "match": {
+              "intents": [
+                "count"
+              ],
+              "count_terms": [
+                "申请数",
+                "申请量",
+                "进件量",
+                "进件笔数"
+              ]
+            },
+            "question_terms": [
+              "笔数",
+              "数量",
+              "次数"
+            ],
+            "positive_terms": [
+              "count",
+              "数量",
+              "笔数",
+              "件数",
+              "次数",
+              "申请数",
+              "申请量",
+              "进件量"
+            ],
+            "negative_terms": [
+              "amount",
+              "金额",
+              "余额"
+            ],
+            "weight": 36,
+            "negative_weight": 18,
+            "reason": "问题要求数量口径",
+            "negative_reason": "数量问题降低金额口径优先级"
+          },
+          {
+            "key": "amount_intent",
+            "label": "金额口径",
+            "match": {
+              "intents": [
+                "amount"
+              ]
+            },
+            "question_terms": [
+              "金额",
+              "余额"
+            ],
+            "positive_terms": [
+              "amount",
+              "金额",
+              "余额"
+            ],
+            "weight": 20,
+            "reason": "问题要求金额口径"
+          },
+          {
+            "key": "application_business",
+            "label": "申请业务",
+            "match": {
+              "any": [
+                "申请",
+                "进件",
+                "审批"
+              ]
+            },
+            "question_terms": [
+              "申请",
+              "进件",
+              "审批"
+            ],
+            "positive_terms": [
+              "application",
+              "apply",
+              "approval",
+              "申请",
+              "进件",
+              "审批"
+            ],
+            "weight": 24,
+            "reason": "问题聚焦申请业务"
+          },
+          {
+            "key": "region_dimension",
+            "label": "区域维度",
+            "match": {
+              "intents": [
+                "region"
+              ]
+            },
+            "question_terms": [
+              "区域",
+              "地区"
+            ],
+            "positive_terms": [
+              "region",
+              "area",
+              "区域",
+              "地区"
+            ],
+            "weight": 34,
+            "reason": "问题要求区域维度"
+          },
+          {
+            "key": "customer_age_dimension",
+            "label": "客户年龄维度",
+            "match_terms": [
+              "年龄",
+              "客龄",
+              "age"
+            ],
+            "question_terms": [
+              "年龄",
+              "客龄"
+            ],
+            "positive_terms": [
+              "customer_age",
+              "age",
+              "年龄",
+              "客龄"
+            ],
+            "weight": 34,
+            "reason": "问题要求年龄维度"
+          }
+        ]
+      },
+      "applies_to": []
+    },
+    {
+      "rule_key": "loan_semantic_enhancement_rewrites",
+      "rule_type": "rewrite",
+      "name": "信贷常见问法语义增强",
+      "description": "把高置信度信贷问数口语改写成更完整的业务自然语言，供后续知识召回和 LogicForm 生成使用。",
+      "expression": {
+        "rewrites": [
+          {
+            "match": {
+              "all": [
+                "申请"
+              ],
+              "intents": [
+                "count",
+                "trend",
+                "region"
+              ]
+            },
+            "template": "查询各申请区域按月份的贷款申请笔数变化趋势。"
+          },
+          {
+            "match": {
+              "all": [
+                "申请"
+              ],
+              "intents": [
+                "count",
+                "trend",
+                "product"
+              ]
+            },
+            "template": "查询贷款申请按月份统计各贷款产品类型的申请笔数变化趋势。"
+          },
+          {
+            "match": {
+              "all": [
+                "申请"
+              ],
+              "intents": [
+                "count",
+                "trend"
+              ]
+            },
+            "template": "查询贷款申请笔数按月份的变化趋势。"
+          },
+          {
+            "match": {
+              "all": [
+                "申请"
+              ],
+              "intents": [
+                "count",
+                "region"
+              ]
+            },
+            "template": "查询贷款申请按申请区域分组的申请笔数，并按申请笔数降序排序{top_n_suffix}。"
+          }
+        ]
+      },
+      "applies_to": [
+        "application_count",
+        "application_region",
+        "application_product_type"
+      ]
+    },
+    {
+      "rule_key": "loan_m1_plus_rate_normalization",
+      "rule_type": "normalization",
+      "name": "M1+逾期率问法归一化",
+      "description": "M1+、逾期率、30+逾期等问法归一化为 m1_plus_rate。",
+      "expression": {
+        "match": {
+          "any": [
+            "m1",
+            "M1",
+            "逾期率",
+            "30+逾期"
+          ]
+        },
+        "logic_form": {
+          "metrics": [
+            "m1_plus_rate"
+          ],
+          "merge_metrics": true
+        }
+      },
+      "applies_to": [
+        "m1_plus_rate"
+      ]
+    },
+    {
+      "rule_key": "loan_cash_product_filter_normalization",
+      "rule_type": "normalization",
+      "name": "现金贷产品过滤归一化",
+      "description": "用户提到现金贷时，按产品类型等于现金贷过滤。",
+      "expression": {
+        "match": {
+          "any": [
+            "现金贷"
+          ]
+        },
+        "logic_form": {
+          "filters": [
+            {
+              "field": "product_type",
+              "operator": "=",
+              "value": "现金贷"
+            }
+          ]
+        }
+      },
+      "applies_to": [
+        "product_type",
+        "application_product_type"
+      ]
+    }
   ],
   "mappings": [
-    {"asset_type": "dimension", "asset_key": "product_type", "table_name": "loan_account_indicator", "column_name": "product_type", "data_type": "varchar", "role": "filter"},
-    {"asset_type": "dimension", "asset_key": "application_product_type", "table_name": "loan_application_indicator", "column_name": "product_type", "data_type": "varchar", "role": "filter"},
-    {"asset_type": "dimension", "asset_key": "application_region", "table_name": "loan_application_indicator", "column_name": "region", "data_type": "varchar", "role": "dimension"},
-    {"asset_type": "dimension", "asset_key": "application_risk_grade", "table_name": "loan_application_indicator", "column_name": "risk_grade", "data_type": "varchar", "role": "dimension"},
-    {"asset_type": "dimension", "asset_key": "vintage", "table_name": "loan_account_indicator", "column_name": "disburse_month", "data_type": "char", "role": "dimension"},
-    {"asset_type": "dimension", "asset_key": "mob", "table_name": "loan_account_indicator", "column_name": "mob", "data_type": "int", "role": "dimension"},
-    {"asset_type": "dimension", "asset_key": "region", "table_name": "loan_account_indicator", "column_name": "region", "data_type": "varchar", "role": "dimension"},
-    {"asset_type": "dimension", "asset_key": "channel", "table_name": "loan_account_indicator", "column_name": "channel", "data_type": "varchar", "role": "dimension"},
-    {"asset_type": "dimension", "asset_key": "risk_grade", "table_name": "loan_account_indicator", "column_name": "risk_grade_at_origination", "data_type": "varchar", "role": "dimension"},
-    {"asset_type": "dimension", "asset_key": "overdue_bucket", "table_name": "loan_repayment_period_indicator", "column_name": "overdue_bucket", "data_type": "varchar", "role": "dimension"},
-    {"asset_type": "filter", "asset_key": "is_written_off", "table_name": "loan_account_indicator", "column_name": "is_written_off", "data_type": "tinyint", "role": "filter"},
-    {"asset_type": "dimension", "asset_key": "assigned_team", "table_name": "collection_case_indicator", "column_name": "assigned_team", "data_type": "varchar", "role": "dimension"},
-    {"asset_type": "dimension", "asset_key": "collection_strategy", "table_name": "collection_case_indicator", "column_name": "collection_strategy", "data_type": "varchar", "role": "dimension"},
-    {"asset_type": "dimension", "asset_key": "overdue_bucket_at_entry", "table_name": "collection_case_indicator", "column_name": "overdue_bucket_at_entry", "data_type": "varchar", "role": "dimension"},
-    {"asset_type": "dimension", "asset_key": "customer_segment", "table_name": "customer_risk_monthly_indicator", "column_name": "customer_segment", "data_type": "varchar", "role": "dimension"}
+    {
+      "asset_type": "dimension",
+      "asset_key": "product_type",
+      "table_name": "loan_account_indicator",
+      "column_name": "product_type",
+      "data_type": "varchar",
+      "role": "filter"
+    },
+    {
+      "asset_type": "dimension",
+      "asset_key": "application_product_type",
+      "table_name": "loan_application_indicator",
+      "column_name": "product_type",
+      "data_type": "varchar",
+      "role": "filter"
+    },
+    {
+      "asset_type": "dimension",
+      "asset_key": "application_region",
+      "table_name": "loan_application_indicator",
+      "column_name": "region",
+      "data_type": "varchar",
+      "role": "dimension"
+    },
+    {
+      "asset_type": "dimension",
+      "asset_key": "application_risk_grade",
+      "table_name": "loan_application_indicator",
+      "column_name": "risk_grade",
+      "data_type": "varchar",
+      "role": "dimension"
+    },
+    {
+      "asset_type": "dimension",
+      "asset_key": "vintage",
+      "table_name": "loan_account_indicator",
+      "column_name": "disburse_month",
+      "data_type": "char",
+      "role": "dimension"
+    },
+    {
+      "asset_type": "dimension",
+      "asset_key": "mob",
+      "table_name": "loan_account_indicator",
+      "column_name": "mob",
+      "data_type": "int",
+      "role": "dimension"
+    },
+    {
+      "asset_type": "dimension",
+      "asset_key": "region",
+      "table_name": "loan_account_indicator",
+      "column_name": "region",
+      "data_type": "varchar",
+      "role": "dimension"
+    },
+    {
+      "asset_type": "dimension",
+      "asset_key": "channel",
+      "table_name": "loan_account_indicator",
+      "column_name": "channel",
+      "data_type": "varchar",
+      "role": "dimension"
+    },
+    {
+      "asset_type": "dimension",
+      "asset_key": "risk_grade",
+      "table_name": "loan_account_indicator",
+      "column_name": "risk_grade_at_origination",
+      "data_type": "varchar",
+      "role": "dimension"
+    },
+    {
+      "asset_type": "dimension",
+      "asset_key": "overdue_bucket",
+      "table_name": "loan_repayment_period_indicator",
+      "column_name": "overdue_bucket",
+      "data_type": "varchar",
+      "role": "dimension"
+    },
+    {
+      "asset_type": "filter",
+      "asset_key": "is_written_off",
+      "table_name": "loan_account_indicator",
+      "column_name": "is_written_off",
+      "data_type": "tinyint",
+      "role": "filter"
+    },
+    {
+      "asset_type": "dimension",
+      "asset_key": "assigned_team",
+      "table_name": "collection_case_indicator",
+      "column_name": "assigned_team",
+      "data_type": "varchar",
+      "role": "dimension"
+    },
+    {
+      "asset_type": "dimension",
+      "asset_key": "collection_strategy",
+      "table_name": "collection_case_indicator",
+      "column_name": "collection_strategy",
+      "data_type": "varchar",
+      "role": "dimension"
+    },
+    {
+      "asset_type": "dimension",
+      "asset_key": "overdue_bucket_at_entry",
+      "table_name": "collection_case_indicator",
+      "column_name": "overdue_bucket_at_entry",
+      "data_type": "varchar",
+      "role": "dimension"
+    },
+    {
+      "asset_type": "dimension",
+      "asset_key": "customer_segment",
+      "table_name": "customer_risk_monthly_indicator",
+      "column_name": "customer_segment",
+      "data_type": "varchar",
+      "role": "dimension"
+    }
   ],
   "templates": [
-    {"template_key": "metric_query", "intent_type": "metric_query", "name": "指标查询", "description": "查询单个或多个指标，可带维度、过滤、时间窗口和排序。", "required_slots": ["metrics"], "optional_slots": ["dimensions", "filters", "time_range", "sort", "limit"], "compile_strategy": {"type": "metric_select"}, "examples": ["本月现金贷 M1+逾期率怎么算", "各催收团队催收回收率排名"]},
-    {"template_key": "vintage_analysis", "intent_type": "metric_query", "name": "Vintage 分析", "description": "按放款批次和 MOB 观察风险表现。", "required_slots": ["metrics", "dimensions"], "optional_slots": ["filters", "time_range"], "compile_strategy": {"type": "metric_select"}, "examples": ["按 Vintage 看放款后 MOB3 的风险表现"]}
+    {
+      "template_key": "metric_query",
+      "intent_type": "metric_query",
+      "name": "指标查询",
+      "description": "查询单个或多个指标，可带维度、过滤、时间窗口和排序。",
+      "required_slots": [
+        "metrics"
+      ],
+      "optional_slots": [
+        "dimensions",
+        "filters",
+        "time_range",
+        "sort",
+        "limit"
+      ],
+      "compile_strategy": {
+        "type": "metric_select"
+      },
+      "examples": [
+        "本月现金贷 M1+逾期率怎么算",
+        "各催收团队催收回收率排名"
+      ]
+    },
+    {
+      "template_key": "vintage_analysis",
+      "intent_type": "metric_query",
+      "name": "Vintage 分析",
+      "description": "按放款批次和 MOB 观察风险表现。",
+      "required_slots": [
+        "metrics",
+        "dimensions"
+      ],
+      "optional_slots": [
+        "filters",
+        "time_range"
+      ],
+      "compile_strategy": {
+        "type": "metric_select"
+      },
+      "examples": [
+        "按 Vintage 看放款后 MOB3 的风险表现"
+      ]
+    }
   ]
 }

@@ -1,5 +1,7 @@
 import logging
 
+from sqlalchemy import text
+
 from app.db.mysql import get_datasource_db, get_management_db
 from app.models.datasource import ColumnMeta, TableMeta
 from app.services.permission_service import get_permission_service
@@ -248,25 +250,6 @@ class MetadataService:
             tname = t["TABLE_NAME"]
             tcomment = t.get("TABLE_COMMENT", "")
 
-            # 插入或更新表记录
-            existing = await mgmt_db.execute_query(
-                "SELECT id FROM meta_table WHERE datasource_id = :did AND table_name = :tn",
-                {"did": datasource_id, "tn": tname},
-            )
-            if existing:
-                table_id = existing[0]["id"]
-                await mgmt_db.execute_query(
-                    "UPDATE meta_table SET table_comment = :tc "
-                    "WHERE datasource_id = :did AND table_name = :tn",
-                    {"did": datasource_id, "tn": tname, "tc": tcomment},
-                )
-            else:
-                table_id = await mgmt_db.execute_insert(
-                    "INSERT INTO meta_table (datasource_id, table_name, table_comment) "
-                    "VALUES (:did, :tn, :tc)",
-                    {"did": datasource_id, "tn": tname, "tc": tcomment},
-                )
-
             columns = await biz_db.execute_query(
                 "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_COMMENT, COLUMN_KEY "
                 "FROM information_schema.COLUMNS "
@@ -288,33 +271,14 @@ class MetadataService:
                     f"{fk['REFERENCED_TABLE_NAME']}.{fk['REFERENCED_COLUMN_NAME']}"
                 )
 
-            await mgmt_db.execute_query(
-                "DELETE FROM meta_column WHERE table_id = :tid",
-                {"tid": table_id},
+            table_id = await self._replace_collected_table(
+                mgmt_db,
+                datasource_id=datasource_id,
+                table_name=tname,
+                table_comment=tcomment,
+                columns=columns,
+                fk_map=fk_map,
             )
-            for col in columns:
-                cname = col["COLUMN_NAME"]
-                ctype = col["DATA_TYPE"]
-                ccomment = col.get("COLUMN_COMMENT", "")
-                is_pk = 1 if col.get("COLUMN_KEY") == "PRI" else 0
-                is_fk = 1 if cname in fk_map else 0
-                fk_ref = fk_map.get(cname)
-
-                await mgmt_db.execute_insert(
-                    "INSERT INTO meta_column "
-                    "(table_id, column_name, data_type, column_comment, is_primary_key, "
-                    "is_foreign_key, foreign_key_ref) "
-                    "VALUES (:tid, :cn, :ct, :cc, :pk, :fk, :fkr)",
-                    {
-                        "tid": table_id,
-                        "cn": cname,
-                        "ct": ctype,
-                        "cc": ccomment,
-                        "pk": is_pk,
-                        "fk": is_fk,
-                        "fkr": fk_ref,
-                    },
-                )
 
             collected.append(
                 {
@@ -356,13 +320,14 @@ class MetadataService:
             if not rows:
                 continue
             table_id = rows[0]["id"]
-            await db.execute_query(
-                "DELETE FROM meta_column WHERE table_id = :tid",
-                {"tid": table_id},
-            )
-            await db.execute_query(
-                "DELETE FROM meta_table WHERE datasource_id = :did AND id = :tid",
-                {"did": datasource_id, "tid": table_id},
+            await db.execute_transaction(
+                [
+                    ("DELETE FROM meta_column WHERE table_id = :tid", {"tid": table_id}),
+                    (
+                        "DELETE FROM meta_table WHERE datasource_id = :did AND id = :tid",
+                        {"did": datasource_id, "tid": table_id},
+                    ),
+                ]
             )
             removed.append(
                 {
@@ -378,6 +343,68 @@ class MetadataService:
             json_for_log(removed),
         )
         return removed
+
+    async def _replace_collected_table(
+        self,
+        mgmt_db,
+        *,
+        datasource_id: int,
+        table_name: str,
+        table_comment: str,
+        columns: list[dict],
+        fk_map: dict[str, str],
+    ) -> int:
+        async def callback(session):
+            existing = await session.execute(
+                text("SELECT id FROM meta_table WHERE datasource_id = :did AND table_name = :tn"),
+                {"did": datasource_id, "tn": table_name},
+            )
+            row = existing.mappings().first()
+            if row:
+                table_id = int(row["id"])
+                await session.execute(
+                    text(
+                        "UPDATE meta_table SET table_comment = :tc "
+                        "WHERE datasource_id = :did AND table_name = :tn"
+                    ),
+                    {"did": datasource_id, "tn": table_name, "tc": table_comment},
+                )
+            else:
+                inserted = await session.execute(
+                    text(
+                        "INSERT INTO meta_table (datasource_id, table_name, table_comment) "
+                        "VALUES (:did, :tn, :tc)"
+                    ),
+                    {"did": datasource_id, "tn": table_name, "tc": table_comment},
+                )
+                table_id = int(inserted.lastrowid or 0)
+
+            await session.execute(
+                text("DELETE FROM meta_column WHERE table_id = :tid"),
+                {"tid": table_id},
+            )
+            for col in columns:
+                cname = col["COLUMN_NAME"]
+                await session.execute(
+                    text(
+                        "INSERT INTO meta_column "
+                        "(table_id, column_name, data_type, column_comment, is_primary_key, "
+                        "is_foreign_key, foreign_key_ref) "
+                        "VALUES (:tid, :cn, :ct, :cc, :pk, :fk, :fkr)"
+                    ),
+                    {
+                        "tid": table_id,
+                        "cn": cname,
+                        "ct": col["DATA_TYPE"],
+                        "cc": col.get("COLUMN_COMMENT", ""),
+                        "pk": 1 if col.get("COLUMN_KEY") == "PRI" else 0,
+                        "fk": 1 if cname in fk_map else 0,
+                        "fkr": fk_map.get(cname),
+                    },
+                )
+            return table_id
+
+        return await mgmt_db.execute_in_transaction(callback)
 
 
 _metadata_service: MetadataService | None = None

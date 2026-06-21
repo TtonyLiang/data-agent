@@ -13,13 +13,15 @@ from app.models.model_config import (
     ModelConfigType,
     ModelConfigUpdate,
 )
+from app.services.secret_service import get_secret_service
 
 MASKED_API_KEY_CHARS = {"*", "•"}
 
 
 def _public_model_config(row: dict) -> dict:
     data = dict(row)
-    data["api_key_configured"] = bool((data.get("api_key") or "").strip())
+    api_key = get_secret_service().decrypt(data.get("api_key"))
+    data["api_key_configured"] = bool((api_key or "").strip())
     expires_at = data.get("api_key_expires_at")
     expired, expires_soon = api_key_expiry_flags(expires_at)
     data["api_key_expired"] = expired
@@ -53,7 +55,7 @@ class ModelConfigService:
                 "provider": config.provider,
                 "base_url": config.base_url,
                 "model_name": config.model_name,
-                "api_key": _clean_api_key(config.api_key),
+                "api_key": get_secret_service().encrypt(_clean_api_key(config.api_key)),
                 "api_key_enabled": int(config.api_key_enabled),
                 "api_key_expires_at": config.api_key_expires_at,
                 "dimension": config.embedding_dimension,
@@ -78,7 +80,7 @@ class ModelConfigService:
             "SELECT * FROM model_config WHERE id = :id",
             {"id": config_id},
         )
-        return ModelConfig(**rows[0]) if rows else None
+        return self._from_row(rows[0]) if rows else None
 
     async def update(self, config_id: int, config: ModelConfigUpdate) -> ModelConfig | None:
         db = get_management_db()
@@ -90,6 +92,7 @@ class ModelConfigService:
             if _should_keep_existing_api_key(config.api_key)
             else _clean_api_key(config.api_key)
         )
+        encrypted_api_key = get_secret_service().encrypt(api_key)
         await db.execute_query(
             "UPDATE model_config SET name = :name, model_type = :model_type, provider = :provider, "
             "base_url = :base_url, model_name = :model_name, api_key = :api_key, "
@@ -103,7 +106,7 @@ class ModelConfigService:
                 "provider": config.provider,
                 "base_url": config.base_url,
                 "model_name": config.model_name,
-                "api_key": api_key,
+                "api_key": encrypted_api_key,
                 "api_key_enabled": int(config.api_key_enabled),
                 "api_key_expires_at": config.api_key_expires_at,
                 "dimension": config.embedding_dimension,
@@ -184,7 +187,7 @@ class ModelConfigService:
             {"agent_id": agent_id},
         )
         if rows:
-            return ModelConfig(**rows[0])
+            return self._from_row(rows[0])
         return await self.get_default("chat")
 
     async def get_agent_embedding_config(self, agent_id: int) -> ModelConfig | None:
@@ -195,7 +198,7 @@ class ModelConfigService:
             {"agent_id": agent_id},
         )
         if rows:
-            return ModelConfig(**rows[0])
+            return self._from_row(rows[0])
         return await self.get_default("embedding")
 
     async def get_default(self, model_type: ModelConfigType) -> ModelConfig | None:
@@ -231,6 +234,11 @@ class ModelConfigService:
             api_key_expires_at=None,
             embedding_dimension=s.embedding_dimension,
         )
+
+    def _from_row(self, row: dict) -> ModelConfig:
+        data = dict(row)
+        data["api_key"] = get_secret_service().decrypt(data.get("api_key"))
+        return ModelConfig(**data)
 
 
 _model_config_service: ModelConfigService | None = None

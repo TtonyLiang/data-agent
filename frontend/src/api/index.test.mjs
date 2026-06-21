@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -22,32 +22,74 @@ const tempPath = join(tmpdir(), `api-index.${process.pid}.${Date.now()}.mjs`)
 writeFileSync(tempPath, compiled)
 
 const axiosCalls = []
+const requestInterceptors = []
 
 globalThis.__axios = {
   create() {
-    return {
-      get(url) {
-        axiosCalls.push(['get', url])
+    const instance = {
+      interceptors: {
+        request: {
+          use(handler) {
+            requestInterceptors.push(handler)
+          },
+        },
+      },
+      async applyConfig(config = {}) {
+        let next = { ...config }
+        for (const interceptor of requestInterceptors) {
+          next = await interceptor(next)
+        }
+        return next
+      },
+      async get(url, config = {}) {
+        const next = await instance.applyConfig(config)
+        axiosCalls.push(['get', url, next])
         return Promise.resolve({ data: {} })
       },
-      post(url, body) {
-        axiosCalls.push(['post', url, body])
+      async post(url, body, config = {}) {
+        const next = await instance.applyConfig(config)
+        axiosCalls.push(['post', url, body, next])
         return Promise.resolve({ data: {} })
       },
-      put(url, body) {
-        axiosCalls.push(['put', url, body])
+      async put(url, body, config = {}) {
+        const next = await instance.applyConfig(config)
+        axiosCalls.push(['put', url, body, next])
         return Promise.resolve({ data: {} })
       },
-      delete(url) {
-        axiosCalls.push(['delete', url])
+      async delete(url, config = {}) {
+        const next = await instance.applyConfig(config)
+        axiosCalls.push(['delete', url, next])
         return Promise.resolve({ data: {} })
       },
     }
+    return instance
+  },
+}
+
+globalThis.window = {
+  localStorage: {
+    getItem(key) {
+      return key === 'wenqu_admin_api_key' ? 'test-token' : ''
+    },
   },
 }
 
 const api = await import(pathToFileURL(tempPath).href)
 unlinkSync(tempPath)
+
+function stripAxiosConfig(calls) {
+  return calls.map(call => {
+    if (call[0] === 'get' || call[0] === 'delete') return call.slice(0, 2)
+    return call.slice(0, 3)
+  })
+}
+
+{
+  assert.deepEqual(api.buildAuthHeaders(), { Authorization: 'Bearer test-token' })
+  await api.fetchAgents()
+  assert.equal(axiosCalls[0][2].headers.Authorization, 'Bearer test-token')
+  axiosCalls.length = 0
+}
 
 {
   await api.updateAgent(3, {
@@ -60,7 +102,15 @@ unlinkSync(tempPath)
   })
   await api.deleteAgent(3)
   await api.fetchModelConfigs('chat')
-  await api.createModelConfig({ name: 'chat', model_type: 'chat', provider: 'ollama', base_url: '/v1', model_name: 'qwen3', api_key_enabled: false, status: 'active' })
+  await api.createModelConfig({
+    name: 'chat',
+    model_type: 'chat',
+    provider: 'ollama',
+    base_url: '/v1',
+    model_name: 'qwen3',
+    api_key_enabled: false,
+    status: 'active',
+  })
   await api.testModelConfig(9)
   await api.fetchPromptTemplates('nl2lf_generate.system')
   await api.upsertPromptTemplate({
@@ -114,7 +164,7 @@ unlinkSync(tempPath)
   await api.rollbackSemanticSnapshot(8, 3)
   await api.deleteSemanticAsset(8, 'metric', 11)
 
-  assert.deepEqual(axiosCalls.slice(0, 25), [
+  assert.deepEqual(stripAxiosConfig(axiosCalls).slice(0, 25), [
     ['put', '/agent/3', {
       name: '编辑后智能体',
       description: '',
@@ -125,7 +175,15 @@ unlinkSync(tempPath)
     }],
     ['delete', '/agent/3'],
     ['get', '/model-config/list'],
-    ['post', '/model-config/create', { name: 'chat', model_type: 'chat', provider: 'ollama', base_url: '/v1', model_name: 'qwen3', api_key_enabled: false, status: 'active' }],
+    ['post', '/model-config/create', {
+      name: 'chat',
+      model_type: 'chat',
+      provider: 'ollama',
+      base_url: '/v1',
+      model_name: 'qwen3',
+      api_key_enabled: false,
+      status: 'active',
+    }],
     ['post', '/model-config/9/test', undefined],
     ['get', '/prompt/list'],
     ['post', '/prompt/templates', {
@@ -187,20 +245,25 @@ assert.ok(
 )
 
 {
+  let capturedHeaders = null
   const events = []
-  globalThis.fetch = async () => ({
-    ok: false,
-    status: 500,
-    body: {
-      getReader() {
-        throw new Error('body should not be read for failed response')
+  globalThis.fetch = async (_url, options) => {
+    capturedHeaders = options.headers
+    return {
+      ok: false,
+      status: 500,
+      body: {
+        getReader() {
+          throw new Error('body should not be read for failed response')
+        },
       },
-    },
-  })
+    }
+  }
 
   api.sendMessageStream({ question: 'x' }, event => events.push(event))
   await new Promise(resolve => setTimeout(resolve, 0))
 
+  assert.equal(capturedHeaders.Authorization, 'Bearer test-token')
   assert.deepEqual(events, [
     { event: 'error', data: { message: '请求失败: 500' } },
   ])

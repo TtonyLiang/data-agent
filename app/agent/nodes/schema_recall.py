@@ -4,8 +4,15 @@ import logging
 import re
 from typing import Any
 
-from app.config import get_settings
+from app.agent.domain_rules import (
+    business_groups_from_runtime,
+    contains_any,
+    recall_profiles_from_runtime,
+    schema_hints_from_runtime,
+)
 from app.services.metadata_service import get_metadata_service
+from app.services.system_parameter_service import get_system_parameter_service
+from app.config import get_settings
 from app.utils.logging_helpers import json_for_log, log_node_end, log_node_start, truncate_text
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+")
@@ -60,19 +67,24 @@ async def schema_recall_node(state: dict) -> dict:
     runtime = state.get("semantic_runtime") or {}
     evidence = state.get("runtime_evidence") or []
     question = state.get("enhanced_question") or state.get("question", "")
-    tokens = _tokens(question)
+    recall_profiles = recall_profiles_from_runtime(runtime, question)
+    tokens = _tokens(question, recall_profiles)
     semantic_terms = _semantic_terms(runtime, evidence)
-    business_priority = _business_priority(runtime, evidence, question)
-    business_groups = _business_groups(question)
+    business_priority = _business_priority(runtime, evidence, question, recall_profiles)
+    business_groups = business_groups_from_runtime(runtime, question)
+    schema_hints = schema_hints_from_runtime(runtime, question)
+    recall_settings = await get_system_parameter_service().get_schema_recall_settings()
     settings = get_settings()
     logger.info(
         "schema recall signals question=%s tokens=%s semantic_terms_count=%s "
-        "evidence_count=%s business_groups=%s",
+        "evidence_count=%s business_groups=%s schema_hints=%s recall_profiles=%s",
         truncate_text(question, 600),
         json_for_log(sorted(tokens)),
         len(semantic_terms),
         len(evidence),
         json_for_log(business_groups),
+        json_for_log(schema_hints),
+        json_for_log(recall_profiles),
     )
 
     table_scores: dict[str, dict[str, Any]] = {}
@@ -113,6 +125,15 @@ async def schema_recall_node(state: dict) -> dict:
                 tokens,
                 semantic_terms,
             )
+            profile_score, profile_reasons = _score_column_profile(
+                table_name,
+                column_name,
+                column_comment,
+                business_priority["question_profile"],
+                schema_hints,
+            )
+            score += profile_score
+            reasons = [*profile_reasons, *reasons]
             column_business = business_priority["columns"].get(
                 (table_name, column_name),
                 {"score": 0.0, "reasons": []},
@@ -155,8 +176,13 @@ async def schema_recall_node(state: dict) -> dict:
         key=lambda item: (-float(item.get("score") or 0), item.get("table_name") or ""),
     )
     positive_tables = [item for item in matched_tables if float(item.get("score") or 0) > 0]
-    max_tables = max(1, settings.schema_recall_max_tables)
-    selected_tables = (positive_tables or matched_tables)[:max_tables]
+    selected_tables, threshold_scope = select_tables_by_score(
+        positive_tables,
+        matched_tables,
+        max_tables=recall_settings.max_tables,
+        required_score_ratio=recall_settings.required_score_ratio,
+        optional_score_ratio=recall_settings.optional_score_ratio,
+    )
     selected_names = {item["table_name"] for item in selected_tables}
 
     matched_columns = [
@@ -184,7 +210,24 @@ async def schema_recall_node(state: dict) -> dict:
             "matched_tables": len(selected_tables),
             "matched_columns": len(matched_columns),
             "fallback_used": not bool(positive_tables),
+            **threshold_scope,
             "business_groups": business_groups,
+            "recall_profiles": [
+                {
+                    "key": item.get("key"),
+                    "label": item.get("label"),
+                    "reason": item.get("reason"),
+                }
+                for item in recall_profiles
+            ],
+            "schema_hints": [
+                {
+                    "key": item.get("key"),
+                    "label": item.get("label"),
+                    "reason": item.get("reason"),
+                }
+                for item in schema_hints
+            ],
         },
     }
     logger.info(
@@ -207,11 +250,64 @@ async def schema_recall_node(state: dict) -> dict:
     return result
 
 
-def _tokens(text: str) -> set[str]:
-    """Split mixed Chinese and identifier text into normalized recall tokens."""
-    return {
-        token.lower() for token in TOKEN_RE.findall(text or "") if token and len(token.strip()) > 1
+def select_tables_by_score(
+    positive_tables: list[dict[str, Any]],
+    matched_tables: list[dict[str, Any]],
+    *,
+    max_tables: int,
+    required_score_ratio: float,
+    optional_score_ratio: float,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Select candidate tables with relative score thresholds and a max cap."""
+    max_tables = max(1, int(max_tables))
+    if not positive_tables:
+        return matched_tables[:max_tables], {
+            "top_score": 0,
+            "required_score": 0,
+            "optional_score": 0,
+            "required_score_ratio": required_score_ratio,
+            "optional_score_ratio": optional_score_ratio,
+            "selection_mode": "fallback_topn",
+        }
+    top_score = max(float(positive_tables[0].get("score") or 0), 0)
+    required_score = top_score * max(0, min(required_score_ratio, 1))
+    optional_score = top_score * max(0, min(optional_score_ratio, required_score_ratio, 1))
+    required = [
+        item for item in positive_tables if float(item.get("score") or 0) >= required_score
+    ]
+    optional = [
+        item
+        for item in positive_tables
+        if optional_score <= float(item.get("score") or 0) < required_score
+    ]
+    selected = [*required, *optional[: max(0, max_tables - len(required))]]
+    if not selected:
+        selected = positive_tables[:1]
+    return selected[:max_tables], {
+        "top_score": round(top_score, 4),
+        "required_score": round(required_score, 4),
+        "optional_score": round(optional_score, 4),
+        "required_score_ratio": required_score_ratio,
+        "optional_score_ratio": optional_score_ratio,
+        "selection_mode": "relative_threshold",
+        "required_table_count": len(required),
+        "optional_table_count": len(optional),
     }
+
+
+def _tokens(text: str, recall_profiles: list[dict[str, Any]] | None = None) -> set[str]:
+    """Split mixed Chinese and identifier text into normalized recall tokens."""
+    tokens: set[str] = set()
+    for token in TOKEN_RE.findall(text or ""):
+        clean = token.lower().strip()
+        if len(clean) <= 1:
+            continue
+        tokens.add(clean)
+        if re.search(r"[A-Za-z_]", clean):
+            tokens.update(part for part in re.split(r"[_\W]+", clean) if len(part) > 1)
+    for profile in recall_profiles or []:
+        tokens.update(str(term).lower() for term in profile.get("question_terms") or [] if term)
+    return tokens
 
 
 def _semantic_terms(runtime: dict, evidence: list[dict]) -> set[str]:
@@ -237,12 +333,21 @@ def _semantic_terms(runtime: dict, evidence: list[dict]) -> set[str]:
     return terms
 
 
-def _business_priority(runtime: dict, evidence: list[dict], question: str) -> dict[str, Any]:
+def _business_priority(
+    runtime: dict,
+    evidence: list[dict],
+    question: str,
+    recall_profiles: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Translate matched semantic assets into table and column score boosts."""
     table_boosts: dict[str, dict[str, Any]] = {}
     column_boosts: dict[tuple[str, str], dict[str, Any]] = {}
     if not isinstance(runtime, dict):
-        return {"tables": table_boosts, "columns": column_boosts}
+        return {
+            "tables": table_boosts,
+            "columns": column_boosts,
+            "question_profile": _question_profile(question, recall_profiles),
+        }
 
     mappings = [item for item in runtime.get("mappings", []) or [] if isinstance(item, dict)]
     mapping_by_asset: dict[str, list[dict[str, Any]]] = {}
@@ -256,7 +361,7 @@ def _business_priority(runtime: dict, evidence: list[dict], question: str) -> di
         for item in evidence
         if isinstance(item, dict)
     }
-    question_profile = _question_profile(question)
+    question_profile = _question_profile(question, recall_profiles)
 
     for metric in runtime.get("metrics", []) or []:
         if not isinstance(metric, dict):
@@ -315,7 +420,11 @@ def _business_priority(runtime: dict, evidence: list[dict], question: str) -> di
                         [*relation_reasons, "业务关系关联表"],
                     )
 
-    return {"tables": table_boosts, "columns": column_boosts}
+    return {
+        "tables": table_boosts,
+        "columns": column_boosts,
+        "question_profile": question_profile,
+    }
 
 
 def _metric_match(
@@ -341,19 +450,10 @@ def _metric_match(
         str(metric.get(key) or "")
         for key in ("metric_key", "name", "description", "aggregation", "base_table")
     ).lower()
-    if question_profile["asks_count"] and _looks_like_count_metric(metric):
-        score += 36
-        reasons.append("问题要求笔数/数量")
-    if question_profile["asks_application"] and _contains_any(
-        metric_text, ("application", "apply", "申请")
-    ):
-        score += 24
-        reasons.append("问题聚焦申请业务")
-    if question_profile["asks_amount"] and _contains_any(metric_text, ("amount", "金额", "余额")):
-        score += 20
-        reasons.append("问题聚焦金额口径")
-    if question_profile["asks_count"] and _contains_any(metric_text, ("amount", "金额", "余额")):
-        score -= 18
+    for profile in question_profile["profiles"]:
+        score_delta, profile_reasons = _score_profile_against_text(profile, metric_text, "指标")
+        score += score_delta
+        reasons.extend(profile_reasons)
 
     return max(score, 0), _unique_reasons(reasons)
 
@@ -367,87 +467,39 @@ def _mapping_match(
         question_profile,
         ("asset_key", "name", "description", "table_name", "column_name"),
     )
-    if question_profile["asks_region"] and _contains_any(
-        " ".join(
-            str(mapping.get(key) or "")
-            for key in ("asset_key", "name", "column_name", "column_comment")
-        ).lower(),
-        ("region", "area", "区域", "地区"),
-    ):
-        score += 34
-        reasons.append("问题要求区域维度")
-    if question_profile["asks_application"] and _contains_any(
-        " ".join(
-            str(mapping.get(key) or "") for key in ("asset_key", "name", "table_name")
-        ).lower(),
-        ("application", "apply", "申请"),
-    ):
-        score += 18
-        reasons.append("问题聚焦申请业务")
+    mapping_text = " ".join(
+        str(mapping.get(key) or "")
+        for key in ("asset_key", "name", "description", "table_name", "column_name", "column_comment")
+    ).lower()
+    for profile in question_profile["profiles"]:
+        score_delta, profile_reasons = _score_profile_against_text(profile, mapping_text, "字段映射")
+        score += score_delta
+        reasons.extend(profile_reasons)
     return max(score, 0), _unique_reasons(reasons)
 
 
-def _business_groups(question: str) -> list[str]:
-    """Infer coarse business groups such as application or collection from question text."""
-    compact = (question or "").lower().replace(" ", "")
-    groups = []
-    if any(token in compact for token in ("申请", "进件", "审批")):
-        groups.append("application")
-    if any(token in compact for token in ("放款", "发放", "借据", "余额", "本金")):
-        groups.append("account")
-    if any(
-        token in compact for token in ("还款", "逾期", "m1", "m2", "m3", "dpd", "mob", "vintage")
-    ):
-        groups.append("repayment")
-    if any(token in compact for token in ("催收", "回收", "入催")):
-        groups.append("collection")
-    if any(token in compact for token in ("客户", "客群", "分层", "风险")):
-        groups.append("customer")
-    return _unique_reasons(groups)
-
-
-def _score_business_groups(name: str, comment: str, groups: list[str]) -> tuple[float, list[str]]:
+def _score_business_groups(
+    name: str, comment: str, groups: list[dict[str, Any]] | list[str]
+) -> tuple[float, list[str]]:
     """Boost schema candidates that belong to inferred business groups."""
     if not groups:
         return 0.0, []
     text = f"{name} {comment}".lower()
-    group_terms = {
-        "application": ("application", "apply", "approval", "申请", "进件", "审批"),
-        "account": ("account", "loan", "balance", "disbursement", "放款", "余额", "借据", "本金"),
-        "repayment": (
-            "repayment",
-            "overdue",
-            "dpd",
-            "mob",
-            "vintage",
-            "还款",
-            "逾期",
-            "账龄",
-            "批次",
-        ),
-        "collection": ("collection", "recovery", "催收", "回收", "入催"),
-        "customer": ("customer", "segment", "risk", "客户", "客群", "风险"),
-    }
     score = 0.0
     reasons: list[str] = []
     for group in groups:
-        terms = group_terms.get(group, ())
+        if isinstance(group, dict):
+            terms = tuple(str(item).lower() for item in group.get("terms") or [])
+            label = str(group.get("label") or group.get("key") or "")
+            weight = float(group.get("weight") or 18)
+        else:
+            terms = ()
+            label = str(group)
+            weight = 0.0
         if any(term in text for term in terms):
-            score += 18
-            reasons.append(f"业务域匹配: {business_group_label(group)}")
+            score += weight
+            reasons.append(f"业务域匹配: {label}")
     return score, reasons
-
-
-def business_group_label(group: str) -> str:
-    """Return a human-readable label for a coarse business group."""
-    labels = {
-        "application": "申请/审批",
-        "account": "放款/账户",
-        "repayment": "还款/逾期",
-        "collection": "催收/回收",
-        "customer": "客户/风险",
-    }
-    return labels.get(group, group)
 
 
 def _asset_match_score(
@@ -513,34 +565,61 @@ def _add_boost(
     item["reasons"] = _unique_reasons([*item["reasons"], *reasons])[:5]
 
 
-def _question_profile(question: str) -> dict[str, Any]:
+def _question_profile(
+    question: str,
+    recall_profiles: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Extract reusable intent flags from the current question."""
-    compact = _compact(question)
-    tokens = _tokens(question)
+    tokens = _tokens(question, recall_profiles)
     return {
-        "compact": compact,
+        "compact": _compact(question),
         "tokens": tokens,
-        "asks_count": _contains_any(
-            compact, ("多少笔", "几笔", "笔数", "数量", "次数", "count", "top", "排名")
-        ),
-        "asks_application": _contains_any(compact, ("申请", "application", "apply")),
-        "asks_amount": _contains_any(compact, ("金额", "余额", "amount")),
-        "asks_region": _contains_any(compact, ("区域", "地区", "region", "area")),
+        "profiles": recall_profiles or [],
     }
 
 
-def _looks_like_count_metric(metric: dict[str, Any]) -> bool:
-    """Heuristically decide whether a metric definition represents a count."""
-    metric_key = str(metric.get("metric_key") or "").lower()
-    metric_name = str(metric.get("name") or "")
-    aggregation = str(metric.get("aggregation") or "").lower()
-    aliases = " ".join(str(value or "") for value in metric.get("synonyms", []) or [])
-    label_text = f"{metric_name} {aliases}"
-    return (
-        bool(re.search(r"(^|_)count($|_)", metric_key))
-        or aggregation == "count"
-        or _contains_any(label_text, ("数量", "笔数", "件数", "次数", "申请数", "申请量", "进件量"))
-    )
+def _score_column_profile(
+    table_name: str,
+    column_name: str,
+    column_comment: str,
+    question_profile: dict[str, Any],
+    schema_hints: list[dict[str, Any]] | None = None,
+) -> tuple[float, list[str]]:
+    """Boost raw schema columns that match explicit configured schema hints."""
+    text = f"{table_name} {column_name} {column_comment}".lower()
+    score = 0.0
+    reasons: list[str] = []
+    for hint in schema_hints or []:
+        terms = [str(item) for item in hint.get("column_terms") or [] if str(item or "")]
+        if not terms or not contains_any(text, terms):
+            continue
+        score += float(hint.get("weight") or 42)
+        reasons.append(str(hint.get("reason") or f"命中字段提示: {hint.get('label') or hint.get('key')}"))
+    for profile in question_profile["profiles"]:
+        score_delta, profile_reasons = _score_profile_against_text(profile, text, "字段")
+        score += score_delta
+        reasons.extend(profile_reasons)
+    return score, reasons
+
+
+def _score_profile_against_text(
+    profile: dict[str, Any],
+    text: str,
+    target_label: str,
+) -> tuple[float, list[str]]:
+    """Apply configured recall profile terms to a metric, mapping, table or column."""
+    positive_terms = [str(item) for item in profile.get("positive_terms") or [] if str(item or "")]
+    negative_terms = [str(item) for item in profile.get("negative_terms") or [] if str(item or "")]
+    score = 0.0
+    reasons: list[str] = []
+    if positive_terms and contains_any(text, positive_terms):
+        score += float(profile.get("weight") or 0)
+        reasons.append(str(profile.get("reason") or f"{target_label}命中召回画像: {profile.get('label') or profile.get('key')}"))
+    if negative_terms and contains_any(text, negative_terms):
+        score -= float(profile.get("negative_weight") or profile.get("weight") or 0)
+        negative_reason = profile.get("negative_reason") or f"{target_label}命中召回排除项: {profile.get('label') or profile.get('key')}"
+        reasons.append(str(negative_reason))
+    return score, reasons
 
 
 def _contains_any(text: str, values: tuple[str, ...]) -> bool:

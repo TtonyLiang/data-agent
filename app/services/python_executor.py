@@ -86,7 +86,7 @@ class RestrictedLocalPythonExecutor:
     def _validate_code(self, code: str) -> None:
         try:
             tree = ast.parse(code)
-        except SyntaxError as exc:
+        except (SyntaxError, ValueError) as exc:
             raise PythonExecutionError(f"Python 代码语法错误: {exc}") from exc
 
         for node in ast.walk(tree):
@@ -105,7 +105,19 @@ class RestrictedLocalPythonExecutor:
                 }:
                     raise PythonExecutionError(f"Python 分析代码禁止调用 {node.func.id}")
             elif isinstance(node, ast.Attribute):
-                if node.attr in {"system", "popen", "remove", "unlink", "rmdir", "mkdir"}:
+                if node.attr.startswith("__") or node.attr in {
+                    "system",
+                    "popen",
+                    "remove",
+                    "unlink",
+                    "rmdir",
+                    "mkdir",
+                    "getenv",
+                    "putenv",
+                    "spawn",
+                    "fork",
+                    "kill",
+                }:
                     raise PythonExecutionError(f"Python 分析代码禁止访问危险属性 {node.attr}")
 
     def _assert_allowed_module(self, module: str) -> None:

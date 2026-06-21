@@ -102,6 +102,19 @@ assert.ok(
 )
 
 assert.ok(
+  source.includes('const InlineMarkdown = defineComponent') &&
+    source.includes('<InlineMarkdown :text="item" />') &&
+    !source.includes('reportAnalysisSummary(expandedReport)" :key="item">{{ item }}'),
+  'ChatView should render structured report list items through inline markdown parsing',
+)
+
+assert.ok(
+  source.includes('<InlineMarkdown :text="String(cell ?? \'\')" />') &&
+    source.includes('<InlineMarkdown :text="formatReportValue(row[column])" />'),
+  'ChatView should render report table cells through inline markdown parsing',
+)
+
+assert.ok(
   source.includes('chartFromEchartsOption') && source.includes('report-md-chart-card'),
   'ChatView should convert ECharts report code blocks into visible chart cards',
 )
@@ -121,6 +134,12 @@ assert.ok(
 assert.ok(
   !source.includes('由报告中的 ECharts 配置自动渲染'),
   'ChatView should not show internal ECharts auto-render helper text',
+)
+
+assert.ok(
+  source.includes('Math.max(toFiniteNumber(isPlainObject(base.grid) ? base.grid.top : undefined) || 0, 46)') &&
+    source.includes('nameGap: Math.max(toFiniteNumber(base.nameGap) || 0, 18)'),
+  'ChatView should reserve enough top spacing for complex ECharts axis names',
 )
 
 assert.ok(

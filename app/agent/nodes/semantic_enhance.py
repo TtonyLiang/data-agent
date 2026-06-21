@@ -3,13 +3,16 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Any
 
 from langchain_core.callbacks.manager import adispatch_custom_event
 
+from app.agent.domain_rules import contains_any
 from app.agent.prompts import load_prompt
 from app.services.llm_service import get_llm_service
 from app.services.prompt_service import get_prompt_service
+from app.services.semantic_runtime import get_semantic_runtime_service
 from app.utils.logging_helpers import (
     json_for_log,
     log_node_end,
@@ -20,6 +23,8 @@ from app.utils.logging_helpers import (
 
 SEMANTIC_ENHANCE_PROMPT = load_prompt("semantic_enhance.system.md")
 logger = logging.getLogger(__name__)
+DOMAIN_REWRITE_CACHE_TTL_SECONDS = 300
+_domain_rewrite_cache: dict[int, tuple[float, list[dict[str, Any]]]] = {}
 
 
 async def semantic_enhance_node(state: dict) -> dict:
@@ -32,7 +37,8 @@ async def semantic_enhance_node(state: dict) -> dict:
         log_node_end(logger, "semantic_enhance", result)
         return result
 
-    deterministic = deterministic_enhancement(question, history)
+    domain_rewrites = await load_domain_rewrites(state.get("agent_id"))
+    deterministic = deterministic_enhancement(question, history, domain_rewrites)
     if deterministic:
         logger.info("semantic enhance deterministic candidate=%s", json_for_log(deterministic))
     if deterministic and should_short_circuit_enhancement(question, deterministic):
@@ -155,7 +161,11 @@ def strip_code_fence(text: str) -> str:
     return body
 
 
-def deterministic_enhancement(question: str, history: list[dict]) -> dict[str, Any] | None:
+def deterministic_enhancement(
+    question: str,
+    history: list[dict],
+    domain_rewrites: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     """Handle common follow-up and domain rewrite cases with deterministic rules."""
     top_limit = extract_followup_top_limit(question)
     previous = last_user_data_question(history)
@@ -177,13 +187,14 @@ def deterministic_enhancement(question: str, history: list[dict]) -> dict[str, A
             "reason": "当前问题在纠正金额口径，已明确改为数量/笔数口径。",
         }
 
-    business_rewrite = common_business_rewrite(question)
+    business_rewrite = common_business_rewrite(question, domain_rewrites or [])
     if business_rewrite and business_rewrite != question:
         return {
             "enhanced_question": business_rewrite,
             "rewrite_type": "clarified",
             "preserved_constraints": extract_preserved_constraints(question, business_rewrite),
             "reason": "命中常见业务问法，已补全指标、维度和排序口径。",
+            "source": "semantic_rule",
         }
     return None
 
@@ -196,10 +207,7 @@ def should_short_circuit_enhancement(question: str, deterministic: dict[str, Any
         return True
     if "数量/笔数口径" in constraints and "区域/地区维度" in constraints:
         return True
-    compact = compact_text(question)
-    return bool(
-        "申请" in compact and contains_count_intent(question) and contains_region_intent(question)
-    )
+    return deterministic.get("source") == "semantic_rule"
 
 
 def guard_enhanced_question(
@@ -245,20 +253,76 @@ def clean_enhanced_question(text: str) -> str:
     return cleaned
 
 
-def common_business_rewrite(question: str) -> str | None:
+def common_business_rewrite(
+    question: str,
+    domain_rewrites: list[dict[str, Any]],
+) -> str | None:
     """Rewrite high-confidence business patterns without waiting for an LLM."""
-    compact = compact_text(question)
-    top_limit = extract_top_limit(question)
-    if "申请" in compact and contains_count_intent(question) and contains_trend_intent(question):
-        if contains_region_intent(question):
-            return "查询各申请区域按月份的贷款申请笔数变化趋势。"
-        if contains_product_type_intent(question) or contains_bucketed_loan_intent(question):
-            return "查询贷款申请按月份统计各贷款产品类型的申请笔数变化趋势。"
-        return "查询贷款申请笔数按月份的变化趋势。"
-    if "申请" in compact and contains_count_intent(question) and contains_region_intent(question):
-        suffix = f"，取前{number_to_chinese(top_limit)}个区域" if top_limit else ""
-        return f"查询贷款申请按申请区域分组的申请笔数，并按申请笔数降序排序{suffix}。"
+    for item in domain_rewrites:
+        if not rewrite_rule_matches(question, item.get("match") or {}):
+            continue
+        template = str(item.get("template") or "").strip()
+        if not template:
+            continue
+        top_limit = extract_top_limit(question)
+        return template.format(
+            top_n=f"前{number_to_chinese(top_limit)}" if top_limit else "",
+            top_n_suffix=f"，取前{number_to_chinese(top_limit)}个" if top_limit else "",
+        )
     return None
+
+
+async def load_domain_rewrites(agent_id: int | None) -> list[dict[str, Any]]:
+    """Load semantic-enhancement rewrite rules from the agent-bound domain with a small cache."""
+    if not agent_id:
+        return []
+    now = time.monotonic()
+    cached = _domain_rewrite_cache.get(int(agent_id))
+    if cached and now - cached[0] < DOMAIN_REWRITE_CACHE_TTL_SECONDS:
+        return cached[1]
+    try:
+        svc = get_semantic_runtime_service()
+        domain = await svc.get_agent_bound_domain(int(agent_id))
+        if not domain or not domain.id:
+            _domain_rewrite_cache[int(agent_id)] = (now, [])
+            return []
+        assets = await svc.list_assets(domain.id, "rule")
+        rewrites: list[dict[str, Any]] = []
+        for rule in assets.get("rule", []):
+            if rule.get("rule_type") != "rewrite":
+                continue
+            expression = rule.get("expression") or {}
+            if isinstance(expression, dict):
+                rewrites.extend(
+                    item for item in expression.get("rewrites") or [] if isinstance(item, dict)
+                )
+        _domain_rewrite_cache[int(agent_id)] = (now, rewrites)
+        return rewrites
+    except Exception as exc:
+        logger.warning("semantic enhance domain rewrite load failed agent_id=%s error=%s", agent_id, exc)
+        return []
+
+
+def rewrite_rule_matches(question: str, match: dict[str, Any]) -> bool:
+    """Evaluate lightweight semantic-enhancement rewrite matchers."""
+    if not isinstance(match, dict):
+        return False
+    if match.get("any") and not contains_any(question, match.get("any") or []):
+        return False
+    if match.get("all") and not all(contains_any(question, [term]) for term in match.get("all") or []):
+        return False
+    intents = set(match.get("intents") or [])
+    if "count" in intents and not contains_count_intent(question):
+        return False
+    if "trend" in intents and not contains_trend_intent(question):
+        return False
+    if "region" in intents and not contains_region_intent(question):
+        return False
+    if "product" in intents and not (
+        contains_product_type_intent(question) or contains_bucketed_loan_intent(question)
+    ):
+        return False
+    return True
 
 
 def replace_top_limit(previous_question: str, limit: int) -> str:

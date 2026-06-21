@@ -117,3 +117,15 @@ def test_route_after_sql_execute_retries_when_error_without_result():
     )
 
     assert route == "retry"
+
+
+def test_route_after_sql_execute_fails_after_retries_exhausted():
+    route = route_after_sql_execute(
+        {
+            "sql_result": [],
+            "sql_error": "table does not exist",
+            "sql_retry_count": 2,
+        }
+    )
+
+    assert route == "failed"

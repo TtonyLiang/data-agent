@@ -2,6 +2,7 @@ import logging
 
 from app.db.mysql import get_management_db, invalidate_datasource_db
 from app.models.datasource import DatasourceConfig, DatasourceCreate, DatasourceUpdate
+from app.services.secret_service import get_secret_service
 from app.utils.logging_helpers import json_for_log
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ class DatasourceService:
             json_for_log(ds.model_dump(), text_limit=800),
         )
         db = get_management_db()
+        encrypted_password = get_secret_service().encrypt(ds.password)
         ds_id = await db.execute_insert(
             "INSERT INTO datasource "
             "(agent_id, name, db_type, host, port, username, password, database_name) "
@@ -28,7 +30,7 @@ class DatasourceService:
                 "host": ds.host,
                 "port": ds.port,
                 "user": ds.username,
-                "pwd": ds.password,
+                "pwd": encrypted_password,
                 "dbname": ds.database_name,
             },
         )
@@ -44,7 +46,7 @@ class DatasourceService:
         db = get_management_db()
         rows = await db.execute_query("SELECT * FROM datasource ORDER BY id")
         logger.info("datasource list_all result count=%s", len(rows))
-        return [DatasourceConfig(**row) for row in rows]
+        return [self._from_row(row) for row in rows]
 
     async def list_by_agent(self, agent_id: int) -> list[DatasourceConfig]:
         """Return datasources explicitly bound to an agent, with legacy agent_id fallback."""
@@ -61,7 +63,7 @@ class DatasourceService:
                 "SELECT * FROM datasource WHERE agent_id = :aid ORDER BY id",
                 {"aid": agent_id},
             )
-        result = [DatasourceConfig(**row) for row in rows]
+        result = [self._from_row(row) for row in rows]
         logger.info("datasource list_by_agent result agent_id=%s count=%s", agent_id, len(result))
         return result
 
@@ -70,7 +72,7 @@ class DatasourceService:
         logger.info("datasource get id=%s", ds_id)
         db = get_management_db()
         rows = await db.execute_query("SELECT * FROM datasource WHERE id = :id", {"id": ds_id})
-        result = DatasourceConfig(**rows[0]) if rows else None
+        result = self._from_row(rows[0]) if rows else None
         logger.info("datasource get result id=%s found=%s", ds_id, bool(result))
         return result
 
@@ -101,7 +103,7 @@ class DatasourceService:
         }
         if ds.password:
             assignments.append("password = :pwd")
-            params["pwd"] = ds.password
+            params["pwd"] = get_secret_service().encrypt(ds.password)
         if ds.agent_id is not None:
             assignments.append("agent_id = :aid")
             params["aid"] = ds.agent_id
@@ -118,6 +120,7 @@ class DatasourceService:
         """Delete a datasource and all collected/semantic metadata tied to it."""
         logger.info("datasource delete id=%s", ds_id)
         db = get_management_db()
+        statements = []
         for table in (
             "logic_form_template",
             "semantic_mapping",
@@ -126,32 +129,31 @@ class DatasourceService:
             "semantic_relation",
             "semantic_concept",
         ):
-            await db.execute_query(
-                f"DELETE FROM {table} WHERE domain_id IN "
-                "(SELECT id FROM semantic_domain WHERE datasource_id = :id)",
-                {"id": ds_id},
+            statements.append(
+                (
+                    f"DELETE FROM {table} WHERE domain_id IN "
+                    "(SELECT id FROM semantic_domain WHERE datasource_id = :id)",
+                    {"id": ds_id},
+                )
             )
-        await db.execute_query(
-            "DELETE FROM semantic_domain WHERE datasource_id = :id",
-            {"id": ds_id},
+        statements.extend(
+            [
+                ("DELETE FROM semantic_domain WHERE datasource_id = :id", {"id": ds_id}),
+                ("DELETE FROM agent_datasource WHERE datasource_id = :id", {"id": ds_id}),
+                (
+                    "DELETE FROM meta_column WHERE table_id IN "
+                    "(SELECT id FROM meta_table WHERE datasource_id = :id)",
+                    {"id": ds_id},
+                ),
+                ("DELETE FROM meta_table WHERE datasource_id = :id", {"id": ds_id}),
+                ("DELETE FROM datasource WHERE id = :id", {"id": ds_id}),
+            ]
         )
-        await db.execute_query(
-            "DELETE FROM agent_datasource WHERE datasource_id = :id",
-            {"id": ds_id},
-        )
-        await db.execute_query(
-            "DELETE FROM meta_column WHERE table_id IN "
-            "(SELECT id FROM meta_table WHERE datasource_id = :id)",
-            {"id": ds_id},
-        )
-        await db.execute_query(
-            "DELETE FROM meta_table WHERE datasource_id = :id",
-            {"id": ds_id},
-        )
-        await db.execute_query(
-            "DELETE FROM datasource WHERE id = :id",
-            {"id": ds_id},
-        )
+        if hasattr(db, "execute_transaction"):
+            await db.execute_transaction(statements)
+        else:
+            for sql, params in statements:
+                await db.execute_query(sql, params)
         await invalidate_datasource_db(ds_id)
         logger.info("datasource delete result id=%s ok=true", ds_id)
         return True
@@ -206,21 +208,32 @@ class DatasourceService:
         )
         db = get_management_db()
         unique_ids = sorted({int(ds_id) for ds_id in datasource_ids})
-        await db.execute_query(
-            "DELETE FROM agent_datasource WHERE agent_id = :aid",
-            {"aid": agent_id},
-        )
+        statements: list[tuple[str, dict | None]] = [
+            ("DELETE FROM agent_datasource WHERE agent_id = :aid", {"aid": agent_id})
+        ]
         for ds_id in unique_ids:
-            await db.execute_insert(
-                "INSERT INTO agent_datasource (agent_id, datasource_id) VALUES (:aid, :did)",
-                {"aid": agent_id, "did": ds_id},
+            statements.append(
+                (
+                    "INSERT INTO agent_datasource (agent_id, datasource_id) VALUES (:aid, :did)",
+                    {"aid": agent_id, "did": ds_id},
+                )
             )
+        if hasattr(db, "execute_transaction"):
+            await db.execute_transaction(statements)
+        else:
+            for sql, params in statements:
+                await db.execute_query(sql, params)
         logger.info(
             "datasource set_agent_datasources result agent_id=%s datasource_ids=%s",
             agent_id,
             unique_ids,
         )
         return unique_ids
+
+    def _from_row(self, row: dict) -> DatasourceConfig:
+        data = dict(row)
+        data["password"] = get_secret_service().decrypt(data.get("password")) or ""
+        return DatasourceConfig(**data)
 
     async def test_connection(self, ds_id: int) -> bool:
         """Open a short-lived datasource connection and run SELECT 1."""

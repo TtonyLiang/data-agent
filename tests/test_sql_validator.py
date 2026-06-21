@@ -41,3 +41,11 @@ def test_validate_sql_clamps_oversized_limit():
 
     assert result.ok
     assert result.sql == "SELECT * FROM loan_application_indicator\nLIMIT 1000"
+
+
+def test_validate_sql_blocks_mysql_file_keywords():
+    for keyword in ("OUTFILE", "INFILE", "DUMPFILE", "HANDLER", "PREPARE", "XA"):
+        result = normalize_sql_for_execution(f"SELECT 1 {keyword}")
+
+        assert not result.ok
+        assert "禁止操作" in result.reason

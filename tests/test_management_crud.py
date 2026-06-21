@@ -13,6 +13,7 @@ from app.services.model_config_service import (
     _public_model_config,
     api_key_expiry_flags,
 )
+from app.services.secret_service import ENCRYPTED_PREFIX
 
 
 class RecordingDB:
@@ -288,7 +289,7 @@ async def test_model_config_update_preserves_api_key_when_form_leaves_it_blank(m
         (sql, params) for sql, params in db.queries if sql.startswith("UPDATE model_config")
     )
     assert "api_key = :api_key" in update_sql
-    assert update_params["api_key"] == "existing-secret"
+    assert update_params["api_key"].startswith(ENCRYPTED_PREFIX)
     assert updated.api_key == "existing-secret"
 
 
@@ -338,7 +339,8 @@ async def test_model_config_update_replaces_api_key_when_new_value_is_entered(mo
     update_params = next(
         params for sql, params in db.queries if sql.startswith("UPDATE model_config")
     )
-    assert update_params["api_key"] == "new-secret"
+    assert update_params["api_key"].startswith(ENCRYPTED_PREFIX)
+    assert update_params["api_key"] != "new-secret"
 
 
 def test_public_model_config_exposes_configured_flag_without_api_key():

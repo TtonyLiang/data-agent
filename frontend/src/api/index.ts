@@ -5,6 +5,29 @@ const api = axios.create({
   timeout: 120000,
 })
 
+export const ADMIN_TOKEN_STORAGE_KEY = 'wenqu_admin_api_key'
+
+export function getAdminApiKey(): string {
+  const envKey = import.meta.env?.VITE_ADMIN_API_KEY || ''
+  if (envKey) return envKey
+  if (typeof window === 'undefined') return ''
+  return window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || ''
+}
+
+export function buildAuthHeaders(): Record<string, string> {
+  const token = getAdminApiKey().trim()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+api.interceptors.request.use((config) => {
+  const headers = buildAuthHeaders()
+  if (headers.Authorization) {
+    config.headers = config.headers || {}
+    config.headers.Authorization = headers.Authorization
+  }
+  return config
+})
+
 export interface ChatRequest {
   question: string
   agent_id?: number
@@ -149,6 +172,22 @@ export interface PromptTemplateItem {
   updated_at?: string
 }
 
+export interface SystemParameterItem {
+  key: string
+  name: string
+  value: number | string | boolean | Record<string, unknown> | unknown[]
+  value_type: 'int' | 'float' | 'bool' | 'string' | 'json'
+  category: string
+  description?: string
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface SystemParameterUpdate {
+  key: string
+  value: number | string | boolean | Record<string, unknown> | unknown[]
+}
+
 export type PromptTemplateRequest = Omit<PromptTemplateItem, 'id' | 'created_at' | 'updated_at'> & {
   id?: number | null
 }
@@ -228,6 +267,21 @@ export async function resolvePromptTemplate(payload: Record<string, unknown>) {
   return data
 }
 
+export async function fetchSystemParameters(category?: string): Promise<SystemParameterItem[]> {
+  const { data } = await api.get<{ parameters: SystemParameterItem[] }>('/system/parameters', {
+    params: category ? { category } : undefined,
+  })
+  return data.parameters || []
+}
+
+export async function updateSystemParameters(updates: SystemParameterUpdate[]) {
+  const { data } = await api.put<{ parameters: SystemParameterItem[]; message: string }>(
+    '/system/parameters',
+    updates,
+  )
+  return data
+}
+
 export async function sendMessage(req: ChatRequest): Promise<ChatResponse> {
   const { data } = await api.post<ChatResponse>('/chat', req)
   return data
@@ -281,7 +335,7 @@ export function sendMessageStream(
   const controller = new AbortController()
   fetch('/api/chat/stream', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
     body: JSON.stringify(req),
     signal: controller.signal,
   }).then(async (resp) => {

@@ -123,7 +123,7 @@ class LogicTimeRange(BaseModel):
 
 class LogicForm(BaseModel):
     intent_type: str = "metric_query"
-    domain_key: str = "loan_risk"
+    domain_key: str | None = None
     metrics: list[str] = Field(default_factory=list)
     dimensions: list[str] = Field(default_factory=list)
     filters: list[LogicFilter] = Field(default_factory=list)

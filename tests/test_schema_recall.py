@@ -1,7 +1,84 @@
 import pytest
+from pathlib import Path
 
 from app.agent.nodes import schema_recall
 from app.agent.nodes.nl2sql_fallback import build_schema_context
+from app.agent.nodes.schema_recall import select_tables_by_score
+from app.models.system_parameter import SchemaRecallSettings
+from scripts import seed_loan_semantic_runtime as seed
+
+
+@pytest.fixture(autouse=True)
+def fake_schema_recall_settings(monkeypatch):
+    class FakeSystemParameterService:
+        async def get_schema_recall_settings(self):
+            return SchemaRecallSettings(
+                max_tables=6,
+                required_score_ratio=0.35,
+                optional_score_ratio=0.15,
+            )
+
+    monkeypatch.setattr(
+        schema_recall,
+        "get_system_parameter_service",
+        lambda: FakeSystemParameterService(),
+    )
+
+
+def loan_recall_rules():
+    payload = seed.load_semantic_file()
+    return [
+        item for item in payload.get("rules", []) if item.get("rule_type") == "recall"
+    ]
+
+
+def test_schema_recall_contains_no_domain_keyword_literals():
+    """Keep business recall terms in semantic rules, not in schema recall code."""
+    source = Path("app/agent/nodes/schema_recall.py").read_text(encoding="utf-8")
+    forbidden = [
+        "申请",
+        "进件",
+        "审批",
+        "区域",
+        "地区",
+        "年龄",
+        "客龄",
+        "金额",
+        "余额",
+        "笔数",
+        "数量",
+        "application",
+        "apply",
+        "approval",
+        "region",
+        "area",
+        "customer_age",
+    ]
+
+    assert [token for token in forbidden if token in source] == []
+
+
+def test_select_tables_by_relative_score_thresholds():
+    tables = [
+        {"table_name": "t1", "score": 2162},
+        {"table_name": "t2", "score": 821},
+        {"table_name": "t3", "score": 210},
+        {"table_name": "t4", "score": 166},
+        {"table_name": "t5", "score": 148},
+    ]
+
+    selected, scope = select_tables_by_score(
+        tables,
+        tables,
+        max_tables=6,
+        required_score_ratio=0.35,
+        optional_score_ratio=0.15,
+    )
+
+    assert [item["table_name"] for item in selected] == ["t1", "t2"]
+    assert scope["required_score"] == 756.7
+    assert scope["optional_score"] == 324.3
+    assert scope["selection_mode"] == "relative_threshold"
 
 
 class FakeMetadataService:
@@ -25,6 +102,16 @@ class FakeMetadataService:
                 "table_comment": "贷款申请指标表",
                 "columns": [
                     {"column_name": "region", "column_comment": "申请区域", "data_type": "varchar"},
+                    {
+                        "column_name": "customer_age",
+                        "column_comment": "客户年龄",
+                        "data_type": "int",
+                    },
+                    {
+                        "column_name": "product_type",
+                        "column_comment": "申请产品类型",
+                        "data_type": "varchar",
+                    },
                     {
                         "column_name": "application_id",
                         "column_comment": "申请编号",
@@ -83,6 +170,7 @@ async def test_schema_recall_matches_question_and_semantic_terms(monkeypatch):
                         "column_name": "region",
                     },
                 ],
+                "rules": loan_recall_rules(),
             },
             "runtime_evidence": [],
         }
@@ -93,7 +181,48 @@ async def test_schema_recall_matches_question_and_semantic_terms(monkeypatch):
     assert "业务域匹配: 申请/审批" in result["relevant_tables"][0]["reason"]
     assert any(item["column_name"] == "region" for item in result["relevant_columns"])
     assert result["schema_scope"]["fallback_used"] is False
-    assert "application" in result["schema_scope"]["business_groups"]
+    assert any(
+        item.get("key") == "application"
+        for item in result["schema_scope"]["business_groups"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_schema_recall_matches_customer_age_from_column_comment(monkeypatch):
+    monkeypatch.setattr(schema_recall, "get_metadata_service", lambda: FakeMetadataService())
+
+    result = await schema_recall.schema_recall_node(
+        {
+            "datasource_id": 42,
+            "question": "贷款申请产品类型和客户年龄分布有什么关系",
+            "semantic_runtime": {
+                "metrics": [
+                    {
+                        "metric_key": "application_count",
+                        "name": "申请笔数",
+                        "base_table": "loan_application_indicator",
+                        "dimensions": ["application_product_type"],
+                    },
+                ],
+                "mappings": [
+                    {
+                        "asset_key": "application_product_type",
+                        "name": "申请产品类型",
+                        "table_name": "loan_application_indicator",
+                        "column_name": "product_type",
+                    },
+                ],
+                "rules": loan_recall_rules(),
+            },
+            "runtime_evidence": [],
+        }
+    )
+
+    columns = {
+        (item["table_name"], item["column_name"]): item for item in result["relevant_columns"]
+    }
+    assert ("loan_application_indicator", "customer_age") in columns
+    assert "问题要求客户年龄字段" in columns[("loan_application_indicator", "customer_age")]["reason"]
 
 
 def test_nl2sql_schema_context_uses_recalled_tables_first():
@@ -120,3 +249,39 @@ def test_nl2sql_schema_context_uses_recalled_tables_first():
 
     assert "customers" in context
     assert "orders" not in context
+
+
+@pytest.mark.asyncio
+async def test_schema_recall_marks_age_column_as_relevant(monkeypatch):
+    monkeypatch.setattr(schema_recall, "get_metadata_service", lambda: FakeMetadataService())
+
+    result = await schema_recall.schema_recall_node(
+        {
+            "datasource_id": 42,
+            "question": "贷款申请产品类型和客户年龄分布有什么关系",
+            "semantic_runtime": {
+                "metrics": [
+                    {
+                        "metric_key": "application_count",
+                        "name": "申请笔数",
+                        "base_table": "loan_application_indicator",
+                    },
+                ],
+                "mappings": [
+                    {
+                        "asset_key": "application_product_type",
+                        "name": "申请产品类型",
+                        "table_name": "loan_application_indicator",
+                        "column_name": "product_type",
+                    },
+                ],
+                "rules": loan_recall_rules(),
+            },
+            "runtime_evidence": [],
+        }
+    )
+
+    assert any(
+        item["column_name"] == "customer_age" and item["table_name"] == "loan_application_indicator"
+        for item in result["relevant_columns"]
+    )

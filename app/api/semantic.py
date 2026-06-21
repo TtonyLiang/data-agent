@@ -198,7 +198,7 @@ async def build_runtime(request: dict):
         runtime = await svc.build_runtime(
             agent_id=int(request.get("agent_id", 1)),
             datasource_id=request.get("datasource_id"),
-            domain_key=request.get("domain_key", "loan_risk"),
+            domain_key=request.get("domain_key"),
             domain_id=request.get("domain_id"),
         )
     except ValueError as exc:
