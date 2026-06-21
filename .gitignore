@@ -29,10 +29,19 @@ data/semantic/*
 !data/semantic/loan_risk.json
 
 # Logs and temporary files
+logs/
 *.log
+*.pid
 *.tmp
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
 tmp/
 temp/
 
+# Local editor and tool artifacts
+.idea/
+.vscode/
 .codex-artifacts/
-uv.lock

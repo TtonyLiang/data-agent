@@ -4340,6 +4340,11 @@ onUnmounted(() => {
   margin-top: 12px;
 }
 
+.report-body-section .report-md-block:first-child :is(h1, h2, h3, p, ul, pre) {
+  margin-top: 0;
+  padding-top: 0;
+}
+
 .report-md-title h1 {
   color: var(--wq-text);
   font-size: 26px;

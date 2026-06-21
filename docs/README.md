@@ -6,3 +6,4 @@
 - [项目总体设计](./project-design.md)
 - [待办清单](./TODO.md)
 - [设计 QA 记录](./design-qa.md)
+- [开源前检查清单](./open-source-checklist.md)
