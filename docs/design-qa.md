@@ -1,6 +1,6 @@
-source visual truth path: /Users/liao/.codex/generated_images/019ec4b8-efbf-7f93-a50c-37ab46e9de3c/ig_05f1a1dd5940584f016a2ea1cc60c8819aa9dceffb5242479f.png
-implementation screenshot path: /Users/liao/mimocode/WenQu-dataquery-agent/.codex-artifacts/analyst-studio-implementation.png
-full-view comparison evidence: /Users/liao/mimocode/WenQu-dataquery-agent/.codex-artifacts/analyst-studio-comparison.png
+source visual truth: generated design reference image, retained outside the repository.
+implementation screenshot evidence: local QA artifact, excluded from Git.
+full-view comparison evidence: local QA artifact, excluded from Git.
 focused region comparison evidence: not needed; the selected mock and implementation are primarily layout, typography, navigation, form, tab, and table surfaces with no custom image assets beyond the product mark.
 viewport: 1440 x 1024 desktop; responsive smoke check at 390 x 844
 state: source mock shows a populated result state; implementation evidence shows the local empty state because the running local environment did not return configured datasource/agent data. State mismatch is noted and excluded from data-content fidelity scoring.
