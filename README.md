@@ -498,6 +498,8 @@ Configured via `.env` file or environment variables. All configurations have sen
 
 #### LLM
 
+> **Note**: These are fallback defaults used when an agent has no model configuration bound via the management UI. Once you bind a dedicated model to an agent through "Model Config", that binding takes priority. For quick local development, these env vars are the only model source.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LLM_PROVIDER` | `ollama` | Provider: ollama/deepseek/mimo/minimax |
@@ -506,6 +508,8 @@ Configured via `.env` file or environment variables. All configurations have sen
 | `LLM_MODEL` | `qwen3:14b` | Model name |
 
 #### Embedding Model
+
+> **Note**: Same as above — fallback defaults. Agent-bound embedding model config takes priority.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
