@@ -47,3 +47,6 @@ temp/
 .codex-artifacts/
 .playwright-cli/
 output/
+
+# Internal development docs
+docs/todo/
