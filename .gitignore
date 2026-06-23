@@ -45,3 +45,5 @@ temp/
 .idea/
 .vscode/
 .codex-artifacts/
+.playwright-cli/
+output/
