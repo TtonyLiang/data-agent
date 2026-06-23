@@ -95,6 +95,15 @@
             />
           </el-select>
         </el-form-item>
+        <el-form-item label="默认问题">
+          <el-input
+            v-model="defaultQuestionsText"
+            type="textarea"
+            :rows="4"
+            placeholder="每行一个默认问题，会显示在对话输入框上方"
+          />
+          <div class="form-help">建议配置 3-6 个高频问题，普通用户进入该智能体后会优先看到这些问题。</div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showDialog = false">取消</el-button>
@@ -157,6 +166,14 @@
         </section>
 
         <section class="detail-section">
+          <h4>默认问题</h4>
+          <div v-if="detailDefaultQuestions.length" class="question-list">
+            <el-tag v-for="question in detailDefaultQuestions" :key="question" effect="plain">{{ question }}</el-tag>
+          </div>
+          <el-empty v-else description="当前未配置默认问题" :image-size="72" />
+        </section>
+
+        <section class="detail-section">
           <h4>说明与运行上下文</h4>
           <dl class="detail-grid">
             <dt>说明字段</dt>
@@ -212,12 +229,15 @@ const form = ref<AgentCreateRequest>({
   chat_model_config_id: null,
   embedding_model_config_id: null,
   semantic_domain_id: null,
+  default_questions: [],
   datasource_ids: [],
 })
+const defaultQuestionsText = ref('')
 const detailDatasourceNames = computed(() => detailDatasourceIds.value
   .map((id) => datasources.value.find((item) => item.id === id))
   .filter((item): item is DatasourceItem => !!item)
   .map((item) => `${item.name} · ${item.database_name}`))
+const detailDefaultQuestions = computed(() => normalizeDefaultQuestions(detailAgent.value?.default_questions))
 
 onMounted(async () => {
   await loadDependencies()
@@ -231,8 +251,10 @@ function resetForm() {
     chat_model_config_id: chatModelConfigs.value[0]?.id || null,
     embedding_model_config_id: embeddingModelConfigs.value[0]?.id || null,
     semantic_domain_id: semanticDomains.value[0]?.id || null,
+    default_questions: [],
     datasource_ids: [],
   }
+  defaultQuestionsText.value = ''
 }
 
 function openCreate() {
@@ -257,9 +279,35 @@ async function openEdit(agent: AgentItem) {
     chat_model_config_id: agent.chat_model_config_id || null,
     embedding_model_config_id: agent.embedding_model_config_id || null,
     semantic_domain_id: agent.semantic_domain_id || null,
+    default_questions: normalizeDefaultQuestions(agent.default_questions),
     datasource_ids: datasourceIds,
   }
+  defaultQuestionsText.value = normalizeDefaultQuestions(agent.default_questions).join('\n')
   showDialog.value = true
+}
+
+function normalizeDefaultQuestions(value: unknown) {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  return value
+    .map((item) => String(item || '').trim())
+    .filter((item) => {
+      if (!item || seen.has(item)) return false
+      seen.add(item)
+      return true
+    })
+}
+
+function parseDefaultQuestionsText() {
+  const seen = new Set<string>()
+  return defaultQuestionsText.value
+    .split('\n')
+    .map((item) => item.trim())
+    .filter((item) => {
+      if (!item || seen.has(item)) return false
+      seen.add(item)
+      return true
+    })
 }
 
 function modelConfigLabel(configId: number | null | undefined, modelType: 'chat' | 'embedding') {
@@ -301,12 +349,16 @@ async function handleSubmit() {
     return
   }
   try {
+    const payload = {
+      ...form.value,
+      default_questions: parseDefaultQuestionsText(),
+    }
     const currentEditingId = editingAgentId.value
     if (currentEditingId) {
-      await updateAgent(currentEditingId, form.value)
+      await updateAgent(currentEditingId, payload)
       ElMessage.success('更新成功')
     } else {
-      await createAgent(form.value)
+      await createAgent(payload)
       ElMessage.success('创建成功')
     }
     showDialog.value = false
@@ -505,6 +557,28 @@ async function handleDelete(agent: AgentItem) {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.question-list {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.question-list :deep(.el-tag) {
+  height: auto;
+  max-width: 100%;
+  padding: 6px 10px;
+  white-space: normal;
+  line-height: 1.45;
+}
+
+.form-help {
+  margin-top: 7px;
+  color: var(--wq-muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .drawer-footer {

@@ -1,0 +1,213 @@
+- generic [ref=e27]:
+  - generic [ref=e33]:
+    - generic [ref=e34]:
+      - generic [ref=e35]: WQ
+      - generic [ref=e36]:
+        - heading "WenQu 智能问数" [level=1] [ref=e37]
+        - generic [ref=e38]: AI Data Analyst
+    - menubar [ref=e39]:
+      - menuitem "对话" [ref=e40] [cursor=pointer]:
+        - img [ref=e42]
+        - generic [ref=e45]: 对话
+      - menuitem "智能体管理" [ref=e46] [cursor=pointer]:
+        - img [ref=e48]
+        - generic [ref=e50]: 智能体管理
+      - menuitem "模型配置" [ref=e51] [cursor=pointer]:
+        - img [ref=e53]
+        - generic [ref=e55]: 模型配置
+      - menuitem "数据源" [ref=e56] [cursor=pointer]:
+        - img [ref=e58]
+        - generic [ref=e62]: 数据源
+      - menuitem "语义层配置" [ref=e63] [cursor=pointer]:
+        - img [ref=e65]
+        - generic [ref=e67]: 语义层配置
+      - menuitem "系统参数" [ref=e68] [cursor=pointer]:
+        - img [ref=e70]
+        - generic [ref=e72]: 系统参数
+    - generic [ref=e73]:
+      - generic [ref=e75]: 开发环境
+      - button [ref=e76] [cursor=pointer]:
+        - img [ref=e78]
+      - generic [ref=e82]:
+        - generic [ref=e83]: 默
+        - generic [ref=e84]: 默认管理员
+      - button "退出" [ref=e85] [cursor=pointer]:
+        - generic [ref=e86]: 退出
+  - main [ref=e87]:
+    - generic [ref=e88]:
+      - generic [ref=e90]:
+        - heading "系统参数" [level=2] [ref=e91]
+        - paragraph [ref=e92]: 统一维护运行参数、Prompt 模板和系统用户权限。这里的配置优先于后端默认值。
+      - generic [ref=e93]:
+        - tablist [ref=e97]:
+          - tab "运行参数" [ref=e99]
+          - tab "Prompt 模板" [ref=e100]
+          - tab "用户管理" [selected] [ref=e101]
+        - tabpanel "用户管理" [ref=e103]:
+          - generic [ref=e104]:
+            - generic [ref=e105]:
+              - generic [ref=e106]:
+                - heading "用户管理" [level=2] [ref=e107]
+                - paragraph [ref=e108]: 管理系统用户、角色状态和可访问智能体。
+              - button "新增用户" [ref=e109] [cursor=pointer]:
+                - generic [ref=e110]: 新增用户
+            - generic [ref=e112]:
+              - table [ref=e114]:
+                - rowgroup [ref=e123]:
+                  - row "ID 按 ID 排序 用户名 展示名 角色 状态 最近登录 操作" [ref=e124]:
+                    - columnheader "ID 按 ID 排序" [ref=e125] [cursor=pointer]:
+                      - generic [ref=e126]:
+                        - text: ID
+                        - button "按 ID 排序" [ref=e127]
+                    - columnheader "用户名" [ref=e130]:
+                      - generic [ref=e131]: 用户名
+                    - columnheader "展示名" [ref=e132]:
+                      - generic [ref=e133]: 展示名
+                    - columnheader "角色" [ref=e134]:
+                      - generic [ref=e135]: 角色
+                    - columnheader "状态" [ref=e136]:
+                      - generic [ref=e137]: 状态
+                    - columnheader "最近登录" [ref=e138]:
+                      - generic [ref=e139]: 最近登录
+                    - columnheader "操作" [ref=e140]:
+                      - generic [ref=e141]: 操作
+              - table [ref=e146]:
+                - rowgroup [ref=e155]:
+                  - row "1 gople 默认管理员 管理员 启用 2026-06-22T14:08:07 编辑 智能体权限 重置密码 禁用" [ref=e156]:
+                    - cell "1" [ref=e157]:
+                      - generic [ref=e158]: "1"
+                    - cell "gople" [ref=e159]:
+                      - generic [ref=e160]: gople
+                    - cell "默认管理员" [ref=e161]:
+                      - generic [ref=e162]: 默认管理员
+                    - cell "管理员" [ref=e163]:
+                      - generic [ref=e166]: 管理员
+                    - cell "启用" [ref=e167]:
+                      - generic [ref=e170]: 启用
+                    - cell "2026-06-22T14:08:07" [ref=e171]:
+                      - generic [ref=e172]: 2026-06-22T14:08:07
+                    - cell "编辑 智能体权限 重置密码 禁用" [ref=e173]:
+                      - generic [ref=e175]:
+                        - button "编辑" [ref=e176] [cursor=pointer]:
+                          - generic [ref=e177]: 编辑
+                        - button "智能体权限" [ref=e178] [cursor=pointer]:
+                          - generic [ref=e179]: 智能体权限
+                        - button "重置密码" [ref=e180] [cursor=pointer]:
+                          - generic [ref=e181]: 重置密码
+                        - button "禁用" [ref=e182] [cursor=pointer]:
+                          - generic [ref=e183]: 禁用
+                  - row "2 codex_audit_1782132841 权限审计临时用户 普通用户 禁用 2026-06-22T12:54:01 编辑 智能体权限 重置密码 启用" [ref=e184]:
+                    - cell "2" [ref=e185]:
+                      - generic [ref=e186]: "2"
+                    - cell "codex_audit_1782132841" [ref=e187]:
+                      - generic [ref=e188]: codex_audit_1782132841
+                    - cell "权限审计临时用户" [ref=e189]:
+                      - generic [ref=e190]: 权限审计临时用户
+                    - cell "普通用户" [ref=e191]:
+                      - generic [ref=e194]: 普通用户
+                    - cell "禁用" [ref=e195]:
+                      - generic [ref=e198]: 禁用
+                    - cell "2026-06-22T12:54:01" [ref=e199]:
+                      - generic [ref=e200]: 2026-06-22T12:54:01
+                    - cell "编辑 智能体权限 重置密码 启用" [ref=e201]:
+                      - generic [ref=e203]:
+                        - button "编辑" [ref=e204] [cursor=pointer]:
+                          - generic [ref=e205]: 编辑
+                        - button "智能体权限" [ref=e206] [cursor=pointer]:
+                          - generic [ref=e207]: 智能体权限
+                        - button "重置密码" [ref=e208] [cursor=pointer]:
+                          - generic [ref=e209]: 重置密码
+                        - button "启用" [ref=e210] [cursor=pointer]:
+                          - generic [ref=e211]: 启用
+                  - row "3 smoke_user_1782133489 Smoke User 普通用户 禁用 2026-06-22T13:04:49 编辑 智能体权限 重置密码 启用" [ref=e212]:
+                    - cell "3" [ref=e213]:
+                      - generic [ref=e214]: "3"
+                    - cell "smoke_user_1782133489" [ref=e215]:
+                      - generic [ref=e216]: smoke_user_1782133489
+                    - cell "Smoke User" [ref=e217]:
+                      - generic [ref=e218]: Smoke User
+                    - cell "普通用户" [ref=e219]:
+                      - generic [ref=e222]: 普通用户
+                    - cell "禁用" [ref=e223]:
+                      - generic [ref=e226]: 禁用
+                    - cell "2026-06-22T13:04:49" [ref=e227]:
+                      - generic [ref=e228]: 2026-06-22T13:04:49
+                    - cell "编辑 智能体权限 重置密码 启用" [ref=e229]:
+                      - generic [ref=e231]:
+                        - button "编辑" [ref=e232] [cursor=pointer]:
+                          - generic [ref=e233]: 编辑
+                        - button "智能体权限" [ref=e234] [cursor=pointer]:
+                          - generic [ref=e235]: 智能体权限
+                        - button "重置密码" [ref=e236] [cursor=pointer]:
+                          - generic [ref=e237]: 重置密码
+                        - button "启用" [ref=e238] [cursor=pointer]:
+                          - generic [ref=e239]: 启用
+                  - row "4 smoke_user_1782133736 Smoke User 普通用户 禁用 2026-06-22T13:08:56 编辑 智能体权限 重置密码 启用" [ref=e240]:
+                    - cell "4" [ref=e241]:
+                      - generic [ref=e242]: "4"
+                    - cell "smoke_user_1782133736" [ref=e243]:
+                      - generic [ref=e244]: smoke_user_1782133736
+                    - cell "Smoke User" [ref=e245]:
+                      - generic [ref=e246]: Smoke User
+                    - cell "普通用户" [ref=e247]:
+                      - generic [ref=e250]: 普通用户
+                    - cell "禁用" [ref=e251]:
+                      - generic [ref=e254]: 禁用
+                    - cell "2026-06-22T13:08:56" [ref=e255]:
+                      - generic [ref=e256]: 2026-06-22T13:08:56
+                    - cell "编辑 智能体权限 重置密码 启用" [ref=e257]:
+                      - generic [ref=e259]:
+                        - button "编辑" [ref=e260] [cursor=pointer]:
+                          - generic [ref=e261]: 编辑
+                        - button "智能体权限" [ref=e262] [cursor=pointer]:
+                          - generic [ref=e263]: 智能体权限
+                        - button "重置密码" [ref=e264] [cursor=pointer]:
+                          - generic [ref=e265]: 重置密码
+                        - button "启用" [ref=e266] [cursor=pointer]:
+                          - generic [ref=e267]: 启用
+                  - row "5 ui_user_1782134180 UI User 普通用户 禁用 2026-06-22T13:20:56 编辑 智能体权限 重置密码 启用" [ref=e268]:
+                    - cell "5" [ref=e269]:
+                      - generic [ref=e270]: "5"
+                    - cell "ui_user_1782134180" [ref=e271]:
+                      - generic [ref=e272]: ui_user_1782134180
+                    - cell "UI User" [ref=e273]:
+                      - generic [ref=e274]: UI User
+                    - cell "普通用户" [ref=e275]:
+                      - generic [ref=e278]: 普通用户
+                    - cell "禁用" [ref=e279]:
+                      - generic [ref=e282]: 禁用
+                    - cell "2026-06-22T13:20:56" [ref=e283]:
+                      - generic [ref=e284]: 2026-06-22T13:20:56
+                    - cell "编辑 智能体权限 重置密码 启用" [ref=e285]:
+                      - generic [ref=e287]:
+                        - button "编辑" [ref=e288] [cursor=pointer]:
+                          - generic [ref=e289]: 编辑
+                        - button "智能体权限" [ref=e290] [cursor=pointer]:
+                          - generic [ref=e291]: 智能体权限
+                        - button "重置密码" [ref=e292] [cursor=pointer]:
+                          - generic [ref=e293]: 重置密码
+                        - button "启用" [ref=e294] [cursor=pointer]:
+                          - generic [ref=e295]: 启用
+                  - row "6 smoke_user_1782134542 Smoke User 普通用户 禁用 2026-06-22T13:22:22 编辑 智能体权限 重置密码 启用" [ref=e296]:
+                    - cell "6" [ref=e297]:
+                      - generic [ref=e298]: "6"
+                    - cell "smoke_user_1782134542" [ref=e299]:
+                      - generic [ref=e300]: smoke_user_1782134542
+                    - cell "Smoke User" [ref=e301]:
+                      - generic [ref=e302]: Smoke User
+                    - cell "普通用户" [ref=e303]:
+                      - generic [ref=e306]: 普通用户
+                    - cell "禁用" [ref=e307]:
+                      - generic [ref=e310]: 禁用
+                    - cell "2026-06-22T13:22:22" [ref=e311]:
+                      - generic [ref=e312]: 2026-06-22T13:22:22
+                    - cell "编辑 智能体权限 重置密码 启用" [ref=e313]:
+                      - generic [ref=e315]:
+                        - button "编辑" [ref=e316] [cursor=pointer]:
+                          - generic [ref=e317]: 编辑
+                        - button "智能体权限" [ref=e318] [cursor=pointer]:
+                          - generic [ref=e319]: 智能体权限
+                        - button "重置密码" [ref=e320] [cursor=pointer]:
+                          - generic [ref=e321]: 重置密码
+                        - button "启用" [ref=e322] [cursor=pointer]:
+                          - generic [ref=e323]: 启用

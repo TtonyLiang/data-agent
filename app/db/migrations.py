@@ -18,6 +18,7 @@ import logging
 from app.agent.prompts import default_prompt_templates
 from app.config import get_settings
 from app.db.mysql import get_management_db
+from app.services.user_service import hash_password
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,31 @@ async def run_management_migrations() -> None:
             INDEX idx_system_parameter_category (category)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统参数'
         """,
+        """
+        CREATE TABLE IF NOT EXISTS app_user (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(64) NOT NULL COMMENT '登录用户名',
+            password_hash VARCHAR(255) NOT NULL COMMENT '密码哈希',
+            display_name VARCHAR(128) DEFAULT NULL COMMENT '展示名称',
+            role VARCHAR(32) NOT NULL DEFAULT 'user' COMMENT 'admin/user',
+            status VARCHAR(32) NOT NULL DEFAULT 'active' COMMENT 'active/disabled',
+            must_change_password TINYINT(1) DEFAULT 0 COMMENT '是否建议修改初始密码',
+            last_login_at TIMESTAMP NULL DEFAULT NULL COMMENT '最近登录时间',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_app_user_username (username),
+            INDEX idx_app_user_role_status (role, status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统用户'
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS user_agent_permission (
+            user_id BIGINT NOT NULL COMMENT '用户ID',
+            agent_id BIGINT NOT NULL COMMENT '智能体ID',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, agent_id),
+            INDEX idx_user_agent_permission_agent (agent_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户智能体访问权限'
+        """,
     ]
     for statement in statements:
         await db.execute_query(statement)
@@ -161,6 +187,12 @@ async def run_management_migrations() -> None:
         "COMMENT '默认语义领域ID' AFTER embedding_model_config_id",
     )
     await add_column_if_missing(
+        "agent",
+        "default_questions",
+        "ALTER TABLE agent ADD COLUMN default_questions JSON DEFAULT NULL "
+        "COMMENT '对话页默认推荐问题' AFTER semantic_domain_id",
+    )
+    await add_column_if_missing(
         "datasource",
         "status",
         "ALTER TABLE datasource ADD COLUMN status VARCHAR(32) DEFAULT 'active' COMMENT '状态'",
@@ -176,6 +208,30 @@ async def run_management_migrations() -> None:
         "reasoning_trace",
         "ALTER TABLE chat_history ADD COLUMN reasoning_trace JSON DEFAULT NULL "
         "COMMENT '流式思考与节点轨迹' AFTER content",
+    )
+    await add_column_if_missing(
+        "chat_history",
+        "user_id",
+        "ALTER TABLE chat_history ADD COLUMN user_id BIGINT DEFAULT NULL "
+        "COMMENT '归属用户ID' AFTER agent_id",
+    )
+    await add_column_if_missing(
+        "user_feedback",
+        "user_id",
+        "ALTER TABLE user_feedback ADD COLUMN user_id BIGINT DEFAULT NULL "
+        "COMMENT '归属用户ID' AFTER id",
+    )
+    await create_index_if_missing(
+        "chat_history",
+        "idx_chat_user_agent_session",
+        "ALTER TABLE chat_history ADD INDEX idx_chat_user_agent_session "
+        "(user_id, agent_id, session_id)",
+    )
+    await create_index_if_missing(
+        "user_feedback",
+        "idx_feedback_user_agent_session",
+        "ALTER TABLE user_feedback ADD INDEX idx_feedback_user_agent_session "
+        "(user_id, agent_id, session_id)",
     )
     await add_column_if_missing(
         "chat_history",
@@ -216,10 +272,12 @@ async def run_management_migrations() -> None:
     await seed_default_model_configs()
     await seed_default_system_parameters()
     await seed_default_prompt_templates()
+    await seed_default_admin_user()
 
     # 回填关联(旧数据兼容)
     await backfill_agent_model_configs()
     await backfill_agent_semantic_domains()
+    await backfill_agent_default_questions()
     await backfill_agent_datasources()
 
 
@@ -248,6 +306,59 @@ async def ensure_column_type(table: str, column: str, expected_type: str, statem
     current = str(rows[0].get("DATA_TYPE") or rows[0].get("data_type") or "").lower()
     if current != expected_type.lower():
         await db.execute_query(statement)
+
+
+async def create_index_if_missing(table: str, index_name: str, statement: str) -> None:
+    """幂等建索引:先查 INFORMATION_SCHEMA,不存在时才执行。"""
+    db = get_management_db()
+    rows = await db.execute_query(
+        "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table AND INDEX_NAME = :index_name",
+        {"table": table, "index_name": index_name},
+    )
+    if not rows:
+        await db.execute_query(statement)
+
+
+async def seed_default_admin_user() -> None:
+    """没有管理员时播种默认管理员账号。密码只以 bcrypt 哈希入库。
+
+    管理员用户名和初始密码不得写死在代码中。部署时通过
+    INITIAL_ADMIN_USERNAME + (INITIAL_ADMIN_PASSWORD 或 INITIAL_ADMIN_PASSWORD_HASH)
+    显式提供；已有管理员时不读取这些配置。
+    """
+    db = get_management_db()
+    count = await db.execute_scalar("SELECT COUNT(*) FROM app_user WHERE role = 'admin'")
+    if count:
+        logger.info("default admin seed skipped existing_admin=true")
+        return
+    settings = get_settings()
+    username = (settings.initial_admin_username or "").strip()
+    if not username:
+        logger.warning("default admin seed skipped reason=missing_initial_admin_username")
+        return
+    password_hash = (settings.initial_admin_password_hash or "").strip()
+    if not password_hash:
+        initial_password = (settings.initial_admin_password or "").strip()
+        if not initial_password:
+            logger.warning(
+                "default admin seed skipped reason=missing_initial_admin_password "
+                "username=%s",
+                username,
+            )
+            return
+        password_hash = hash_password(initial_password)
+    await db.execute_insert(
+        "INSERT INTO app_user "
+        "(username, password_hash, display_name, role, status, must_change_password) "
+        "VALUES (:username, :password_hash, :display_name, 'admin', 'active', 1)",
+        {
+            "username": username,
+            "password_hash": password_hash,
+            "display_name": "默认管理员",
+        },
+    )
+    logger.info("default admin user initialized username=%s", username)
 
 
 async def seed_default_model_configs() -> None:
@@ -399,6 +510,94 @@ async def backfill_agent_semantic_domains() -> None:
         "ORDER BY sd.id DESC LIMIT 1) "
         "WHERE a.semantic_domain_id IS NULL"
     )
+
+
+async def backfill_agent_default_questions() -> None:
+    """回填:把旧语义层示例问法迁入 agent.default_questions,避免页面配置空白。"""
+    db = get_management_db()
+    agents = await db.execute_query(
+        "SELECT id, semantic_domain_id, default_questions FROM agent "
+        "WHERE semantic_domain_id IS NOT NULL"
+    )
+    for agent in agents:
+        if _json_list(agent.get("default_questions")):
+            continue
+        domain_id = agent.get("semantic_domain_id")
+        questions = await _load_domain_example_questions(domain_id)
+        if not questions:
+            continue
+        await db.execute_query(
+            "UPDATE agent SET default_questions = :default_questions WHERE id = :id",
+            {
+                "id": agent["id"],
+                "default_questions": json.dumps(questions[:4], ensure_ascii=False),
+            },
+        )
+
+
+async def _load_domain_example_questions(domain_id) -> list[str]:
+    db = get_management_db()
+    examples: list[str] = []
+    templates = await db.execute_query(
+        "SELECT examples FROM logic_form_template WHERE domain_id = :domain_id ORDER BY id",
+        {"domain_id": domain_id},
+    )
+    for row in templates:
+        examples.extend(str(item) for item in _json_list(row.get("examples")))
+    rules = await db.execute_query(
+        "SELECT expression FROM semantic_rule WHERE domain_id = :domain_id ORDER BY id",
+        {"domain_id": domain_id},
+    )
+    for row in rules:
+        expression = _json_object(row.get("expression"))
+        rewrites = expression.get("rewrites")
+        if not isinstance(rewrites, list):
+            continue
+        for item in rewrites:
+            if not isinstance(item, dict):
+                continue
+            template = str(item.get("template") or "").strip()
+            if template and "{" not in template:
+                examples.append(template)
+    return _unique_questions(examples)
+
+
+def _json_list(value) -> list:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
+def _json_object(value) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _unique_questions(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    questions: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        questions.append(text)
+        seen.add(text)
+    return questions
 
 
 async def backfill_agent_datasources() -> None:

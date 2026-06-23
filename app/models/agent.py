@@ -36,6 +36,10 @@ class AgentConfig(BaseModel):
     embedding_model_config_name: str | None = Field(default=None, description="向量模型配置名(JOIN 填充,仅展示)")
     semantic_domain_name: str | None = Field(default=None, description="语义层名称(JOIN 填充,仅展示)")
     semantic_domain_key: str | None = Field(default=None, description="语义层 key(JOIN 填充,仅展示)")
+    default_questions: list[str] = Field(
+        default_factory=list,
+        description="智能体默认推荐问题,用于对话页快捷问题展示",
+    )
     # 兼容旧字段:部分链路仍读取 agent.llm_provider/llm_model 作为兜底
     llm_provider: str = Field(default="ollama", description="兜底模型供应商,优先级低于 chat_model_config_id")
     llm_model: str = Field(default="qwen3:14b", description="兜底模型名,优先级低于 chat_model_config_id")
@@ -57,6 +61,10 @@ class AgentCreate(BaseModel):
     chat_model_config_id: int | None = Field(default=None, description="绑定的大语言模型配置 id")
     embedding_model_config_id: int | None = Field(default=None, description="绑定的向量模型配置 id")
     semantic_domain_id: int | None = Field(default=None, description="绑定的默认语义层 id")
+    default_questions: list[str] = Field(
+        default_factory=list,
+        description="智能体默认推荐问题,用于对话页快捷问题展示",
+    )
     datasource_ids: list[int] = Field(
         default_factory=list,
         description="该智能体可访问的数据源 id 列表,创建时一次性绑定",

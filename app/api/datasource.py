@@ -5,9 +5,11 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.deps import require_admin
 from app.models.datasource import DatasourceCreate, DatasourceUpdate
+from app.models.user import PublicUser
 from app.services.datasource_service import get_datasource_service
 from app.services.metadata_service import get_metadata_service
 
@@ -15,7 +17,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/create")
+@router.post("/create", dependencies=[Depends(require_admin)])
 async def create_datasource(ds: DatasourceCreate):
     """创建数据源。"""
     svc = get_datasource_service()
@@ -24,15 +26,15 @@ async def create_datasource(ds: DatasourceCreate):
 
 
 @router.get("/list/{agent_id}")
-async def list_datasources(agent_id: int):
-    """列出指定智能体绑定的数据源(不含密码)。"""
+async def list_datasources(agent_id: int, _: PublicUser = Depends(require_admin)):
+    """列出指定智能体绑定的数据源(管理页面用,不含密码)。"""
     svc = get_datasource_service()
     ds_list = await svc.list_by_agent(agent_id)
     return {"datasources": [ds.model_dump(exclude={"password"}) for ds in ds_list]}
 
 
 @router.get("/list")
-async def list_all_datasources():
+async def list_all_datasources(_: PublicUser = Depends(require_admin)):
     """列出所有数据源(管理页面用)。"""
     svc = get_datasource_service()
     ds_list = await svc.list_all()
@@ -40,14 +42,18 @@ async def list_all_datasources():
 
 
 @router.get("/agent/{agent_id}/ids")
-async def list_agent_datasource_ids(agent_id: int):
+async def list_agent_datasource_ids(agent_id: int, _: PublicUser = Depends(require_admin)):
     """获取指定智能体绑定的数据源 id 列表。"""
     ids = await get_datasource_service().get_agent_datasource_ids(agent_id)
     return {"datasource_ids": ids}
 
 
 @router.put("/agent/{agent_id}/ids")
-async def update_agent_datasource_ids(agent_id: int, request: dict):
+async def update_agent_datasource_ids(
+    agent_id: int,
+    request: dict,
+    _: PublicUser = Depends(require_admin),
+):
     """替换指定智能体的数据源绑定集合。"""
     ids = await get_datasource_service().set_agent_datasources(
         agent_id,
@@ -57,7 +63,7 @@ async def update_agent_datasource_ids(agent_id: int, request: dict):
 
 
 @router.put("/{ds_id}")
-async def update_datasource(ds_id: int, ds: DatasourceUpdate):
+async def update_datasource(ds_id: int, ds: DatasourceUpdate, _: PublicUser = Depends(require_admin)):
     """更新数据源配置。密码为空或掩码时保留原值。"""
     svc = get_datasource_service()
     updated = await svc.update(ds_id, ds)
@@ -70,7 +76,7 @@ async def update_datasource(ds_id: int, ds: DatasourceUpdate):
 
 
 @router.delete("/{ds_id}")
-async def delete_datasource(ds_id: int):
+async def delete_datasource(ds_id: int, _: PublicUser = Depends(require_admin)):
     """删除数据源及其关联的全部语义层资产与采集元数据。"""
     svc = get_datasource_service()
     await svc.delete(ds_id)
@@ -78,7 +84,7 @@ async def delete_datasource(ds_id: int):
 
 
 @router.post("/{ds_id}/test")
-async def test_connection(ds_id: int):
+async def test_connection(ds_id: int, _: PublicUser = Depends(require_admin)):
     """测试数据源连通性(SELECT 1)。"""
     svc = get_datasource_service()
     ok = await svc.test_connection(ds_id)
@@ -86,7 +92,11 @@ async def test_connection(ds_id: int):
 
 
 @router.post("/{ds_id}/collect-schema")
-async def collect_schema(ds_id: int, request: dict | None = None):
+async def collect_schema(
+    ds_id: int,
+    request: dict | None = None,
+    _: PublicUser = Depends(require_admin),
+):
     """采集指定表的元数据。table_names 为空时采集全部。"""
     meta_svc = get_metadata_service()
     table_names = None
@@ -97,7 +107,11 @@ async def collect_schema(ds_id: int, request: dict | None = None):
 
 
 @router.post("/{ds_id}/uncollect-schema")
-async def uncollect_schema(ds_id: int, request: dict | None = None):
+async def uncollect_schema(
+    ds_id: int,
+    request: dict | None = None,
+    _: PublicUser = Depends(require_admin),
+):
     """取消采集指定表。"""
     meta_svc = get_metadata_service()
     table_names = []
@@ -108,7 +122,7 @@ async def uncollect_schema(ds_id: int, request: dict | None = None):
 
 
 @router.get("/{ds_id}/remote-tables")
-async def list_remote_tables(ds_id: int):
+async def list_remote_tables(ds_id: int, _: PublicUser = Depends(require_admin)):
     """从业务库读取全部表清单(含采集状态)。"""
     meta_svc = get_metadata_service()
     tables = await meta_svc.list_remote_tables(ds_id)
@@ -116,7 +130,7 @@ async def list_remote_tables(ds_id: int):
 
 
 @router.get("/{ds_id}/schema/tables")
-async def get_collected_table_summaries(ds_id: int):
+async def get_collected_table_summaries(ds_id: int, _: PublicUser = Depends(require_admin)):
     """获取已采集表列表(不含字段明细)。"""
     meta_svc = get_metadata_service()
     tables = await meta_svc.get_table_summaries(ds_id)
@@ -124,14 +138,18 @@ async def get_collected_table_summaries(ds_id: int):
 
 
 @router.get("/{ds_id}/schema/stats")
-async def get_collected_schema_stats(ds_id: int):
+async def get_collected_schema_stats(ds_id: int, _: PublicUser = Depends(require_admin)):
     """获取已采集 schema 的统计信息(表数、字段数、噪音等级)。"""
     meta_svc = get_metadata_service()
     return {"stats": await meta_svc.get_schema_stats(ds_id)}
 
 
 @router.get("/{ds_id}/schema/tables/{table_id}")
-async def get_collected_table_detail(ds_id: int, table_id: int):
+async def get_collected_table_detail(
+    ds_id: int,
+    table_id: int,
+    _: PublicUser = Depends(require_admin),
+):
     """获取单张表的详细信息(含字段列表)。"""
     meta_svc = get_metadata_service()
     table = await meta_svc.get_table_detail(ds_id, table_id)
@@ -141,7 +159,7 @@ async def get_collected_table_detail(ds_id: int, table_id: int):
 
 
 @router.get("/{ds_id}/schema")
-async def get_collected_schema(ds_id: int):
+async def get_collected_schema(ds_id: int, _: PublicUser = Depends(require_admin)):
     """获取完整已采集 schema(表 + 字段)。"""
     meta_svc = get_metadata_service()
     tables = await meta_svc.get_schema(ds_id)

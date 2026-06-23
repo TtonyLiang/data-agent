@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS agent (
     chat_model_config_id BIGINT DEFAULT NULL COMMENT '大语言模型配置ID',
     embedding_model_config_id BIGINT DEFAULT NULL COMMENT '向量模型配置ID',
     semantic_domain_id BIGINT DEFAULT NULL COMMENT '默认语义领域ID',
+    default_questions JSON DEFAULT NULL COMMENT '对话页默认推荐问题',
     llm_provider VARCHAR(64) DEFAULT 'ollama' COMMENT 'LLM 提供商',
     llm_model VARCHAR(128) DEFAULT 'qwen3:14b' COMMENT 'LLM 模型名',
     api_key VARCHAR(256) DEFAULT NULL COMMENT 'API Key',

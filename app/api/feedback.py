@@ -3,22 +3,30 @@
 import json
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.deps import get_current_user, require_agent_access
 from app.db.mysql import get_management_db
 from app.models.feedback import FeedbackCreate
+from app.models.user import PublicUser
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 @router.post("")
-async def submit_feedback(request: FeedbackCreate):
+async def submit_feedback(
+    request: FeedbackCreate,
+    current_user: PublicUser = Depends(get_current_user),
+):
     """提交用户反馈。payload 为上下文快照,供后续评估与迭代。"""
+    await require_agent_access(request.agent_id, current_user)
     feedback_id = await get_management_db().execute_insert(
-        "INSERT INTO user_feedback (agent_id, session_id, trace_id, rating, comment, payload) "
-        "VALUES (:agent_id, :session_id, :trace_id, :rating, :comment, :payload)",
+        "INSERT INTO user_feedback "
+        "(user_id, agent_id, session_id, trace_id, rating, comment, payload) "
+        "VALUES (:user_id, :agent_id, :session_id, :trace_id, :rating, :comment, :payload)",
         {
+            "user_id": current_user.id,
             "agent_id": request.agent_id,
             "session_id": request.session_id,
             "trace_id": request.trace_id,

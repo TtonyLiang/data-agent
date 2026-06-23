@@ -1,6 +1,8 @@
 <template>
   <el-config-provider :locale="zhCn">
-    <el-container class="app-container">
+    <router-view v-if="isAuthPage" />
+    <el-container class="app-container" direction="vertical">
+      <template v-if="!isAuthPage">
       <el-header class="app-header">
         <div class="brand">
           <div class="brand-mark">WQ</div>
@@ -20,23 +22,23 @@
             <el-icon><ChatDotRound /></el-icon>
             <span>对话</span>
           </el-menu-item>
-          <el-menu-item index="/agent" :disabled="isNavigationDisabled('/agent')">
+          <el-menu-item v-if="isAdminUser" index="/agent" :disabled="isNavigationDisabled('/agent')">
             <el-icon><User /></el-icon>
             <span>智能体管理</span>
           </el-menu-item>
-          <el-menu-item index="/model-config" :disabled="isNavigationDisabled('/model-config')">
+          <el-menu-item v-if="isAdminUser" index="/model-config" :disabled="isNavigationDisabled('/model-config')">
             <el-icon><Setting /></el-icon>
             <span>模型配置</span>
           </el-menu-item>
-          <el-menu-item index="/datasource" :disabled="isNavigationDisabled('/datasource')">
+          <el-menu-item v-if="isAdminUser" index="/datasource" :disabled="isNavigationDisabled('/datasource')">
             <el-icon><Coin /></el-icon>
             <span>数据源</span>
           </el-menu-item>
-          <el-menu-item index="/knowledge" :disabled="isNavigationDisabled('/knowledge')">
+          <el-menu-item v-if="isAdminUser" index="/knowledge" :disabled="isNavigationDisabled('/knowledge')">
             <el-icon><Document /></el-icon>
             <span>语义层配置</span>
           </el-menu-item>
-          <el-menu-item index="/system-parameter" :disabled="isNavigationDisabled('/system-parameter')">
+          <el-menu-item v-if="isAdminUser" index="/system-parameter" :disabled="isNavigationDisabled('/system-parameter')">
             <el-icon><Setting /></el-icon>
             <span>系统参数</span>
           </el-menu-item>
@@ -45,31 +47,45 @@
           <el-tag class="env-tag" :type="envTagType" effect="light" round>{{ envLabel }}</el-tag>
           <el-button :icon="Bell" circle />
           <div class="user-pill">
-            <span class="avatar">Z</span>
-            <span>zhangsan</span>
+            <span class="avatar">{{ userInitial }}</span>
+            <span>{{ displayName }}</span>
           </div>
+          <el-button text @click="handleLogout">退出</el-button>
         </div>
       </el-header>
       <el-main class="app-main">
         <router-view />
       </el-main>
+      </template>
     </el-container>
   </el-config-provider>
 </template>
 
 <script setup lang="ts">
-import { useRoute } from 'vue-router'
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { chatRunState } from './stores/chatRun'
 import { Bell, Setting } from '@element-plus/icons-vue'
+import { authState, isAdmin, logout } from './stores/auth'
 
 const route = useRoute()
+const router = useRouter()
 const appMode = import.meta.env.MODE
 const envLabel = appMode === 'production' ? '生产环境' : appMode === 'development' ? '开发环境' : `${appMode} 环境`
 const envTagType = appMode === 'production' ? 'success' : 'warning'
+const isAdminUser = computed(() => isAdmin())
+const isAuthPage = computed(() => route.path === '/login' || route.path === '/register')
+const displayName = computed(() => authState.currentUser?.display_name || authState.currentUser?.username || '')
+const userInitial = computed(() => (displayName.value || 'U').slice(0, 1).toUpperCase())
 
 function isNavigationDisabled(path: string) {
   return chatRunState.busy && route.path !== path
+}
+
+async function handleLogout() {
+  await logout()
+  router.replace('/login')
 }
 </script>
 
@@ -107,6 +123,8 @@ html, body, #app {
   width: 100vw;
   overflow: hidden;
   background: var(--wq-bg);
+  display: flex;
+  flex-direction: column;
 }
 
 .app-header {

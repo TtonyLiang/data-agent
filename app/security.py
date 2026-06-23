@@ -26,8 +26,8 @@ from app.utils.logging_helpers import redact_text
 
 logger = logging.getLogger(__name__)
 
-# 公开端点(不要求鉴权)
-PUBLIC_PATHS = {"/health"}
+# 公开端点(不要求登录)
+PUBLIC_PATHS = {"/health", "/api/auth/login", "/api/auth/register"}
 
 
 class InMemoryRateLimiter:
@@ -93,10 +93,6 @@ async def auth_and_rate_limit_middleware(
         return await call_next(request)
 
     if path.startswith("/api/"):
-        # Bearer 鉴权
-        auth_error = validate_admin_authorization(request)
-        if auth_error:
-            return auth_error
         # 路径级限流(按 token 或 IP + 路径)
         limit_key = request.headers.get("authorization", "") or request.client.host
         if not rate_limiter.check_request(

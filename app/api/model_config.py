@@ -1,11 +1,12 @@
 """模型配置管理 API —— 大语言模型与向量模型的连接配置 CRUD 和连通性测试。"""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.api.deps import require_admin
 from app.models.model_config import ModelConfigCreate, ModelConfigType, ModelConfigUpdate
 from app.services.model_config_service import get_model_config_service
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 @router.post("/create")

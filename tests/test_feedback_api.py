@@ -5,6 +5,10 @@ from pydantic import ValidationError
 
 from app.api import feedback as feedback_api
 from app.models.feedback import FeedbackCreate
+from app.models.user import PublicUser
+
+
+ADMIN_USER = PublicUser(id=1, username="admin", role="admin", status="active")
 
 
 class RecordingFeedbackDB:
@@ -29,11 +33,13 @@ async def test_submit_feedback_records_validated_payload(monkeypatch):
             rating="negative",
             comment="答案口径不对",
             payload={"question": "前五呢", "expected": "按笔数排序"},
-        )
+        ),
+        current_user=ADMIN_USER,
     )
 
     _, params = db.inserts[0]
     assert response == {"id": 12, "message": "反馈已记录"}
+    assert params["user_id"] == 1
     assert params["agent_id"] == 3
     assert params["session_id"] == "session-1"
     assert params["trace_id"] == "trace-1"

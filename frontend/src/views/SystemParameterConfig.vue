@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h2>系统参数</h2>
-        <p>统一维护运行参数和 Prompt 模板。这里的配置优先于后端默认值。</p>
+        <p>统一维护运行参数、Prompt 模板和系统用户权限。这里的配置优先于后端默认值。</p>
       </div>
       <div class="head-actions">
         <el-button v-if="activeTab === 'runtime'" :icon="Refresh" @click="loadParameters">刷新</el-button>
@@ -68,6 +68,9 @@
       <el-tab-pane label="Prompt 模板" name="prompt">
         <PromptConfig embedded />
       </el-tab-pane>
+      <el-tab-pane label="用户管理" name="users">
+        <UserManagement embedded />
+      </el-tab-pane>
     </el-tabs>
   </section>
 </template>
@@ -78,6 +81,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Check, Refresh } from '@element-plus/icons-vue'
 import PromptConfig from './PromptConfig.vue'
+import UserManagement from './UserManagement.vue'
 import {
   fetchSystemParameters,
   updateSystemParameters,
@@ -88,7 +92,7 @@ const loading = ref(false)
 const saving = ref(false)
 const route = useRoute()
 const router = useRouter()
-const activeTab = ref(route.query.tab === 'prompt' ? 'prompt' : 'runtime')
+const activeTab = ref(normalizeTab(route.query.tab))
 const parameters = ref<SystemParameterItem[]>([])
 const form = reactive<Record<string, number | string | boolean | Record<string, unknown> | unknown[]>>({})
 
@@ -99,14 +103,18 @@ const schemaRecallParams = computed(() =>
 watch(
   () => route.query.tab,
   (tab) => {
-    activeTab.value = tab === 'prompt' ? 'prompt' : 'runtime'
+    activeTab.value = normalizeTab(tab)
   },
 )
 
 watch(activeTab, (tab) => {
-  const query = tab === 'prompt' ? { tab: 'prompt' } : {}
+  const query = tab === 'runtime' ? {} : { tab }
   router.replace({ path: '/system-parameter', query })
 })
+
+function normalizeTab(tab: unknown) {
+  return tab === 'prompt' || tab === 'users' ? tab : 'runtime'
+}
 
 async function loadParameters() {
   loading.value = true

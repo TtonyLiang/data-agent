@@ -28,7 +28,7 @@ from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
@@ -40,12 +40,14 @@ from app.agent.nodes.analysis_pipeline import (
     report_generator_node,
 )
 from app.agent.nodes.sql_execute import sql_execute_node
+from app.api.deps import get_current_user, require_agent_access
 from app.config import get_settings
 from app.db.migrations import run_management_migrations
 from app.db.mysql import get_management_db
 from app.logging_config import configure_file_logging
 from app.security import auth_and_rate_limit_middleware
 from app.services.datasource_service import get_datasource_service
+from app.models.user import PublicUser
 
 configure_file_logging()
 
@@ -162,7 +164,7 @@ async def health():
 
 
 @app.post("/api/chat")
-async def chat(request: dict):
+async def chat(request: dict, current_user: PublicUser = Depends(get_current_user)):
     """同步对话接口."""
     question = request.get("question", "")
     agent_id = request.get("agent_id", 1)
@@ -173,10 +175,11 @@ async def chat(request: dict):
     enable_low_confidence_clarification = bool(request.get("enable_low_confidence_clarification"))
     started_at = time.monotonic()
 
-    await validate_datasource_access(agent_id, datasource_id)
+    await require_agent_access(agent_id, current_user)
+    datasource_id = await resolve_datasource_access(agent_id, datasource_id)
 
     # 加载历史上下文
-    history = await load_history(agent_id, session_id, limit=5)
+    history = await load_history(agent_id, session_id, limit=5, user=current_user)
 
     graph = get_graph()
     state: AgentState = {
@@ -218,6 +221,7 @@ async def chat(request: dict):
         semantic_check=result.get("semantic_check"),
         python_result=result.get("python_result"),
         report_payload=result.get("report_payload"),
+        user=current_user,
     )
 
     return {
@@ -240,7 +244,7 @@ async def chat(request: dict):
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(request: dict):
+async def chat_stream(request: dict, current_user: PublicUser = Depends(get_current_user)):
     """SSE 流式对话接口 — 输出思考过程 + 节点进度."""
     question = request.get("question", "")
     agent_id = request.get("agent_id", 1)
@@ -250,9 +254,10 @@ async def chat_stream(request: dict):
     require_sql_confirmation = bool(request.get("require_sql_confirmation"))
     enable_low_confidence_clarification = bool(request.get("enable_low_confidence_clarification"))
 
-    await validate_datasource_access(agent_id, datasource_id)
+    await require_agent_access(agent_id, current_user)
+    datasource_id = await resolve_datasource_access(agent_id, datasource_id)
 
-    history = await load_history(agent_id, session_id, limit=5)
+    history = await load_history(agent_id, session_id, limit=5, user=current_user)
 
     async def event_generator():
         stream_started_at = time.monotonic()
@@ -618,6 +623,7 @@ async def chat_stream(request: dict):
                 python_result=final_result.get("python_result"),
                 report_payload=final_result.get("report_payload"),
                 reasoning_trace=reasoning_trace,
+                user=current_user,
             )
         except Exception:
             logger.exception("chat stream failed to persist history")
@@ -653,7 +659,10 @@ async def chat_stream(request: dict):
 
 
 @app.post("/api/chat/confirm-sql")
-async def confirm_sql_execution(request: dict):
+async def confirm_sql_execution(
+    request: dict,
+    current_user: PublicUser = Depends(get_current_user),
+):
     """Execute a previously generated SQL after explicit human confirmation."""
     agent_id = request.get("agent_id", 1)
     datasource_id = request.get("datasource_id")
@@ -666,7 +675,8 @@ async def confirm_sql_execution(request: dict):
     if not sql:
         raise HTTPException(status_code=400, detail="缺少待确认执行的 SQL")
 
-    await validate_datasource_access(agent_id, datasource_id)
+    await require_agent_access(agent_id, current_user)
+    datasource_id = await resolve_datasource_access(agent_id, datasource_id)
 
     state: AgentState = {
         "question": question,
@@ -717,6 +727,7 @@ async def confirm_sql_execution(request: dict):
             semantic_check=state.get("semantic_check"),
             python_result=state.get("python_result"),
             report_payload=state.get("report_payload"),
+            user=current_user,
         )
     except Exception:
         logger.exception("confirm-sql failed to persist history")
@@ -1101,9 +1112,25 @@ def node_progress_message(node: str, index: int = 0) -> str:
     return options[index % len(options)]
 
 
+async def resolve_datasource_access(agent_id: int, datasource_id: int | None) -> int:
+    """Resolve and validate the datasource used by a chat request.
+
+    The chat UI only exposes agent selection. If the request omits datasource_id,
+    use the first datasource bound to that agent. Supplying a foreign datasource
+    is still rejected server-side.
+    """
+    if datasource_id:
+        await validate_datasource_access(agent_id, datasource_id)
+        return int(datasource_id)
+    datasources = await get_datasource_service().list_by_agent(agent_id)
+    if not datasources:
+        raise HTTPException(status_code=400, detail="当前智能体未绑定可用数据源")
+    return int(datasources[0].id)
+
+
 async def validate_datasource_access(agent_id: int, datasource_id: int | None):
     if not datasource_id:
-        return
+        raise HTTPException(status_code=400, detail="当前智能体未绑定可用数据源")
     if not await get_datasource_service().belongs_to_agent(datasource_id, agent_id):
         raise HTTPException(status_code=403, detail="数据源不属于当前智能体")
 
@@ -1314,30 +1341,39 @@ def _extract_node_output(node: str, output: dict) -> dict:
 
 
 @app.get("/api/chat/sessions/{agent_id}")
-async def list_sessions(agent_id: int):
+async def list_sessions(agent_id: int, current_user: PublicUser = Depends(get_current_user)):
     """获取会话列表."""
+    await require_agent_access(agent_id, current_user)
     db = get_management_db()
+    user_filter, params = scoped_session_filter(current_user, agent_id)
     rows = await db.execute_query(
         "SELECT session_id, MIN(created_at) AS created_at, COUNT(*) AS turn_count, "
         "SUBSTRING_INDEX("
         "GROUP_CONCAT(CASE WHEN role='user' THEN content END ORDER BY id), ',', 1"
         ") AS last_question "
-        "FROM chat_history WHERE agent_id = :aid "
+        f"FROM chat_history WHERE {user_filter} "
         "GROUP BY session_id ORDER BY MAX(id) DESC LIMIT 50",
-        {"aid": agent_id},
+        params,
     )
     return {"sessions": rows}
 
 
 @app.get("/api/chat/history/{agent_id}/{session_id}")
-async def get_history(agent_id: int, session_id: str):
+async def get_history(
+    agent_id: int,
+    session_id: str,
+    current_user: PublicUser = Depends(get_current_user),
+):
     """获取某个会话的完整历史."""
+    await require_agent_access(agent_id, current_user)
     db = get_management_db()
+    user_filter, params = scoped_session_filter(current_user, agent_id)
+    params["sid"] = session_id
     rows = await db.execute_query(
         "SELECT role, content, reasoning_trace, logic_form, compiled_sql, sql_text, sql_result, "
         "plan_payload, semantic_check, python_result, report_payload, created_at "
-        "FROM chat_history WHERE agent_id = :aid AND session_id = :sid ORDER BY id",
-        {"aid": agent_id, "sid": session_id},
+        f"FROM chat_history WHERE {user_filter} AND session_id = :sid ORDER BY id",
+        params,
     )
     # 解析 sql_result JSON
     for row in rows:
@@ -1370,24 +1406,49 @@ async def get_history(agent_id: int, session_id: str):
 
 
 @app.delete("/api/chat/sessions/{agent_id}/{session_id}")
-async def delete_session(agent_id: int, session_id: str):
+async def delete_session(
+    agent_id: int,
+    session_id: str,
+    current_user: PublicUser = Depends(get_current_user),
+):
     """删除某个会话."""
+    await require_agent_access(agent_id, current_user)
     db = get_management_db()
+    user_filter, params = scoped_session_filter(current_user, agent_id)
+    params["sid"] = session_id
     await db.execute_query(
-        "DELETE FROM chat_history WHERE agent_id = :aid AND session_id = :sid",
-        {"aid": agent_id, "sid": session_id},
+        f"DELETE FROM chat_history WHERE {user_filter} AND session_id = :sid",
+        params,
     )
     return {"message": "会话已删除"}
 
 
-async def load_history(agent_id: int, session_id: str, limit: int = 5) -> list[dict]:
+def scoped_session_filter(user: PublicUser, agent_id: int) -> tuple[str, dict[str, Any]]:
+    params: dict[str, Any] = {"aid": agent_id}
+    if user.role == "admin":
+        return "agent_id = :aid", params
+    params["user_id"] = user.id
+    return "agent_id = :aid AND user_id = :user_id", params
+
+
+async def load_history(
+    agent_id: int,
+    session_id: str,
+    limit: int = 5,
+    user: PublicUser | None = None,
+) -> list[dict]:
     """加载最近 N 轮对话历史."""
     db = get_management_db()
+    if user:
+        user_filter, params = scoped_session_filter(user, agent_id)
+    else:
+        user_filter, params = "agent_id = :aid", {"aid": agent_id}
+    params.update({"sid": session_id, "limit": limit * 2})
     rows = await db.execute_query(
         "SELECT role, content, logic_form, compiled_sql, sql_text, sql_result "
-        "FROM chat_history WHERE agent_id = :aid AND session_id = :sid "
+        f"FROM chat_history WHERE {user_filter} AND session_id = :sid "
         "ORDER BY id DESC LIMIT :limit",
-        {"aid": agent_id, "sid": session_id, "limit": limit * 2},
+        params,
     )
     if not rows:
         return []
@@ -1419,14 +1480,20 @@ async def save_turn(
     python_result: dict | None = None,
     report_payload: dict | None = None,
     reasoning_trace: list[dict] | None = None,
+    user: PublicUser | None = None,
 ):
     """保存一轮对话到 chat_history."""
     db = get_management_db()
     try:
         await db.execute_query(
-            "INSERT INTO chat_history (agent_id, session_id, role, content) "
-            "VALUES (:aid, :sid, 'user', :content)",
-            {"aid": agent_id, "sid": session_id, "content": question},
+            "INSERT INTO chat_history (agent_id, user_id, session_id, role, content) "
+            "VALUES (:aid, :user_id, :sid, 'user', :content)",
+            {
+                "aid": agent_id,
+                "user_id": user.id if user else None,
+                "sid": session_id,
+                "content": question,
+            },
         )
     except Exception:
         logger.exception("failed to persist user chat history")
@@ -1445,6 +1512,7 @@ async def save_turn(
         python_result=python_result,
         report_payload=report_payload,
         reasoning_trace=reasoning_trace,
+        user_id=user.id if user else None,
     )
 
     try:
@@ -1474,9 +1542,11 @@ def build_assistant_history_params(
     python_result: dict | None,
     report_payload: dict | None,
     reasoning_trace: list[dict] | None,
+    user_id: int | None,
 ) -> dict[str, Any]:
     return {
         "aid": agent_id,
+        "user_id": user_id,
         "sid": session_id,
         "content": answer,
         "reasoning_trace": json.dumps(reasoning_trace, ensure_ascii=False)
@@ -1501,10 +1571,10 @@ def build_assistant_history_params(
 async def insert_assistant_turn(db, params: dict[str, Any]) -> None:
     await db.execute_query(
         "INSERT INTO chat_history "
-        "(agent_id, session_id, role, content, reasoning_trace, logic_form, "
+        "(agent_id, user_id, session_id, role, content, reasoning_trace, logic_form, "
         "compiled_sql, execution_trace, "
         "sql_text, sql_result, plan_payload, semantic_check, python_result, report_payload) "
-        "VALUES (:aid, :sid, 'assistant', :content, :reasoning_trace, "
+        "VALUES (:aid, :user_id, :sid, 'assistant', :content, :reasoning_trace, "
         ":logic_form, :compiled_sql, :trace, "
         ":sql, :result, :plan_payload, :semantic_check, :python_result, :report_payload)",
         params,
@@ -1618,13 +1688,16 @@ def compact_history_value(value: Any) -> Any:
 
 # 注册子路由
 from app.api.agent import router as agent_router  # noqa: E402
+from app.api.auth import router as auth_router  # noqa: E402
 from app.api.datasource import router as ds_router  # noqa: E402
 from app.api.feedback import router as feedback_router  # noqa: E402
 from app.api.model_config import router as model_config_router  # noqa: E402
 from app.api.prompt import router as prompt_router  # noqa: E402
 from app.api.semantic import router as semantic_router  # noqa: E402
 from app.api.system_parameter import router as system_parameter_router  # noqa: E402
+from app.api.user import router as user_router  # noqa: E402
 
+app.include_router(auth_router, prefix="/api/auth", tags=["认证"])
 app.include_router(agent_router, prefix="/api/agent", tags=["智能体"])
 app.include_router(ds_router, prefix="/api/datasource", tags=["数据源"])
 app.include_router(feedback_router, prefix="/api/feedback", tags=["反馈"])
@@ -1632,6 +1705,7 @@ app.include_router(model_config_router, prefix="/api/model-config", tags=["模�
 app.include_router(prompt_router, prefix="/api/prompt", tags=["Prompt配置"])
 app.include_router(semantic_router, prefix="/api/semantic", tags=["知识召回"])
 app.include_router(system_parameter_router, prefix="/api/system", tags=["系统参数"])
+app.include_router(user_router, prefix="/api/users", tags=["用户管理"])
 
 
 if __name__ == "__main__":

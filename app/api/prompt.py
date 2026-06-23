@@ -1,12 +1,13 @@
 """Prompt 模板管理 API —— 节点提示词的配置化管理。"""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.deps import require_admin
 from app.agent.prompts import default_prompt_templates
 from app.models.prompt import PromptTemplateCreate
 from app.services.prompt_service import get_prompt_service
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 @router.get("/list")

@@ -32,6 +32,22 @@ from app.utils.logging_helpers import json_for_log, truncate_text
 
 logger = logging.getLogger(__name__)
 
+SENSITIVE_PARAM_KEYS = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "password",
+    "password_hash",
+    "pwd",
+    "secret",
+    "token",
+    "dsn",
+    "connection_string",
+    "private_key",
+    "credential",
+    "credentials",
+}
+
 
 def normalize_query_value(value):
     """把数据库原生标量值转为 JSON 友好的 Python 值。
@@ -79,7 +95,7 @@ class MySQLClient:
             "mysql query start url=%s sql_chars=%s params_keys=%s",
             self._safe_url,
             len(sql or ""),
-            sorted((params or {}).keys()),
+            safe_param_keys(params),
         )
         if settings.detailed_data_logging_enabled:
             logger.info(
@@ -118,7 +134,7 @@ class MySQLClient:
             "mysql insert start url=%s sql_chars=%s params_keys=%s",
             self._safe_url,
             len(sql or ""),
-            sorted((params or {}).keys()),
+            safe_param_keys(params),
         )
         if settings.detailed_data_logging_enabled:
             logger.info(
@@ -148,7 +164,7 @@ class MySQLClient:
             "mysql scalar start url=%s sql_chars=%s params_keys=%s",
             self._safe_url,
             len(sql or ""),
-            sorted((params or {}).keys()),
+            safe_param_keys(params),
         )
         if settings.detailed_data_logging_enabled:
             logger.info(
@@ -345,3 +361,18 @@ def redact_db_url(db_url: str) -> str:
     credentials, host_part = rest.split("@", 1)
     username = credentials.split(":", 1)[0]
     return f"{scheme}://{username}:***REDACTED***@{host_part}"
+
+
+def safe_param_keys(params: dict | None) -> list[str]:
+    """返回适合打印到日志里的参数名，敏感 key 只输出占位符。"""
+    if not params:
+        return []
+    keys: list[str] = []
+    for key in sorted(params.keys()):
+        key_str = str(key)
+        if key_str.lower() in SENSITIVE_PARAM_KEYS:
+            keys.append("***REDACTED***")
+        else:
+            keys.append(key_str)
+    # 保持可读性，避免敏感 key 重复暴露
+    return sorted(set(keys))

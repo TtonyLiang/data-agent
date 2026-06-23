@@ -6,6 +6,10 @@ import time
 import pytest
 
 from app import main
+from app.models.user import PublicUser
+
+
+ADMIN_USER = PublicUser(id=1, username="admin", role="admin", status="active")
 
 
 class FakeStreamGraph:
@@ -219,7 +223,7 @@ class MixedTokenStreamGraph:
 async def test_chat_stream_emits_final_answer_deltas_and_saves_only_final(monkeypatch):
     saved_turns = []
 
-    async def fake_load_history(agent_id, session_id, limit=5):
+    async def fake_load_history(agent_id, session_id, limit=5, **kwargs):
         return []
 
     async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
@@ -252,7 +256,8 @@ async def test_chat_stream_emits_final_answer_deltas_and_saves_only_final(monkey
             "datasource_id": 1,
             "session_id": "session-1",
             "trace_id": "trace-test-1",
-        }
+        },
+        current_user=ADMIN_USER,
     )
 
     events = []
@@ -311,7 +316,7 @@ async def test_chat_stream_emits_final_answer_deltas_and_saves_only_final(monkey
 async def test_chat_stream_merges_incremental_node_outputs_before_result(monkeypatch):
     saved_turns = []
 
-    async def fake_load_history(agent_id, session_id, limit=5):
+    async def fake_load_history(agent_id, session_id, limit=5, **kwargs):
         return []
 
     async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
@@ -331,7 +336,8 @@ async def test_chat_stream_merges_incremental_node_outputs_before_result(monkeyp
             "agent_id": 1,
             "datasource_id": 1,
             "session_id": "session-2",
-        }
+        },
+        current_user=ADMIN_USER,
     )
 
     events = [item async for item in response.body_iterator]
@@ -350,7 +356,7 @@ async def test_chat_stream_merges_incremental_node_outputs_before_result(monkeyp
 
 @pytest.mark.asyncio
 async def test_chat_stream_logs_sse_events(monkeypatch, caplog):
-    async def fake_load_history(agent_id, session_id, limit=5):
+    async def fake_load_history(agent_id, session_id, limit=5, **kwargs):
         return []
 
     async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
@@ -370,7 +376,8 @@ async def test_chat_stream_logs_sse_events(monkeypatch, caplog):
             "agent_id": 1,
             "datasource_id": 1,
             "session_id": "session-3",
-        }
+        },
+        current_user=ADMIN_USER,
     )
 
     with caplog.at_level(logging.INFO, logger="app.main"):
@@ -383,7 +390,7 @@ async def test_chat_stream_logs_sse_events(monkeypatch, caplog):
 
 @pytest.mark.asyncio
 async def test_chat_stream_emits_progress_while_node_is_waiting(monkeypatch):
-    async def fake_load_history(agent_id, session_id, limit=5):
+    async def fake_load_history(agent_id, session_id, limit=5, **kwargs):
         return []
 
     async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
@@ -404,7 +411,8 @@ async def test_chat_stream_emits_progress_while_node_is_waiting(monkeypatch):
             "agent_id": 1,
             "datasource_id": 1,
             "session_id": "session-progress",
-        }
+        },
+        current_user=ADMIN_USER,
     )
 
     events = [item async for item in response.body_iterator]
@@ -420,7 +428,7 @@ async def test_chat_stream_emits_progress_while_node_is_waiting(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chat_stream_exposes_semantic_enhance_node(monkeypatch):
-    async def fake_load_history(agent_id, session_id, limit=5):
+    async def fake_load_history(agent_id, session_id, limit=5, **kwargs):
         return [{"role": "user", "content": "贷款排名前三的申请区域是什么，分别申请了多少笔"}]
 
     async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
@@ -440,7 +448,8 @@ async def test_chat_stream_exposes_semantic_enhance_node(monkeypatch):
             "agent_id": 1,
             "datasource_id": 1,
             "session_id": "session-enhance",
-        }
+        },
+        current_user=ADMIN_USER,
     )
 
     events = [item async for item in response.body_iterator]
@@ -455,7 +464,7 @@ async def test_chat_stream_exposes_semantic_enhance_node(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chat_stream_exposes_low_confidence_clarification(monkeypatch):
-    async def fake_load_history(agent_id, session_id, limit=5):
+    async def fake_load_history(agent_id, session_id, limit=5, **kwargs):
         return []
 
     async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
@@ -476,7 +485,8 @@ async def test_chat_stream_exposes_low_confidence_clarification(monkeypatch):
             "datasource_id": 1,
             "session_id": "session-clarification",
             "enable_low_confidence_clarification": True,
-        }
+        },
+        current_user=ADMIN_USER,
     )
 
     events = [item async for item in response.body_iterator]
@@ -493,7 +503,7 @@ async def test_chat_stream_exposes_low_confidence_clarification(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chat_stream_keeps_fast_node_visible_for_minimum_duration(monkeypatch):
-    async def fake_load_history(agent_id, session_id, limit=5):
+    async def fake_load_history(agent_id, session_id, limit=5, **kwargs):
         return []
 
     async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
@@ -515,7 +525,8 @@ async def test_chat_stream_keeps_fast_node_visible_for_minimum_duration(monkeypa
             "agent_id": 1,
             "datasource_id": 1,
             "session_id": "session-min-node",
-        }
+        },
+        current_user=ADMIN_USER,
     )
 
     events = [item async for item in response.body_iterator]
@@ -528,7 +539,7 @@ async def test_chat_stream_keeps_fast_node_visible_for_minimum_duration(monkeypa
 
 @pytest.mark.asyncio
 async def test_chat_stream_emits_model_tokens_inside_node(monkeypatch):
-    async def fake_load_history(agent_id, session_id, limit=5):
+    async def fake_load_history(agent_id, session_id, limit=5, **kwargs):
         return []
 
     async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
@@ -548,7 +559,8 @@ async def test_chat_stream_emits_model_tokens_inside_node(monkeypatch):
             "agent_id": 1,
             "datasource_id": 1,
             "session_id": "session-token",
-        }
+        },
+        current_user=ADMIN_USER,
     )
 
     events = [item async for item in response.body_iterator]
@@ -563,7 +575,7 @@ async def test_chat_stream_emits_model_tokens_inside_node(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chat_stream_forwards_custom_node_tokens(monkeypatch):
-    async def fake_load_history(agent_id, session_id, limit=5):
+    async def fake_load_history(agent_id, session_id, limit=5, **kwargs):
         return []
 
     async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
@@ -583,7 +595,8 @@ async def test_chat_stream_forwards_custom_node_tokens(monkeypatch):
             "agent_id": 1,
             "datasource_id": 1,
             "session_id": "session-custom-token",
-        }
+        },
+        current_user=ADMIN_USER,
     )
 
     events = [item async for item in response.body_iterator]
@@ -599,7 +612,7 @@ async def test_chat_stream_forwards_custom_node_tokens(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chat_stream_deduplicates_mixed_model_and_custom_tokens(monkeypatch):
-    async def fake_load_history(agent_id, session_id, limit=5):
+    async def fake_load_history(agent_id, session_id, limit=5, **kwargs):
         return []
 
     async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
@@ -619,7 +632,8 @@ async def test_chat_stream_deduplicates_mixed_model_and_custom_tokens(monkeypatc
             "agent_id": 1,
             "datasource_id": 1,
             "session_id": "session-mixed-token",
-        }
+        },
+        current_user=ADMIN_USER,
     )
 
     events = [item async for item in response.body_iterator]
@@ -634,7 +648,7 @@ async def test_chat_stream_deduplicates_mixed_model_and_custom_tokens(monkeypatc
 
 @pytest.mark.asyncio
 async def test_chat_stream_returns_error_event_when_graph_fails(monkeypatch, caplog):
-    async def fake_load_history(agent_id, session_id, limit=5):
+    async def fake_load_history(agent_id, session_id, limit=5, **kwargs):
         return []
 
     async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
@@ -654,7 +668,8 @@ async def test_chat_stream_returns_error_event_when_graph_fails(monkeypatch, cap
             "agent_id": 1,
             "datasource_id": 1,
             "session_id": "session-4",
-        }
+        },
+        current_user=ADMIN_USER,
     )
 
     with caplog.at_level(logging.ERROR, logger="app.main"):
@@ -675,7 +690,7 @@ async def test_chat_stream_returns_error_event_when_graph_fails(monkeypatch, cap
 
 @pytest.mark.asyncio
 async def test_chat_stream_still_emits_done_when_save_turn_fails(monkeypatch, caplog):
-    async def fake_load_history(agent_id, session_id, limit=5):
+    async def fake_load_history(agent_id, session_id, limit=5, **kwargs):
         return []
 
     async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
@@ -695,7 +710,8 @@ async def test_chat_stream_still_emits_done_when_save_turn_fails(monkeypatch, ca
             "agent_id": 1,
             "datasource_id": 1,
             "session_id": "session-save-fail",
-        }
+        },
+        current_user=ADMIN_USER,
     )
 
     with caplog.at_level(logging.ERROR, logger="app.main"):

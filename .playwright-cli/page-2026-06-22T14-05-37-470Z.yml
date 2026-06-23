@@ -1,0 +1,20 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: WQ
+      - generic [ref=e7]:
+        - heading "WenQu 智能问数" [level=1] [ref=e8]
+        - generic [ref=e9]: AI Data Analyst
+    - menubar [ref=e10]:
+      - menuitem "对话" [ref=e11] [cursor=pointer]:
+        - img [ref=e13]
+        - generic [ref=e16]: 对话
+    - generic [ref=e17]:
+      - generic:
+        - generic: 开发环境
+      - button [ref=e18] [cursor=pointer]:
+        - img [ref=e20]
+      - generic [ref=e25]: U
+      - button "退出" [ref=e26] [cursor=pointer]:
+        - generic [ref=e27]: 退出
+  - main [ref=e28]

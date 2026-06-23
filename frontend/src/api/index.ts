@@ -5,17 +5,23 @@ const api = axios.create({
   timeout: 120000,
 })
 
-export const ADMIN_TOKEN_STORAGE_KEY = 'wenqu_admin_api_key'
+export const AUTH_TOKEN_STORAGE_KEY = 'wenqu_access_token'
 
-export function getAdminApiKey(): string {
-  const envKey = import.meta.env?.VITE_ADMIN_API_KEY || ''
-  if (envKey) return envKey
+export function getAccessToken(): string {
   if (typeof window === 'undefined') return ''
-  return window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || ''
+  return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || ''
+}
+
+export function setAccessToken(token: string) {
+  if (typeof window !== 'undefined') window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token)
+}
+
+export function clearAccessToken() {
+  if (typeof window !== 'undefined') window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
 }
 
 export function buildAuthHeaders(): Record<string, string> {
-  const token = getAdminApiKey().trim()
+  const token = getAccessToken().trim()
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
@@ -121,6 +127,7 @@ export interface AgentItem {
   embedding_model_config_name?: string | null
   semantic_domain_name?: string | null
   semantic_domain_key?: string | null
+  default_questions?: string[]
   llm_provider: string
   llm_model: string
   created_at: string
@@ -132,9 +139,37 @@ export interface AgentCreateRequest {
   chat_model_config_id?: number | null
   embedding_model_config_id?: number | null
   semantic_domain_id?: number | null
+  default_questions?: string[]
   datasource_ids?: number[]
   llm_provider?: string
   llm_model?: string
+}
+
+export interface CurrentUser {
+  id: number
+  username: string
+  display_name?: string | null
+  role: 'admin' | 'user'
+  status: 'active' | 'disabled'
+  must_change_password?: boolean
+  created_at?: string | null
+  updated_at?: string | null
+  last_login_at?: string | null
+}
+
+export interface UserCreateRequest {
+  username: string
+  password: string
+  display_name?: string | null
+  role?: 'admin' | 'user'
+  status?: 'active' | 'disabled'
+}
+
+export interface UserUpdateRequest {
+  display_name?: string | null
+  role: 'admin' | 'user'
+  status: 'active' | 'disabled'
+  must_change_password?: boolean
 }
 
 export interface ModelConfigItem {
@@ -199,6 +234,73 @@ export interface SystemParameterUpdate {
 
 export type PromptTemplateRequest = Omit<PromptTemplateItem, 'id' | 'created_at' | 'updated_at'> & {
   id?: number | null
+}
+
+export async function registerUser(payload: { username: string; password: string; display_name?: string }) {
+  const { data } = await api.post('/auth/register', payload)
+  return data
+}
+
+export async function loginUser(payload: { username: string; password: string }) {
+  const { data } = await api.post<{ access_token: string; token_type: string; user: CurrentUser }>('/auth/login', payload)
+  setAccessToken(data.access_token)
+  return data
+}
+
+export async function logoutUser() {
+  try {
+    await api.post('/auth/logout')
+  } finally {
+    clearAccessToken()
+  }
+}
+
+export async function fetchCurrentUser(): Promise<CurrentUser> {
+  const { data } = await api.get<CurrentUser>('/auth/me')
+  return data
+}
+
+export async function fetchUsers(): Promise<CurrentUser[]> {
+  const { data } = await api.get<{ users: CurrentUser[] }>('/users')
+  return data.users || []
+}
+
+export async function createUser(payload: UserCreateRequest) {
+  const { data } = await api.post('/users', payload)
+  return data
+}
+
+export async function updateUser(userId: number, payload: UserUpdateRequest) {
+  const { data } = await api.put(`/users/${userId}`, payload)
+  return data
+}
+
+export async function disableUser(userId: number) {
+  const { data } = await api.post(`/users/${userId}/disable`)
+  return data
+}
+
+export async function enableUser(userId: number) {
+  const { data } = await api.post(`/users/${userId}/enable`)
+  return data
+}
+
+export async function resetUserPassword(userId: number, password: string) {
+  const { data } = await api.post(`/users/${userId}/reset-password`, {
+    password,
+    must_change_password: true,
+  })
+  return data
+}
+
+export async function fetchUserAgentIds(userId: number): Promise<number[]> {
+  const { data } = await api.get<{ agent_ids: number[] }>(`/users/${userId}/agents`)
+  return data.agent_ids || []
+}
+
+export async function updateUserAgentIds(userId: number, agentIds: number[]) {
+  const { data } = await api.put(`/users/${userId}/agents`, { agent_ids: agentIds })
+  return data
 }
 
 export async function fetchAgents(): Promise<AgentItem[]> {

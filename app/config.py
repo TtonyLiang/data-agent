@@ -102,7 +102,11 @@ class Settings(BaseSettings):
     app_port: int = 4400
     debug: bool = True
     admin_api_key: str = ""
+    jwt_secret_key: str = ""
     secret_encryption_key: str = ""
+    initial_admin_username: str = ""
+    initial_admin_password: str = ""
+    initial_admin_password_hash: str = ""
     cors_allowed_origins: list[str] = [
         "http://localhost:4399",
         "http://127.0.0.1:4399",
@@ -144,15 +148,15 @@ class Settings(BaseSettings):
         """生产模式启动安全校验:缺少关键配置时拒绝启动。
 
         检查项:
-        - ADMIN_API_KEY:API 鉴权密钥。
+        - JWT_SECRET_KEY:用户登录 JWT 密钥。
         - SECRET_ENCRYPTION_KEY:密钥加密密钥。
         - MySQL 密码:不能使用默认 root。
         """
         if self.debug:
             return
         errors = []
-        if not self.admin_api_key.strip():
-            errors.append("ADMIN_API_KEY")
+        if len(self.jwt_secret_key.strip().encode("utf-8")) < 32:
+            errors.append("JWT_SECRET_KEY >= 32 bytes")
         if not self.secret_encryption_key.strip():
             errors.append("SECRET_ENCRYPTION_KEY")
         if self.mysql_password == "root" or self.management_mysql_password == "root":

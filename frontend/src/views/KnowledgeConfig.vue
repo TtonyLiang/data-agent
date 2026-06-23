@@ -7,52 +7,56 @@
         <p>管理领域本体、指标口径、关系路径、规则和 LogicForm 模板。</p>
       </div>
       <div class="header-actions">
-        <el-select
-          v-model="domainId"
-          placeholder="选择语义层"
-          style="width: 260px"
-          :disabled="domains.length === 0"
-        >
-          <el-option
-            v-for="domain in domains"
-            :key="domain.id"
-            :label="`${domain.name} (${domain.domain_key})`"
-            :value="domain.id"
-          />
-        </el-select>
-        <el-button :icon="Plus" @click="openCreateDomain">
-          新增语义层
-        </el-button>
-        <el-button :icon="EditPen" :disabled="!selectedDomain" @click="openEditDomain">
-          编辑
-        </el-button>
-        <el-button :icon="Delete" type="danger" plain :disabled="!selectedDomain" @click="handleDeleteDomain">
-          删除
-        </el-button>
-        <el-button :disabled="!selectedDomain" @click="handleCopyDomain">
-          复制
-        </el-button>
-        <el-button @click="handleImportDomain">
-          导入
-        </el-button>
-        <el-button :disabled="!selectedDomain" @click="handleExportDomain">
-          导出
-        </el-button>
-        <el-button :disabled="!selectedDomain" @click="handleValidateDomain">
-          保存前校验
-        </el-button>
-        <el-button :disabled="!selectedDomain" @click="handleCreateSnapshot">
-          创建快照
-        </el-button>
-        <el-button :disabled="!selectedDomain" @click="openSnapshots">
-          快照
-        </el-button>
-        <el-button :loading="runtimeLoading" :disabled="!selectedDomain" @click="handleBuildRuntime">
-          构建语义层
-        </el-button>
-        <el-button type="primary" :loading="syncLoading" :disabled="!selectedDomain" @click="handleSyncVector">
-          同步向量
-        </el-button>
+        <div class="toolbar-row">
+          <el-select
+            v-model="domainId"
+            placeholder="选择语义层"
+            class="domain-select"
+            :disabled="domains.length === 0"
+          >
+            <el-option
+              v-for="domain in domains"
+              :key="domain.id"
+              :label="`${domain.name} (${domain.domain_key})`"
+              :value="domain.id"
+            />
+          </el-select>
+          <div class="toolbar-group">
+            <el-button :icon="Plus" @click="openCreateDomain">
+              新增
+            </el-button>
+            <el-button :icon="EditPen" :disabled="!selectedDomain" @click="openEditDomain">
+              编辑
+            </el-button>
+            <el-button :icon="Delete" type="danger" plain :disabled="!selectedDomain" @click="handleDeleteDomain">
+              删除
+            </el-button>
+          </div>
+          <div class="toolbar-group toolbar-group-primary">
+            <el-button :loading="runtimeLoading" :disabled="!selectedDomain" @click="handleBuildRuntime">
+              构建语义层
+            </el-button>
+            <el-button type="primary" :loading="syncLoading" :disabled="!selectedDomain" @click="handleSyncVector">
+              同步向量
+            </el-button>
+            <el-dropdown @command="handleToolbarCommand">
+              <el-button>
+                更多
+                <el-icon class="toolbar-caret"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="copy" :disabled="!selectedDomain">复制语义层</el-dropdown-item>
+                  <el-dropdown-item command="import">导入语义层</el-dropdown-item>
+                  <el-dropdown-item command="export" :disabled="!selectedDomain">导出语义层</el-dropdown-item>
+                  <el-dropdown-item command="validate" :disabled="!selectedDomain">保存前校验</el-dropdown-item>
+                  <el-dropdown-item command="snapshot" :disabled="!selectedDomain">创建快照</el-dropdown-item>
+                  <el-dropdown-item command="snapshots" :disabled="!selectedDomain">查看快照</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -653,7 +657,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, EditPen, Plus, QuestionFilled } from '@element-plus/icons-vue'
+import { ArrowDown, Delete, EditPen, Plus, QuestionFilled } from '@element-plus/icons-vue'
 import {
   buildSemanticRuntime,
   copySemanticDomain,
@@ -1399,6 +1403,22 @@ async function handleDeleteDomain() {
   }
 }
 
+function handleToolbarCommand(command: string) {
+  if (command === 'copy') {
+    handleCopyDomain()
+  } else if (command === 'import') {
+    handleImportDomain()
+  } else if (command === 'export') {
+    handleExportDomain()
+  } else if (command === 'validate') {
+    handleValidateDomain()
+  } else if (command === 'snapshot') {
+    handleCreateSnapshot()
+  } else if (command === 'snapshots') {
+    openSnapshots()
+  }
+}
+
 async function handleCopyDomain() {
   if (!selectedDomain.value) return
   const source = selectedDomain.value
@@ -2137,10 +2157,50 @@ function columnNameLabel(assetKey: string, columnName: string) {
 
 .header-actions {
   display: flex;
-  gap: 12px;
+  min-width: min(100%, 980px);
+  gap: 10px;
   align-items: center;
-  flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.toolbar-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.domain-select {
+  width: 280px;
+}
+
+.toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--wq-border);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.toolbar-group-primary {
+  background: #f8fafc;
+}
+
+.toolbar-group :deep(.el-button) {
+  margin-left: 0;
+}
+
+.toolbar-group :deep(.el-button:not(.el-button--primary):not(.el-button--danger)) {
+  border-color: transparent;
+  background: transparent;
+}
+
+.toolbar-caret {
+  margin-left: 5px;
+  font-size: 12px;
 }
 
 .runtime-summary {
@@ -2733,6 +2793,15 @@ function columnNameLabel(assetKey: string, columnName: string) {
 
   .header-actions {
     justify-content: flex-start;
+    min-width: 0;
+  }
+
+  .toolbar-row {
+    justify-content: flex-start;
+  }
+
+  .domain-select {
+    width: min(100%, 320px);
   }
 
   .runtime-summary {

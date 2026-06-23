@@ -1,6 +1,10 @@
 import pytest
 
 from app import main
+from app.models.user import PublicUser
+
+
+ADMIN_USER = PublicUser(id=1, username="admin", role="admin", status="active")
 
 
 @pytest.mark.asyncio
@@ -68,7 +72,8 @@ async def test_confirm_sql_execution_runs_analysis_and_saves_turn(monkeypatch):
             "trace_id": "trace-confirm",
             "sql": "SELECT 1 AS application_count",
             "logic_form": {"metrics": ["application_count"]},
-        }
+        },
+        current_user=ADMIN_USER,
     )
 
     assert response["human_confirmation"]["status"] == "confirmed"
@@ -83,6 +88,6 @@ async def test_confirm_sql_execution_runs_analysis_and_saves_turn(monkeypatch):
 @pytest.mark.asyncio
 async def test_confirm_sql_execution_requires_sql():
     with pytest.raises(main.HTTPException) as exc:
-        await main.confirm_sql_execution({"agent_id": 1})
+        await main.confirm_sql_execution({"agent_id": 1}, current_user=ADMIN_USER)
 
     assert exc.value.status_code == 400

@@ -69,8 +69,10 @@ globalThis.__axios = {
 globalThis.window = {
   localStorage: {
     getItem(key) {
-      return key === 'wenqu_admin_api_key' ? 'test-token' : ''
+      return key === 'wenqu_access_token' ? 'test-token' : ''
     },
+    setItem() {},
+    removeItem() {},
   },
 }
 

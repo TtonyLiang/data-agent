@@ -37,35 +37,16 @@
       <div class="workspace-toolbar">
         <div class="workspace-title">
           <h2>智能问数对话</h2>
-          <p>{{ selectedDatasourceName }} · {{ selectedAgentName }}</p>
+          <p>{{ selectedAgentName }}</p>
         </div>
         <div class="chat-controls">
           <el-select
-            v-model="datasourceId"
-            placeholder="选择数据源"
-            style="width: 200px"
-            size="small"
-            :disabled="loading"
-          >
-            <el-option
-              v-for="ds in datasources"
-              :key="ds.id"
-              :label="`${ds.name} (${ds.database_name})`"
-              :value="ds.id"
-            />
-          </el-select>
-          <el-select
             v-model="agentId"
             placeholder="选择智能体"
-            style="width: 180px"
+            style="width: 260px"
             size="small"
             :disabled="loading"
           >
-            <el-option
-              v-if="agents.length === 0"
-              label="默认智能体"
-              :value="agentId"
-            />
             <el-option
               v-for="agent in agents"
               :key="agent.id"
@@ -83,6 +64,13 @@
           </div>
           <h3>输入自然语言，开始查询数据</h3>
           <p>{{ semanticHintText }}</p>
+          <el-alert
+            v-if="agents.length === 0"
+            title="暂无可访问智能体，请联系管理员分配权限。"
+            type="warning"
+            show-icon
+            :closable="false"
+          />
           <div class="empty-examples">
             <el-button v-for="query in quickQueries.slice(0, 3)" :key="query" @click="useQuickQuery(query)">
               {{ query }}
@@ -808,9 +796,9 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import { CanvasRenderer } from 'echarts/renderers'
 import { Promotion, Loading, ChatDotRound, Plus, Delete, CircleCheck, Clock, Search, Refresh, Download, DocumentCopy, WarningFilled, ArrowDown, ArrowRight, InfoFilled, FullScreen } from '@element-plus/icons-vue'
 import {
-  sendMessageStream, fetchAgents, fetchDatasources, fetchSessions, fetchHistory, deleteSession,
+  sendMessageStream, fetchAgents, fetchSessions, fetchHistory, deleteSession,
   fetchSemanticAssets, fetchSemanticDomains,
-  type AgentItem, type DatasourceItem, type SessionItem, type HistoryItem,
+  type AgentItem, type SessionItem, type HistoryItem,
 } from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { setChatBusy } from '../stores/chatRun'
@@ -835,8 +823,6 @@ const activeResultTab = ref('chain')
 const loading = ref(false)
 const agentId = ref<number>(Number(localStorage.getItem('wenqu_agent_id')) || 1)
 const agents = ref<AgentItem[]>([])
-const datasourceId = ref<number | null>(null)
-const datasources = ref<DatasourceItem[]>([])
 const sessions = ref<SessionItem[]>([])
 const sessionId = ref<string>('')
 const messagesRef = ref<HTMLElement>()
@@ -905,11 +891,15 @@ const defaultQuickQueries = [
   '不同类别的指标分布情况',
   '最近三个月的异常变化有哪些',
 ]
+const selectedAgent = computed(() => agents.value.find(agent => agent.id === agentId.value) || null)
 const quickQueries = computed(() => {
+  const agentQuestions = normalizeAgentDefaultQuestions(selectedAgent.value?.default_questions)
+  if (agentQuestions.length) return agentQuestions.slice(0, 4)
   const configured = semanticExampleQueries.value.filter(Boolean)
   return configured.length ? configured.slice(0, 4) : defaultQuickQueries
 })
-const semanticHintText = computed(() => semanticHint.value || '选择智能体和数据源后，可以用自然语言查询已授权的数据。')
+const semanticHintText = computed(() => semanticHint.value || '选择智能体后，可以用自然语言查询已授权的数据。')
+const hasSelectedAgent = computed(() => agents.value.some(agent => agent.id === agentId.value))
 
 const filteredSessions = computed(() => {
   const keyword = sessionSearch.value.trim().toLowerCase()
@@ -918,13 +908,20 @@ const filteredSessions = computed(() => {
 })
 
 const selectedAgentName = computed(() => {
-  return agents.value.find(agent => agent.id === agentId.value)?.name || '未选择智能体'
+  return selectedAgent.value?.name || '未选择智能体'
 })
 
-const selectedDatasourceName = computed(() => {
-  const datasource = datasources.value.find(item => item.id === datasourceId.value)
-  return datasource ? `${datasource.name} (${datasource.database_name})` : '未选择数据源'
-})
+function normalizeAgentDefaultQuestions(value: unknown) {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  return value
+    .map((item) => String(item || '').trim())
+    .filter((item) => {
+      if (!item || seen.has(item)) return false
+      seen.add(item)
+      return true
+    })
+}
 
 const latestAssistant = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i -= 1) {
@@ -996,7 +993,11 @@ onMounted(async () => {
 watch(agentId, async (id) => {
   if (loading.value) return
   cancelActiveStream()
-  localStorage.setItem('wenqu_agent_id', String(id))
+  if (id > 0) {
+    localStorage.setItem('wenqu_agent_id', String(id))
+  } else {
+    localStorage.removeItem('wenqu_agent_id')
+  }
   resetConversation()
   await refreshAgentScopedData()
 })
@@ -1021,6 +1022,14 @@ async function loadAgents() {
     if (agents.value.length > 0 && !agents.value.some(agent => agent.id === agentId.value)) {
       agentId.value = agents.value[0].id
     }
+    if (agents.value.length === 0) {
+      agentId.value = 0
+      sessions.value = []
+      semanticLabels.value = {}
+      semanticExampleQueries.value = []
+      semanticHint.value = ''
+      resetConversation()
+    }
   } catch {
     ElMessage.error('智能体配置加载失败，请确认后端服务已启动')
     agents.value = []
@@ -1028,23 +1037,17 @@ async function loadAgents() {
 }
 
 async function refreshAgentScopedData() {
-  try {
-    datasources.value = await fetchDatasources(agentId.value)
-    if (datasources.value.length > 0) {
-      datasourceId.value = datasources.value[0].id
-    } else {
-      datasourceId.value = null
-    }
-  } catch {
-    ElMessage.error('数据源加载失败，请确认后端服务已启动')
-    datasources.value = []
-    datasourceId.value = null
-  }
   await loadSemanticLabels()
   await loadSessions()
 }
 
 async function loadSemanticLabels() {
+  if (!hasSelectedAgent.value) {
+    semanticLabels.value = {}
+    semanticExampleQueries.value = []
+    semanticHint.value = ''
+    return
+  }
   try {
     const domains = await fetchSemanticDomains(agentId.value)
     const domain = domains[0]
@@ -1072,6 +1075,10 @@ function formatTime(t: string) {
 }
 
 async function loadSessions() {
+  if (!hasSelectedAgent.value) {
+    sessions.value = []
+    return
+  }
   try { sessions.value = await fetchSessions(agentId.value) } catch { sessions.value = [] }
 }
 
@@ -2623,6 +2630,10 @@ function humanizeField(key: string) {
 function handleSend() {
   const q = inputText.value.trim()
   if (!q || loading.value) return
+  if (!agentId.value || agents.value.length === 0) {
+    ElMessage.warning('暂无可访问智能体，请联系管理员分配权限')
+    return
+  }
   const runId = activeRunId + 1
   activeRunId = runId
 
@@ -2637,7 +2648,6 @@ function handleSend() {
     {
       question: q,
       agent_id: agentId.value,
-      datasource_id: datasourceId.value,
       session_id: sessionId.value || undefined,
     },
     (evt) => {
@@ -2653,7 +2663,7 @@ function handleSend() {
       if (evt.event === 'done' || evt.event === 'error') {
         setLoading(false)
         abortController = null
-        loadSessions()
+        if (hasSelectedAgent.value) loadSessions()
       }
       maybeScrollToBottom()
     },

@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from app.api import agent as agent_api
@@ -47,6 +49,7 @@ class RecordingDB:
                     "embedding_model_config_name": "Embedding",
                     "semantic_domain_name": "贷款风控",
                     "semantic_domain_key": "loan_risk",
+                    "default_questions": '["申请区域前三是什么", "余额趋势如何"]',
                     "llm_provider": "ollama",
                     "llm_model": "qwen3:32b",
                     "api_key": "secret",
@@ -75,6 +78,7 @@ async def test_update_agent_updates_fields_and_does_not_return_api_key(monkeypat
             chat_model_config_id=11,
             embedding_model_config_id=12,
             semantic_domain_id=21,
+            default_questions=["申请区域前三是什么", "余额趋势如何"],
             datasource_ids=[3, 4],
         ),
     )
@@ -87,7 +91,9 @@ async def test_update_agent_updates_fields_and_does_not_return_api_key(monkeypat
     assert update_params["chat_model_config_id"] == 11
     assert update_params["embedding_model_config_id"] == 12
     assert update_params["semantic_domain_id"] == 21
+    assert json.loads(update_params["default_questions"]) == ["申请区域前三是什么", "余额趋势如何"]
     assert response["agent"]["name"] == "编辑后智能体"
+    assert response["agent"]["default_questions"] == ["申请区域前三是什么", "余额趋势如何"]
     assert response["agent"]["semantic_domain_name"] == "贷款风控"
     assert "api_key" not in response["agent"]
 
