@@ -77,8 +77,9 @@ class SecretService:
         raw_key = (settings.secret_encryption_key or "").strip()
 
         if not raw_key and settings.debug:
-            raw_key = "wenqu-development-secret-key"
-            logger.warning("secret using development fallback key (DEBUG mode only)")
+            import secrets
+            raw_key = secrets.token_hex(32)
+            logger.warning("secret using randomly generated key (DEBUG mode only, changes on restart)")
 
         try:
             from cryptography.fernet import Fernet

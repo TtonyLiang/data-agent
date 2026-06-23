@@ -64,9 +64,9 @@ final result: passed
 - 历史恢复: `reasoning_trace` 会保存新增 `schema_recall` 步骤输出并在历史会话恢复。
 
 **Verification**
-- Backend: `rtk .venv/bin/pytest -q` passed, 72 tests.
-- Frontend tests: `rtk npm --prefix frontend test -- --run` passed.
-- Frontend build: `rtk npm --prefix frontend run build` passed.
+- Backend: `.venv/bin/pytest -q` passed, 72 tests.
+- Frontend tests: `npm --prefix frontend test -- --run` passed.
+- Frontend build: `npm --prefix frontend run build` passed.
 
 **Residual Visual QA**
 - 仍建议在本地真实信贷业务库里重新跑一次：
@@ -83,9 +83,9 @@ final result: passed
 - 前端补齐 Prompt 配置页，支持按智能体、模型和语义层维护节点系统提示词。
 
 **Verification**
-- Backend full regression: `rtk .venv/bin/python -m pytest -q` passed, 108 tests.
-- Frontend tests: `rtk npm --prefix frontend test -- --run` passed.
-- Frontend build: `rtk npm --prefix frontend run build` passed.
+- Backend full regression: `.venv/bin/python -m pytest -q` passed, 108 tests.
+- Frontend tests: `npm --prefix frontend test -- --run` passed.
+- Frontend build: `npm --prefix frontend run build` passed.
 
 **Covered Cases**
 - SQL 安全：单条 SELECT、危险函数/关键字、跨库/系统库、LIMIT 注入与截断。

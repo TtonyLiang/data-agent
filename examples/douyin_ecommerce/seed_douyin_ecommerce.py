@@ -116,7 +116,7 @@ async def configure_management_console(settings) -> dict[str, int]:
     """Create/update agent, datasource, bindings, and collected schema."""
 
     db = get_management_db()
-    chat_model_id = await resolve_preferred_model_id("chat", preferred_names=("小米mimo", "本地qwen3:14b"))
+    chat_model_id = await resolve_preferred_model_id("chat", preferred_names=("local-chat-model", "ollama"))
     embedding_model_id = await resolve_preferred_model_id(
         "embedding",
         preferred_names=("豆包embedding", "百炼embedding", "qwen3-embedding:0.6b"),
@@ -134,8 +134,8 @@ async def configure_management_console(settings) -> dict[str, int]:
                 "description": "面向抖音直播带货、短视频种草、商品成交、投放转化和售后表现的分析助手",
                 "chat_model_id": chat_model_id,
                 "embedding_model_id": embedding_model_id,
-                "provider": "xiaomi",
-                "model": "mimo-v2.5",
+                "provider": "ollama",
+                "model": "qwen3:14b",
             },
         )
     else:
@@ -148,8 +148,8 @@ async def configure_management_console(settings) -> dict[str, int]:
                 "description": "面向抖音直播带货、短视频种草、商品成交、投放转化和售后表现的分析助手",
                 "chat_model_id": chat_model_id,
                 "embedding_model_id": embedding_model_id,
-                "provider": "xiaomi",
-                "model": "mimo-v2.5",
+                "provider": "ollama",
+                "model": "qwen3:14b",
             },
         )
 

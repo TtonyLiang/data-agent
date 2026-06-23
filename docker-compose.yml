@@ -3,7 +3,7 @@ services:
     image: mysql:8.0
     container_name: dataquery-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-changeme}
       MYSQL_DATABASE: dataquery_agent
     ports:
       - "3306:3306"

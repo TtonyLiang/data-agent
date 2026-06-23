@@ -1156,7 +1156,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default=os.getenv("MYSQL_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.getenv("MYSQL_PORT", "3306")))
     parser.add_argument("--user", default=os.getenv("MYSQL_USER", "root"))
-    parser.add_argument("--password", default=os.getenv("MYSQL_PASSWORD", "root"))
+    parser.add_argument("--password", default=os.getenv("MYSQL_PASSWORD", ""))
     parser.add_argument("--database", default=os.getenv("MYSQL_DATABASE", "business_db"))
     parser.add_argument("--seed", type=int, default=20260614)
     parser.add_argument("--start-date", type=date.fromisoformat, default=DEFAULT_START_DATE)

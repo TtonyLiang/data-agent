@@ -90,8 +90,8 @@ async def test_embedding_adapter_falls_back_to_volcengine_multimodal(monkeypatch
     monkeypatch.setattr(embedding_adapter.httpx, "AsyncClient", VolcengineFakeClient)
 
     vector, meta = await embedding_adapter.request_embedding(
-        provider="字节跳动",
-        base_url="https://ark.cn-beijing.volces.com/api/v3",
+        provider="test-embedding-provider",
+        base_url="https://api.example-embedding.com/v3",
         model="doubao-embedding-text-240515",
         text="hello",
         headers={"Authorization": "Bearer secret"},

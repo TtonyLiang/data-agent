@@ -243,11 +243,11 @@ async def test_model_config_update_preserves_api_key_when_form_leaves_it_blank(m
         def __init__(self):
             self.row = {
                 "id": 8,
-                "name": "小米mimo",
+                "name": "test-chat-model",
                 "model_type": "chat",
-                "provider": "xiaomi",
-                "base_url": "https://api.xiaomimimo.com/v1",
-                "model_name": "mimo-v2.5",
+                "provider": "test-provider",
+                "base_url": "https://api.example.com/v1",
+                "model_name": "test-model-v1",
                 "api_key": "existing-secret",
                 "api_key_enabled": 1,
                 "embedding_dimension": None,
@@ -280,11 +280,11 @@ async def test_model_config_update_preserves_api_key_when_form_leaves_it_blank(m
     updated = await ModelConfigService().update(
         8,
         ModelConfigUpdate(
-            name="小米mimo",
+            name="test-chat-model",
             model_type="chat",
-            provider="xiaomi",
-            base_url="https://api.xiaomimimo.com/v1",
-            model_name="mimo-v2.5",
+            provider="test-provider",
+            base_url="https://api.example.com/v1",
+            model_name="test-model-v1",
             api_key="",
             api_key_enabled=True,
             status="active",
@@ -305,11 +305,11 @@ async def test_model_config_update_replaces_api_key_when_new_value_is_entered(mo
         def __init__(self):
             self.row = {
                 "id": 8,
-                "name": "小米mimo",
+                "name": "test-chat-model",
                 "model_type": "chat",
-                "provider": "xiaomi",
-                "base_url": "https://api.xiaomimimo.com/v1",
-                "model_name": "mimo-v2.5",
+                "provider": "test-provider",
+                "base_url": "https://api.example.com/v1",
+                "model_name": "test-model-v1",
                 "api_key": "existing-secret",
                 "api_key_enabled": 1,
                 "embedding_dimension": None,
@@ -331,11 +331,11 @@ async def test_model_config_update_replaces_api_key_when_new_value_is_entered(mo
     await ModelConfigService().update(
         8,
         ModelConfigUpdate(
-            name="小米mimo",
+            name="test-chat-model",
             model_type="chat",
-            provider="xiaomi",
-            base_url="https://api.xiaomimimo.com/v1",
-            model_name="mimo-v2.5",
+            provider="test-provider",
+            base_url="https://api.example.com/v1",
+            model_name="test-model-v1",
             api_key="new-secret",
             api_key_enabled=True,
             status="active",
@@ -350,7 +350,7 @@ async def test_model_config_update_replaces_api_key_when_new_value_is_entered(mo
 
 
 def test_public_model_config_exposes_configured_flag_without_api_key():
-    public = _public_model_config({"id": 8, "name": "小米mimo", "api_key": "secret"})
+    public = _public_model_config({"id": 8, "name": "test-chat-model", "api_key": "secret"})
 
     assert "api_key" not in public
     assert public["api_key_configured"] is True
@@ -447,8 +447,8 @@ async def test_model_config_embedding_test_uses_provider_adapter(monkeypatch):
                     "id": params["id"],
                     "name": "豆包向量",
                     "model_type": "embedding",
-                    "provider": "字节跳动",
-                    "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+                    "provider": "test-embedding-provider",
+                    "base_url": "https://api.example-embedding.com/v3",
                     "model_name": "doubao-embedding-text-240515",
                     "api_key": "secret-key",
                     "api_key_enabled": 1,
@@ -473,8 +473,8 @@ async def test_model_config_embedding_test_uses_provider_adapter(monkeypatch):
 
     assert result["ok"] is True
     assert result["variant"] == "volcengine_multimodal_embeddings"
-    assert calls[0]["provider"] == "字节跳动"
-    assert calls[0]["base_url"] == "https://ark.cn-beijing.volces.com/api/v3"
+    assert calls[0]["provider"] == "test-embedding-provider"
+    assert calls[0]["base_url"] == "https://api.example-embedding.com/v3"
     assert calls[0]["model"] == "doubao-embedding-text-240515"
     assert calls[0]["headers"]["Authorization"] == "Bearer secret-key"
     assert "secret-key" not in str(result)

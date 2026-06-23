@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -17,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
-DEV_JWT_SECRET = "wenqu-dev-jwt-secret-for-local-debug-only-change-in-production"
 
 
 class AuthError(ValueError):
@@ -137,7 +137,8 @@ class UserService:
             raise AuthError("服务未配置安全的 JWT 密钥")
         if secret:
             logger.warning("configured JWT secret is too short; using local debug JWT secret")
-        return DEV_JWT_SECRET
+        # Generate a random secret for debug mode (changes on each restart)
+        return secrets.token_hex(32)
 
     async def get_user_by_token(self, token: str) -> PublicUser:
         payload = self.decode_access_token(token)

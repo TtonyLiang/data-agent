@@ -5,7 +5,7 @@
 运行脚本：
 
 ```bash
-rtk .venv/bin/python examples/douyin_ecommerce/seed_douyin_ecommerce.py
+.venv/bin/python examples/douyin_ecommerce/seed_douyin_ecommerce.py
 ```
 
 脚本会在本地 MySQL 创建独立业务库 `douyin_ecommerce_demo`，并在管理台配置：
