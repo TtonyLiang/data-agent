@@ -77,19 +77,19 @@ Prompt templates can be overridden per agent, model, and semantic domain. System
 
 ### System Architecture
 
-![System Architecture](docs/images/architecture.png)
+![System Architecture](docs/images/architecture-en.png)
 
 The system consists of a frontend management console, FastAPI backend, LangGraph query workflow, and external dependencies (LLM, MySQL, Milvus). The frontend communicates with the backend via REST API and SSE, while the backend orchestrates 16 processing nodes through LangGraph.
 
 ### Query Execution Flow
 
-![Query Execution Flow](docs/images/workflow.png)
+![Query Execution Flow](docs/images/workflow-en.png)
 
 Full pipeline: User question → Intent Recognition → Semantic Enhancement → Knowledge Recall → Schema Recall → LogicForm Generation → Semantic Validation → SQL Compilation → Semantic Consistency Check → SQL Execution → Analysis Plan → Python Generation → Python Analysis → Report Generation.
 
 ### Semantic Layer Configuration
 
-![Semantic Layer ER Diagram](docs/images/er-diagram.png)
+![Semantic Layer ER Diagram](docs/images/er-diagram-en.png)
 
 An agent is the runtime entry point, binding datasources, models, and a semantic domain. Each semantic domain contains six asset types: concepts, relations, metrics, rules, mappings, and templates.
 
