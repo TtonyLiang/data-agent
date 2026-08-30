@@ -1,0 +1,159 @@
+{
+  "format": "wenqu-ontology",
+  "version": 1,
+  "domain": {
+    "domain_key": "supply_chain_operations",
+    "name": "供应链运营",
+    "description": "围绕供应中断、库存调拨和工单交付建立的最小运营本体"
+  },
+  "object_types": [
+    {
+      "object_key": "Supplier",
+      "name": "供应商",
+      "description": "向公司提供生产物料的法人或组织",
+      "primary_property": "supplier_id",
+      "display_property": "name",
+      "status": "active",
+      "properties": [
+        {"property_key": "supplier_id", "name": "供应商编号", "data_type": "string", "required": true, "unique": true, "sort_order": 0},
+        {"property_key": "name", "name": "供应商名称", "data_type": "string", "required": true, "sort_order": 1},
+        {"property_key": "status", "name": "合作状态", "data_type": "string", "required": true, "default_value": "active", "sort_order": 2},
+        {"property_key": "risk_level", "name": "风险等级", "data_type": "string", "required": true, "default_value": "low", "sort_order": 3}
+      ]
+    },
+    {
+      "object_key": "Material",
+      "name": "物料",
+      "description": "生产活动消耗或调拨的原材料与半成品",
+      "primary_property": "material_id",
+      "display_property": "name",
+      "status": "active",
+      "properties": [
+        {"property_key": "material_id", "name": "物料编号", "data_type": "string", "required": true, "unique": true, "sort_order": 0},
+        {"property_key": "name", "name": "物料名称", "data_type": "string", "required": true, "sort_order": 1},
+        {"property_key": "available_qty", "name": "可用数量", "data_type": "number", "required": true, "sort_order": 2},
+        {"property_key": "allocation_status", "name": "调拨状态", "data_type": "string", "required": true, "default_value": "available", "sort_order": 3},
+        {"property_key": "updated_at", "name": "更新时间", "data_type": "datetime", "required": false, "sort_order": 4}
+      ]
+    },
+    {
+      "object_key": "WorkOrder",
+      "name": "生产工单",
+      "description": "在指定工厂完成产品生产的执行单元",
+      "primary_property": "work_order_id",
+      "display_property": "work_order_id",
+      "status": "active",
+      "properties": [
+        {"property_key": "work_order_id", "name": "工单编号", "data_type": "string", "required": true, "unique": true, "sort_order": 0},
+        {"property_key": "material_id", "name": "物料编号", "data_type": "string", "required": true, "sort_order": 1},
+        {"property_key": "planned_qty", "name": "计划数量", "data_type": "number", "required": true, "sort_order": 2},
+        {"property_key": "status", "name": "工单状态", "data_type": "string", "required": true, "default_value": "planned", "sort_order": 3},
+        {"property_key": "decision_note", "name": "决策说明", "data_type": "text", "required": false, "sort_order": 4}
+      ]
+    }
+  ],
+  "link_types": [
+    {
+      "link_key": "supplier_supplies_material",
+      "name": "供应物料",
+      "source_object_key": "Supplier",
+      "target_object_key": "Material",
+      "source_property": "supplier_id",
+      "target_property": "material_id",
+      "cardinality": "many_to_many",
+      "description": "供应商能够供应的物料",
+      "status": "active"
+    },
+    {
+      "link_key": "work_order_consumes_material",
+      "name": "消耗物料",
+      "source_object_key": "WorkOrder",
+      "target_object_key": "Material",
+      "source_property": "material_id",
+      "target_property": "material_id",
+      "cardinality": "many_to_one",
+      "description": "生产工单计划消耗的物料",
+      "status": "active"
+    }
+  ],
+  "action_types": [
+    {
+      "action_key": "reallocate_material",
+      "name": "调整物料分配",
+      "target_object_key": "Material",
+      "description": "供应异常时调整物料可用量和分配状态",
+      "parameters": [
+        {"parameter_key": "new_quantity", "name": "调整后数量", "data_type": "number", "required": true, "options": []},
+        {"parameter_key": "new_status", "name": "调拨状态", "data_type": "string", "required": true, "options": ["available", "reserved", "reallocated"]}
+      ],
+      "preconditions": [
+        {"property": "available_qty", "operator": "gte", "value": 0, "message": "当前物料数量异常，不能执行调拨"}
+      ],
+      "effects": [
+        {"property": "available_qty", "value": "$param.new_quantity"},
+        {"property": "allocation_status", "value": "$param.new_status"},
+        {"property": "updated_at", "value": "$now"}
+      ],
+      "allowed_roles": ["admin", "user"],
+      "requires_approval": false,
+      "status": "active"
+    },
+    {
+      "action_key": "change_work_order_status",
+      "name": "变更工单状态",
+      "target_object_key": "WorkOrder",
+      "description": "基于供应与交付决策变更工单状态并记录原因",
+      "parameters": [
+        {"parameter_key": "status", "name": "目标状态", "data_type": "string", "required": true, "options": ["planned", "released", "blocked", "completed"]},
+        {"parameter_key": "note", "name": "决策说明", "data_type": "text", "required": true, "options": []}
+      ],
+      "preconditions": [
+        {"property": "status", "operator": "ne", "value": "completed", "message": "已完成工单不能再次变更"}
+      ],
+      "effects": [
+        {"property": "status", "value": "$param.status"},
+        {"property": "decision_note", "value": "$param.note"}
+      ],
+      "allowed_roles": ["admin", "user"],
+      "requires_approval": false,
+      "status": "active"
+    }
+  ],
+  "objects": [
+    {
+      "object_type_key": "Supplier",
+      "primary_value": "SUP-001",
+      "display_name": "华东精密材料",
+      "properties": {"supplier_id": "SUP-001", "name": "华东精密材料", "status": "active", "risk_level": "high"},
+      "status": "active"
+    },
+    {
+      "object_type_key": "Material",
+      "primary_value": "MAT-001",
+      "display_name": "医用无纺布",
+      "properties": {"material_id": "MAT-001", "name": "医用无纺布", "available_qty": 1800, "allocation_status": "available"},
+      "status": "active"
+    },
+    {
+      "object_type_key": "WorkOrder",
+      "primary_value": "WO-20260829-01",
+      "display_name": "WO-20260829-01",
+      "properties": {"work_order_id": "WO-20260829-01", "material_id": "MAT-001", "planned_qty": 2400, "status": "planned"},
+      "status": "active"
+    }
+  ],
+  "links": [
+    {
+      "link_key": "supplier_supplies_material",
+      "source_primary_value": "SUP-001",
+      "target_primary_value": "MAT-001",
+      "properties": {"lead_time_days": 12}
+    },
+    {
+      "link_key": "work_order_consumes_material",
+      "source_primary_value": "WO-20260829-01",
+      "target_primary_value": "MAT-001",
+      "properties": {"required_qty": 2400}
+    }
+  ]
+}

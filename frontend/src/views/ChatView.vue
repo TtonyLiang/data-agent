@@ -2,11 +2,11 @@
   <div class="chat-layout">
     <div class="session-sidebar">
       <div class="sidebar-header">
-        <el-button class="new-chat-button" type="primary" :disabled="loading" @click="newSession">
+        <el-button class="new-chat-button" type="primary" :disabled="loading || !hasSelectedAgent" @click="newSession">
           <el-icon><Plus /></el-icon>
           <span>新对话</span>
         </el-button>
-        <el-button :icon="Refresh" :disabled="loading" @click="loadSessions" />
+        <el-button :icon="Refresh" :disabled="loading || !hasSelectedAgent" @click="loadSessions" />
       </div>
       <div class="session-search">
         <el-input v-model="sessionSearch" :prefix-icon="Search" placeholder="搜索历史会话" clearable />
@@ -42,11 +42,12 @@
         <div class="chat-controls">
           <el-select
             v-model="agentId"
-            placeholder="选择智能体"
+            :placeholder="agents.length ? '选择智能体' : '暂无可用智能体'"
             style="width: 260px"
             size="small"
-            :disabled="loading"
+            :disabled="loading || agents.length === 0"
           >
+            <el-option v-if="agents.length === 0" label="暂无可用智能体" :value="0" disabled />
             <el-option
               v-for="agent in agents"
               :key="agent.id"
@@ -71,11 +72,6 @@
             show-icon
             :closable="false"
           />
-          <div class="empty-examples">
-            <el-button v-for="query in quickQueries.slice(0, 3)" :key="query" @click="useQuickQuery(query)">
-              {{ query }}
-            </el-button>
-          </div>
         </div>
 
         <template v-for="(msg, idx) in messages" :key="idx">
@@ -304,6 +300,17 @@
                     <p class="answer-subtitle">{{ msg.report_payload ? reportDisplayTitle(msg.report_payload) : panelResultTitle(msg) }}</p>
                   </div>
                   <div class="answer-badges">
+                    <el-tag v-if="turnModeLabel(msg)" size="small" type="info" effect="plain">{{ turnModeLabel(msg) }}</el-tag>
+                    <el-tag
+                      v-if="msg.reused_artifacts?.length"
+                      size="small"
+                      type="success"
+                      effect="plain"
+                      :title="reusedArtifactTitle(msg)"
+                    >
+                      复用 {{ msg.reused_artifacts.length }} 项上下文
+                    </el-tag>
+                    <el-tag v-if="msg.context_invalidated" size="small" type="warning" effect="plain">上下文已刷新</el-tag>
                     <el-tag v-if="msg.intent" size="small" type="info">{{ msg.intent }}</el-tag>
                     <el-tag v-if="msg.sql" size="small" type="success">SQL 已生成</el-tag>
                     <el-tag v-if="msg.sql_result?.length" size="small" effect="plain">{{ msg.sql_result.length }} 行</el-tag>
@@ -468,18 +475,30 @@
           <el-input
             v-model="inputText"
             type="textarea"
-            placeholder="输入你的问题，支持自然语言查询数据..."
+            :placeholder="hasSelectedAgent ? '输入你的问题，支持自然语言查询数据...' : '请先选择可用智能体'"
             :autosize="{ minRows: 2, maxRows: 4 }"
-            :disabled="loading"
-            @keydown.enter.exact.prevent="handleSend"
+            :disabled="loading || !hasSelectedAgent"
+            @keydown.enter.exact.prevent="handleSend()"
           />
           <div class="composer-footer">
             <div class="quick-query-list">
-              <el-button v-for="query in quickQueries" :key="query" size="small" @click="useQuickQuery(query)">
+              <el-button
+                v-for="query in quickQueries"
+                :key="query"
+                size="small"
+                :disabled="!hasSelectedAgent"
+                @click="useQuickQuery(query)"
+              >
                 {{ query }}
               </el-button>
             </div>
-            <el-button :icon="Promotion" @click="handleSend" :loading="loading" type="primary">
+            <el-button
+              :icon="Promotion"
+              :disabled="!hasSelectedAgent || !inputText.trim()"
+              :loading="loading"
+              type="primary"
+              @click="handleSend()"
+            >
               发送
             </el-button>
           </div>
@@ -798,7 +817,7 @@ import { Promotion, Loading, ChatDotRound, Plus, Delete, CircleCheck, Clock, Sea
 import {
   sendMessageStream, fetchAgents, fetchSessions, fetchHistory, deleteSession,
   fetchSemanticAssets, fetchSemanticDomains,
-  type AgentItem, type SessionItem, type HistoryItem,
+  type AgentItem, type SessionItem, type HistoryItem, type ChatTurnMode,
 } from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { setChatBusy } from '../stores/chatRun'
@@ -842,6 +861,22 @@ const hasUnreadStream = ref(false)
 let abortController: AbortController | null = null
 let activeRunId = 0
 const resultPageSizeOptions = [10, 20, 50, 100]
+const turnModeLabels: Record<ChatTurnMode, string> = {
+  new_task: '新任务',
+  continue: '续跑',
+  refine: '细化',
+  retry: '重试',
+  analyze: '结果分析',
+  respond: '直接回答',
+}
+const artifactLabels: Record<string, string> = {
+  semantic_runtime: '语义知识',
+  schema: '数据结构',
+  logic_form: 'LogicForm',
+  compiled_sql: 'SQL',
+  sql_result: '查询结果',
+  analysis: '分析结果',
+}
 
 const ReportEChart = defineComponent({
   name: 'ReportEChart',
@@ -1151,7 +1186,7 @@ async function downloadResults() {
 function rerunLatestQuestion() {
   if (!latestUserQuestion.value || loading.value) return
   inputText.value = latestUserQuestion.value
-  handleSend()
+  handleSend('retry')
 }
 
 function resetVisibleColumns() {
@@ -1247,6 +1282,13 @@ function historyToMessage(item: HistoryItem, sid: string, index: number): ChatMe
       semantic_check: item.semantic_check,
       python_result: item.python_result,
       report_payload: item.report_payload,
+      task_id: item.task_id,
+      turn_id: item.turn_id,
+      turn_mode: item.turn_mode,
+      task_status: item.task_status,
+      reused_artifacts: item.reused_artifacts,
+      invalidated_artifacts: item.invalidated_artifacts,
+      context_invalidated: item.context_invalidated,
       steps: (item.reasoning_trace || []).map(step => ({
         node: step.node,
         label: step.label,
@@ -1283,6 +1325,15 @@ function isAssistantStreaming(message: ChatMessage) {
 
 function shouldShowAnswerCard(message: ChatMessage) {
   return message.role === 'assistant' && !isAssistantStreaming(message)
+}
+
+function turnModeLabel(message: ChatMessage) {
+  return message.turn_mode ? turnModeLabels[message.turn_mode] || message.turn_mode : ''
+}
+
+function reusedArtifactTitle(message: ChatMessage) {
+  const labels = (message.reused_artifacts || []).map(item => artifactLabels[item] || item)
+  return labels.length ? `已复用：${labels.join('、')}` : ''
 }
 
 function getOutputString(output: Record<string, unknown>, key: string) {
@@ -2627,7 +2678,7 @@ function humanizeField(key: string) {
     .join(' ')
 }
 
-function handleSend() {
+function handleSend(turnMode?: ChatTurnMode) {
   const q = inputText.value.trim()
   if (!q || loading.value) return
   if (!agentId.value || agents.value.length === 0) {
@@ -2649,6 +2700,7 @@ function handleSend() {
       question: q,
       agent_id: agentId.value,
       session_id: sessionId.value || undefined,
+      turn_mode: turnMode,
     },
     (evt) => {
       if (runId !== activeRunId) return
@@ -2679,7 +2731,7 @@ onUnmounted(() => {
 .chat-layout {
   display: grid;
   grid-template-columns: 280px minmax(460px, 1fr) 430px;
-  height: calc(100vh - 68px);
+  height: calc(100dvh - var(--wq-header-height));
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -2914,14 +2966,6 @@ onUnmounted(() => {
   margin-top: 8px;
   line-height: 1.55;
   font-size: 14px;
-}
-
-.empty-examples {
-  margin-top: 18px;
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-  flex-wrap: wrap;
 }
 
 .message {
@@ -4553,9 +4597,905 @@ onUnmounted(() => {
   background: #fbfcff;
 }
 
+/* Quiet light workbench. Surfaces and typography inherit the application tokens. */
+.chat-layout {
+  --chat-surface: var(--wq-surface);
+  --chat-soft: var(--wq-surface-soft, var(--wq-surface));
+  --chat-raised: var(--wq-surface-raised, var(--wq-surface));
+  --chat-code: var(--wq-code, var(--wq-bg));
+  --chat-radius: var(--wq-radius);
+  grid-template-columns: 248px minmax(520px, 1fr) 380px;
+  background: var(--chat-surface);
+  color: var(--wq-text);
+  font-size: 14px;
+}
+
+.session-sidebar,
+.insight-panel {
+  background: var(--chat-soft);
+  border-color: var(--wq-border);
+}
+
+.sidebar-header {
+  padding: 16px 12px 10px;
+  border-bottom: 0;
+}
+
+.sidebar-header :deep(.el-button) {
+  min-width: 34px;
+  min-height: 34px;
+  border-color: var(--wq-border);
+  background: var(--chat-raised);
+  color: var(--wq-muted);
+  box-shadow: none;
+}
+
+.sidebar-header :deep(.new-chat-button) {
+  border-color: var(--wq-primary);
+  background: var(--wq-primary);
+  color: #fff;
+  box-shadow: none;
+  font-weight: 650;
+}
+
+.sidebar-header :deep(.new-chat-button:hover),
+.sidebar-header :deep(.new-chat-button:focus-visible) {
+  border-color: var(--wq-primary-hover, var(--wq-primary));
+  background: var(--wq-primary-hover, var(--wq-primary));
+}
+
+.sidebar-header :deep(.new-chat-button.is-disabled),
+.sidebar-header :deep(.new-chat-button.is-disabled:hover),
+.composer-footer > :deep(.el-button--primary.is-disabled),
+.composer-footer > :deep(.el-button--primary.is-disabled:hover) {
+  border-color: #d5dce6;
+  background: #e8edf3;
+  color: #667085;
+  opacity: 1;
+}
+
+.sidebar-header :deep(.el-button:not(.new-chat-button):hover) {
+  border-color: var(--wq-primary);
+  background: var(--wq-primary-soft);
+  color: var(--wq-primary);
+}
+
+.session-search {
+  padding: 4px 12px 12px;
+}
+
+.session-search :deep(.el-input__wrapper),
+.workspace-toolbar :deep(.el-select__wrapper) {
+  min-height: 34px;
+  background: var(--chat-raised);
+  box-shadow: 0 0 0 1px var(--wq-border) inset;
+}
+
+.session-search :deep(.el-input__wrapper.is-focus),
+.workspace-toolbar :deep(.el-select__wrapper.is-focused) {
+  box-shadow: 0 0 0 1px var(--wq-primary) inset;
+}
+
+.session-search :deep(.el-input__inner),
+.workspace-toolbar :deep(.el-select__selected-item),
+.workspace-toolbar :deep(.el-select__placeholder) {
+  color: var(--wq-text);
+}
+
+.session-search :deep(.el-input__inner::placeholder) {
+  color: var(--wq-muted);
+}
+
+.session-list {
+  padding: 0 8px 14px;
+}
+
+.session-group {
+  margin: 12px 8px 6px;
+  color: var(--wq-muted);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.session-item {
+  margin-bottom: 2px;
+  padding: 9px 10px;
+  border-radius: calc(var(--chat-radius) - 2px);
+  border-color: transparent;
+}
+
+.session-item:hover {
+  background: var(--chat-raised);
+}
+
+.session-item.active {
+  border-color: transparent;
+  background: var(--wq-primary-soft);
+  box-shadow: inset 2px 0 0 var(--wq-primary);
+}
+
+.session-item.disabled:hover {
+  background: transparent;
+}
+
+.session-title,
+.session-item.active .session-title {
+  color: var(--wq-text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.session-item.active .session-title {
+  font-weight: 700;
+}
+
+.session-meta,
+.session-delete,
+.empty-sessions,
+.session-footer span {
+  color: var(--wq-muted);
+}
+
+.session-meta {
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+.session-delete:hover {
+  color: var(--wq-danger);
+}
+
+.session-footer {
+  padding: 12px 14px 14px;
+  border-color: var(--wq-border);
+  background: var(--chat-soft);
+}
+
+.chat-container {
+  background: var(--chat-surface);
+}
+
+.workspace-toolbar {
+  min-height: 64px;
+  padding: 12px 24px;
+  border-color: var(--wq-border);
+  background: var(--chat-surface);
+}
+
+.workspace-title h2 {
+  color: var(--wq-text);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.workspace-title p {
+  margin-top: 4px;
+  color: var(--wq-muted);
+  font-size: 13px;
+}
+
+.chat-controls :deep(.el-select__wrapper) {
+  background: var(--chat-raised);
+}
+
+.chat-controls :deep(.el-select__caret),
+.session-search :deep(.el-input__prefix-inner),
+.session-search :deep(.el-input__suffix-inner) {
+  color: var(--wq-muted);
+}
+
+.chat-messages {
+  position: relative;
+  padding: 30px clamp(22px, 3.4vw, 48px);
+  background: var(--chat-surface);
+}
+
+.chat-messages::before {
+  content: none;
+}
+
+.chat-messages > * {
+  position: relative;
+}
+
+.jump-latest-button {
+  right: 26px;
+  bottom: 108px;
+  border-color: var(--wq-border);
+  border-radius: 999px;
+  background: var(--chat-raised);
+  color: var(--wq-primary);
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.1);
+}
+
+.jump-latest-button:hover {
+  border-color: var(--wq-primary);
+  background: var(--wq-primary-soft);
+}
+
+.empty-hint {
+  margin-top: min(14vh, 120px);
+  color: var(--wq-muted);
+}
+
+.empty-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 16px;
+  border-color: var(--wq-border);
+  border-radius: var(--chat-radius);
+  background: var(--wq-primary-soft);
+  color: var(--wq-primary);
+}
+
+.empty-hint h3 {
+  color: var(--wq-text);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.empty-hint p {
+  color: var(--wq-muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.empty-hint :deep(.el-alert) {
+  margin-top: 16px;
+  border: 1px solid var(--wq-border);
+  border-radius: var(--chat-radius);
+  background: var(--chat-raised);
+  color: var(--wq-warning);
+}
+
+.quick-query-list :deep(.el-button) {
+  min-height: 32px;
+  margin: 0;
+  border-color: var(--wq-border);
+  background: var(--chat-raised);
+  color: var(--wq-muted);
+  font-size: 13px;
+}
+
+.quick-query-list :deep(.el-button:hover) {
+  border-color: var(--wq-primary);
+  background: var(--wq-primary-soft);
+  color: var(--wq-primary);
+}
+
+.quick-query-list :deep(.el-button.is-disabled),
+.quick-query-list :deep(.el-button.is-disabled:hover) {
+  border-color: var(--wq-border);
+  background: #f2f4f7;
+  color: var(--wq-subtle);
+  opacity: 1;
+}
+
+.message {
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.message-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: calc(var(--chat-radius) - 1px);
+  background: var(--wq-primary);
+  color: #fff;
+  font-size: 11px;
+}
+
+.message.assistant .message-avatar {
+  border-color: var(--wq-border);
+  background: var(--wq-primary-soft);
+  color: var(--wq-primary);
+}
+
+.message-content {
+  padding: 5px 0;
+}
+
+.message.assistant .message-content {
+  max-width: min(820px, calc(100% - 52px));
+}
+
+.message.user .message-content {
+  max-width: min(590px, calc(100% - 52px));
+  padding: 10px 14px;
+  border-color: color-mix(in srgb, var(--wq-primary) 18%, var(--wq-border));
+  border-radius: var(--chat-radius);
+  background: var(--wq-primary-soft);
+  color: var(--wq-text);
+}
+
+.message-content .meta {
+  margin-bottom: 8px;
+}
+
+.message-content .meta :deep(.el-tag) {
+  border-color: var(--wq-border);
+  background: var(--chat-raised);
+  color: var(--wq-muted);
+}
+
+.message-content .text,
+.message.user .message-content .text {
+  color: var(--wq-text);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.answer-card,
+.compact-result,
+.analysis-process-toggle,
+.analysis-mini-chart,
+.report-preview-header,
+.report-highlight,
+.report-card,
+.report-mini-section,
+.report-section,
+.report-paper-head,
+.report-doc-section,
+.result-meta-card {
+  border-color: var(--wq-border);
+  border-radius: var(--chat-radius);
+  background: var(--chat-surface);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+.answer-card {
+  overflow: hidden;
+}
+
+.answer-card-header {
+  padding: 16px 18px 13px;
+  border-color: var(--wq-border);
+  background: var(--chat-soft);
+}
+
+.answer-kicker,
+.inline-report-head > span,
+.report-preview-header span,
+.report-dialog-title span,
+.report-status,
+.report-paper-head > span {
+  color: var(--wq-primary);
+}
+
+.answer-card h3,
+.inline-report-head h4,
+.answer-kpi strong,
+.asset-chip strong,
+.inline-result-header,
+.column-heading span,
+.analysis-step-heading h3,
+.analysis-mini-chart strong,
+.panel-step strong,
+.result-meta-card strong,
+.cell-detail strong,
+.report-preview-header h3,
+.report-dialog-title h2,
+.report-highlight strong,
+.report-card strong,
+.report-mini-chart strong,
+.report-mini-section strong,
+.report-section h3,
+.report-paper-head h1,
+.report-md-title h1,
+.report-md-subheading h3,
+.report-doc-section h3,
+.report-kpi-cell strong {
+  color: var(--wq-text);
+}
+
+.answer-subtitle,
+.asset-chip span,
+.answer-kpi span,
+.answer-kpi code,
+.column-heading small,
+.analysis-step-state,
+.analysis-live-lines p,
+.analysis-mini-chart span,
+.analysis-mini-bar em,
+.run-state,
+.result-count,
+.panel-step p,
+.result-meta-card p,
+.result-page-hint,
+.report-preview-header p,
+.report-mini-section p,
+.report-hero p,
+.report-highlight span,
+.report-card span,
+.report-mini-chart span,
+.report-hero-meta span,
+.report-meta-line span,
+.report-chart-head p {
+  color: var(--wq-muted);
+}
+
+.answer-body,
+.answer-copy p,
+.analysis-lead,
+.analysis-report-text,
+.analysis-block ul,
+.analysis-block h4,
+.analysis-subtitle,
+.analysis-mini-bar b,
+.report-markdown-preview p,
+.report-markdown-preview li,
+.report-section li,
+.report-md-paragraph p,
+.report-md-list li,
+.report-doc-section p,
+.report-doc-section li {
+  color: var(--wq-text);
+}
+
+.answer-subtitle,
+.answer-kpi span,
+.answer-kpi code,
+.analysis-step-state,
+.analysis-live-lines p,
+.panel-step p,
+.result-meta-card p,
+.result-page-hint,
+.report-preview-header p,
+.report-mini-section p,
+.report-card span,
+.report-mini-chart span,
+.report-chart-head p {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.answer-body,
+.answer-copy p,
+.analysis-lead,
+.analysis-report-text,
+.analysis-block ul,
+.report-markdown-preview p,
+.report-markdown-preview li,
+.report-section li,
+.report-md-paragraph p,
+.report-md-list li,
+.report-doc-section p,
+.report-doc-section li {
+  font-size: 14px;
+  line-height: 1.72;
+}
+
+.answer-kpi {
+  border-color: var(--wq-border);
+  border-radius: calc(var(--chat-radius) - 1px);
+  background: var(--chat-soft);
+}
+
+.summary-mark {
+  border-color: color-mix(in srgb, var(--wq-success) 24%, var(--wq-border));
+  border-radius: calc(var(--chat-radius) - 1px);
+  background: color-mix(in srgb, var(--wq-success) 9%, var(--chat-surface));
+  color: var(--wq-success);
+}
+
+.answer-assets {
+  padding: 0 17px 17px;
+}
+
+.asset-chip {
+  border-color: var(--wq-border);
+  border-radius: calc(var(--chat-radius) - 1px);
+  background: var(--chat-soft);
+}
+
+.asset-chip:hover {
+  border-color: var(--wq-primary);
+  background: var(--wq-primary-soft);
+}
+
+.run-error-card {
+  border-color: color-mix(in srgb, var(--wq-danger) 35%, var(--wq-border));
+  border-radius: var(--chat-radius);
+  background: var(--chat-surface);
+  box-shadow: none;
+}
+
+.run-error-header {
+  border-color: color-mix(in srgb, var(--wq-danger) 20%, var(--wq-border));
+  background: color-mix(in srgb, var(--wq-danger) 7%, var(--chat-surface));
+  color: var(--wq-danger);
+}
+
+.run-error-header h3,
+.run-error-kicker,
+.run-error-message,
+.detail-toggle {
+  color: var(--wq-danger);
+}
+
+.run-error-summary,
+.run-error-detail {
+  border-color: color-mix(in srgb, var(--wq-danger) 24%, var(--wq-border));
+  background: color-mix(in srgb, var(--wq-danger) 4%, var(--chat-surface));
+  color: var(--wq-text);
+}
+
+.run-error-suggestion,
+.run-error-tip {
+  color: var(--wq-warning);
+}
+
+.sql-block,
+.panel-sql,
+.analysis-code-block.python,
+.report-section pre,
+.report-md-code pre,
+.report-step-block pre,
+.report-appendix pre {
+  background: var(--chat-code);
+  border-color: var(--chat-code);
+}
+
+.sql-block code,
+.panel-sql code,
+.analysis-code-block.python code,
+.report-section pre,
+.report-md-code pre,
+.report-step-block pre,
+.report-appendix pre {
+  color: #e8edf5;
+}
+
+.analysis-process-toggle {
+  padding: 10px 12px;
+  border-color: var(--wq-border);
+  background: var(--chat-soft);
+  color: var(--wq-text);
+  box-shadow: none;
+}
+
+.analysis-process-toggle:hover {
+  border-color: var(--wq-primary);
+  background: var(--wq-primary-soft);
+}
+
+.analysis-process-toggle small {
+  color: var(--wq-muted);
+}
+
+.analysis-step + .analysis-step {
+  border-color: var(--wq-border);
+}
+
+.analysis-step-number,
+.analysis-step-icon {
+  background: var(--wq-primary-soft);
+  color: var(--wq-primary);
+}
+
+.analysis-step.done .analysis-step-number,
+.analysis-step.done .analysis-step-icon {
+  background: color-mix(in srgb, var(--wq-success) 9%, var(--chat-surface));
+  color: var(--wq-success);
+}
+
+.analysis-step.running .analysis-step-state {
+  color: var(--wq-primary);
+}
+
+.analysis-code-block,
+.analysis-table {
+  border-color: var(--wq-border);
+  border-radius: calc(var(--chat-radius) - 1px);
+  background: var(--chat-surface);
+}
+
+.analysis-code-block.json {
+  background: var(--chat-soft);
+}
+
+.analysis-code-block code {
+  color: var(--wq-text);
+}
+
+.analysis-table th,
+.analysis-table td {
+  border-color: var(--wq-border);
+  color: var(--wq-text);
+}
+
+.analysis-table th {
+  background: var(--chat-soft);
+  color: var(--wq-text);
+}
+
+.analysis-table th small {
+  color: var(--wq-muted);
+}
+
+.analysis-mini-bar i {
+  background: var(--wq-primary);
+}
+
+.analysis-stream-cursor {
+  color: var(--wq-muted);
+}
+
+.analysis-stream-cursor span {
+  background: var(--wq-primary);
+  box-shadow: none;
+  animation: analysisPulse 1.2s infinite;
+}
+
+@keyframes analysisPulse {
+  0%, 100% { opacity: 0.38; transform: scale(0.82); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.chat-input {
+  padding: 12px clamp(22px, 3.4vw, 48px) 18px;
+  border-color: var(--wq-border);
+  background: var(--chat-surface);
+}
+
+.query-composer {
+  border-color: var(--wq-border);
+  border-radius: var(--chat-radius);
+  background: var(--chat-surface);
+  box-shadow: 0 4px 18px rgba(16, 24, 40, 0.06);
+}
+
+.query-composer:focus-within {
+  border-color: var(--wq-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--wq-primary) 12%, transparent);
+}
+
+.query-composer :deep(.el-textarea__inner) {
+  background: transparent;
+  color: var(--wq-text);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.query-composer :deep(.el-textarea__inner::placeholder) {
+  color: var(--wq-muted);
+}
+
+.composer-footer {
+  padding-top: 10px;
+  border-top: 0;
+}
+
+.composer-footer > :deep(.el-button--primary) {
+  min-width: 72px;
+  border-color: var(--wq-primary);
+  background: var(--wq-primary);
+  color: #fff;
+  font-weight: 650;
+}
+
+.composer-footer > :deep(.el-button--primary:hover) {
+  border-color: var(--wq-primary-hover, var(--wq-primary));
+  background: var(--wq-primary-hover, var(--wq-primary));
+}
+
+.insight-panel :deep(.el-tabs__header) {
+  padding: 0 16px;
+  border-bottom: 1px solid var(--wq-border);
+  background: var(--chat-surface);
+}
+
+.insight-panel :deep(.el-tabs__nav-wrap::after) {
+  background: transparent;
+}
+
+.insight-panel :deep(.el-tabs__item) {
+  height: 46px;
+  color: var(--wq-muted);
+  font-size: 13px;
+}
+
+.insight-panel :deep(.el-tabs__item.is-active),
+.insight-panel :deep(.el-tabs__item:hover) {
+  color: var(--wq-primary);
+}
+
+.insight-panel :deep(.el-tabs__item.is-active) {
+  font-weight: 650;
+}
+
+.insight-panel :deep(.el-tabs__active-bar) {
+  background: var(--wq-primary);
+}
+
+.insight-panel :deep(.el-tabs__content) {
+  padding: 16px;
+  background: var(--chat-soft);
+}
+
+.panel-actions :deep(.el-button),
+.result-column-tools :deep(.el-button),
+.empty-result-card :deep(.el-button) {
+  border-color: var(--wq-border);
+  background: var(--chat-raised);
+  color: var(--wq-muted);
+}
+
+.panel-actions :deep(.el-button:hover),
+.result-column-tools :deep(.el-button:hover),
+.empty-result-card :deep(.el-button:hover) {
+  border-color: var(--wq-primary);
+  background: var(--wq-primary-soft);
+  color: var(--wq-primary);
+}
+
+.panel-actions :deep(.el-button--primary),
+.empty-result-card :deep(.el-button--primary) {
+  border-color: var(--wq-primary);
+  background: var(--wq-primary);
+  color: #fff;
+}
+
+.panel-timeline {
+  border-color: var(--wq-border);
+}
+
+.timeline-dot {
+  border-color: var(--wq-muted);
+  background: var(--chat-soft);
+}
+
+.timeline-dot.done {
+  border-color: var(--wq-success);
+  background: color-mix(in srgb, var(--wq-success) 8%, var(--chat-surface));
+}
+
+.timeline-dot.running {
+  border-color: var(--wq-primary);
+  background: var(--wq-primary-soft);
+}
+
+.panel-empty {
+  border-color: var(--wq-border);
+  border-radius: var(--chat-radius);
+  background: var(--chat-raised);
+  color: var(--wq-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.result-column-tools :deep(.el-select__wrapper) {
+  background: var(--chat-raised);
+  box-shadow: 0 0 0 1px var(--wq-border) inset;
+}
+
+.result-grid,
+.compact-result :deep(.el-table) {
+  --el-table-border-color: var(--wq-border);
+  --el-table-header-bg-color: var(--chat-soft);
+  --el-table-header-text-color: var(--wq-text);
+  --el-table-row-hover-bg-color: var(--wq-primary-soft);
+  --el-table-tr-bg-color: var(--chat-raised);
+  --el-table-bg-color: var(--chat-raised);
+  --el-fill-color-lighter: var(--chat-raised);
+  --el-table-text-color: var(--wq-text);
+  border: 1px solid var(--wq-border);
+  font-size: 13px;
+}
+
+.result-grid :deep(.el-table__inner-wrapper::before),
+.compact-result :deep(.el-table__inner-wrapper::before) {
+  background: var(--wq-border);
+}
+
+.result-grid :deep(.el-table th.el-table__cell),
+.compact-result :deep(.el-table th.el-table__cell),
+.result-grid :deep(.el-table td.el-table__cell),
+.compact-result :deep(.el-table td.el-table__cell) {
+  background: var(--chat-raised);
+  border-color: var(--wq-border);
+}
+
+.result-grid :deep(.el-table th.el-table__cell),
+.compact-result :deep(.el-table th.el-table__cell) {
+  background: var(--chat-soft);
+}
+
+.empty-result-card {
+  border-color: color-mix(in srgb, var(--wq-warning) 36%, var(--wq-border));
+  border-radius: var(--chat-radius);
+  background: var(--chat-raised);
+  color: var(--wq-text);
+}
+
+.empty-result-card strong {
+  color: var(--wq-warning);
+}
+
+.cell-detail pre {
+  border-color: var(--wq-border);
+  border-radius: var(--chat-radius);
+  background: var(--chat-soft);
+  color: var(--wq-text);
+}
+
+:deep(.report-dialog.el-dialog) {
+  background: var(--chat-surface);
+  border: 1px solid var(--wq-border);
+  border-radius: var(--chat-radius);
+  box-shadow: 0 24px 60px rgba(16, 24, 40, 0.16);
+}
+
+:deep(.report-dialog .el-dialog__header) {
+  border-color: var(--wq-border);
+  background: var(--chat-surface);
+}
+
+:deep(.report-dialog .el-dialog__body) {
+  background: var(--chat-soft);
+}
+
+.report-mini-chart,
+.report-hero,
+.report-kpi-cell,
+.report-step-block,
+.report-chart-card {
+  border-color: var(--wq-border);
+  border-radius: var(--chat-radius);
+  background: var(--chat-raised);
+}
+
+.report-hero-meta {
+  border-color: var(--wq-border);
+}
+
+.report-hero-meta strong,
+.report-md-heading h2,
+.report-doc-section h2 {
+  color: var(--wq-primary);
+}
+
+.report-md-paragraph code,
+.report-md-list code {
+  background: var(--wq-primary-soft);
+  color: var(--wq-primary);
+}
+
+.report-echart {
+  border-color: var(--wq-border);
+  border-radius: var(--chat-radius);
+  background: var(--chat-soft);
+}
+
+.report-data-table {
+  background: var(--chat-raised);
+}
+
+.report-data-table th,
+.report-data-table td {
+  border-color: var(--wq-border);
+  color: var(--wq-text);
+}
+
+.report-data-table th {
+  background: var(--chat-soft);
+  color: var(--wq-text);
+}
+
+.report-appendix {
+  background: var(--chat-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .analysis-stream-cursor span {
+    animation: none;
+  }
+}
+
 @media (max-width: 1260px) {
   .chat-layout {
-    grid-template-columns: 260px minmax(440px, 1fr);
+    grid-template-columns: 236px minmax(440px, 1fr);
   }
 
   .insight-panel {
@@ -4566,7 +5506,7 @@ onUnmounted(() => {
 @media (max-width: 860px) {
   .chat-layout {
     grid-template-columns: 1fr;
-    height: calc(100vh - 114px);
+    height: calc(100dvh - var(--wq-header-height));
   }
 
   .session-sidebar {
@@ -4576,6 +5516,20 @@ onUnmounted(() => {
   .workspace-toolbar {
     align-items: flex-start;
     flex-direction: column;
+    min-height: auto;
+    padding: 12px 16px;
+  }
+
+  .chat-messages {
+    padding: 22px 16px;
+  }
+
+  .empty-hint {
+    margin-top: 24px;
+  }
+
+  .chat-input {
+    padding: 12px 14px 14px;
   }
 
   .report-echart {

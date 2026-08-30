@@ -1,4 +1,5 @@
-"""深度分析管线 —— Phase 3 的 5 个节点:语义一致性检查 → 分析计划 → Python 生成 → Python 分析 → 报告生成。
+"""深度分析管线 —— Phase 3 的 5 个节点:
+语义一致性检查 → 分析计划 → Python 生成 → Python 分析 → 报告生成。
 
 本模块是问数链路中最复杂的文件(1900+ 行),包含 Phase 3 深度分析的完整流程:
 
@@ -34,6 +35,7 @@ from app.services.llm_service import get_llm_service
 from app.services.prompt_service import get_prompt_service
 from app.services.python_executor import PythonExecutionError, get_python_executor
 from app.services.semantic_runtime import get_semantic_runtime_service
+from app.utils.field_labels import human_field_label
 from app.utils.logging_helpers import (
     json_for_log,
     log_node_end,
@@ -1114,6 +1116,9 @@ def _build_report_payload(
     """Build the structured report object consumed by the frontend."""
     metric_keys = logic_form.get("metrics") or []
     dimension_keys = logic_form.get("dimensions") or []
+    metric_labels, dimension_labels = _semantic_display_labels(
+        state, metric_keys, dimension_keys
+    )
     profile = profile_rows(rows)
     mode = plan.get("mode") or python_result.get("analysis_mode") or "profile"
     title = _report_title(metric_keys, dimension_keys, mode)
@@ -1174,6 +1179,8 @@ def _build_report_payload(
         "enhanced_question": state.get("enhanced_question", ""),
         "metrics": metric_keys,
         "dimensions": dimension_keys,
+        "metric_labels": metric_labels,
+        "dimension_labels": dimension_labels,
         "data_profile": profile,
         "executive_summary": executive_summary,
         "background": background,
@@ -1189,6 +1196,55 @@ def _build_report_payload(
         "sql": state.get("compiled_sql") or state.get("sql_text") or "",
         "limitations": plan.get("limitations", []),
     }
+
+
+def _semantic_display_labels(
+    state: dict[str, Any], metric_keys: list[Any], dimension_keys: list[Any]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Resolve internal asset keys to business-facing labels for summaries."""
+    runtime = state.get("semantic_runtime") or {}
+    if not isinstance(runtime, dict):
+        return {}, {}
+    if not runtime:
+        # Keep the legacy internal title when no semantic catalog is available;
+        # there is no trustworthy business label to substitute in that case.
+        return {}, {}
+    metrics: dict[str, str] = {}
+    dimensions: dict[str, str] = {}
+    for item in runtime.get("metrics") or []:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("metric_key") or item.get("asset_key") or "").strip()
+        label = str(item.get("name") or item.get("label") or "").strip()
+        if key and label:
+            metrics[key] = label
+    for item in runtime.get("mappings") or []:
+        if not isinstance(item, dict):
+            continue
+        key = str(
+            item.get("asset_key") or item.get("column_name") or item.get("column") or ""
+        ).strip()
+        label = str(item.get("name") or item.get("label") or item.get("description") or "").strip()
+        if key and label:
+            dimensions[key] = label
+    # Fill common keys from a small local vocabulary when a mapping only has a
+    # physical column name and no business description.
+    for key in metric_keys:
+        key_text = str(key)
+        if key_text not in metrics:
+            fallback = human_field_label(key_text, fallback_to_key=False)
+            if fallback:
+                metrics[key_text] = fallback
+    for key in dimension_keys:
+        key_text = str(key)
+        if key_text not in dimensions:
+            fallback = human_field_label(key_text, fallback_to_key=False)
+            if fallback:
+                dimensions[key_text] = fallback
+    return (
+        {str(key): metrics[str(key)] for key in metric_keys if str(key) in metrics},
+        {str(key): dimensions[str(key)] for key in dimension_keys if str(key) in dimensions},
+    )
 
 
 def _report_title(metric_keys: list[str], dimension_keys: list[str], mode: str = "profile") -> str:
@@ -1909,8 +1965,50 @@ def replace_first_echarts_block_after_title(markdown: str, title: str, block: st
 
 def _final_answer_from_report(report: dict[str, Any], fallback: str) -> str:
     """Return a short final answer string from the generated report payload."""
-    title = report.get("title") or "分析报告"
+    title = _natural_report_title(report)
     bullets = ((report.get("executive_summary") or {}).get("bullets") or [])[:3]
+    labels = {
+        **(report.get("metric_labels") or {}),
+        **(report.get("dimension_labels") or {}),
+    }
+    if labels:
+        bullets = [_replace_report_labels(str(item), labels) for item in bullets]
     if bullets:
         return f"{title}\n" + "\n".join(f"- {item}" for item in bullets)
-    return report.get("summary") or fallback
+    summary = str(report.get("summary") or fallback or "").strip()
+    return _replace_report_labels(summary, labels) if labels else summary
+
+
+def _natural_report_title(report: dict[str, Any]) -> str:
+    """Prefer business labels in the user-facing answer title.
+
+    The structured report keeps its stable internal ``title`` for compatibility
+    with existing clients.  Only the short answer shown above the report uses
+    semantic labels, so implementation keys such as ``collection_recovery_rate``
+    do not become the first thing a user sees.
+    """
+    metric_labels = [
+        str(value)
+        for value in (report.get("metric_labels") or {}).values()
+        if str(value).strip()
+    ]
+    dimension_labels = [
+        str(value)
+        for value in (report.get("dimension_labels") or {}).values()
+        if str(value).strip()
+    ]
+    mode_label = str(report.get("mode_label") or "分析")
+    if metric_labels and dimension_labels:
+        return f"{'、'.join(metric_labels)}按{'、'.join(dimension_labels)}的{mode_label}"
+    if metric_labels:
+        return f"{'、'.join(metric_labels)}{mode_label}"
+    return str(report.get("title") or "分析报告")
+
+
+def _replace_report_labels(text: str, labels: dict[str, str]) -> str:
+    """Replace known internal field keys without touching unrelated prose."""
+    replaced = text
+    for key, label in sorted(labels.items(), key=lambda item: len(item[0]), reverse=True):
+        if key and label:
+            replaced = replaced.replace(key, label)
+    return replaced

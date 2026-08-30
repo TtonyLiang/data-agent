@@ -153,3 +153,33 @@ assert.ok(
   source.includes('分析过程摘要') && source.includes('reportAnalysisSummary') && !source.includes('附录：Python 分析结果'),
   'ChatView should show a business-facing analysis summary instead of raw Python JSON appendix',
 )
+
+assert.ok(
+  source.includes("continue: '续跑'") &&
+    source.includes("refine: '细化'") &&
+    source.includes("retry: '重试'") &&
+    source.includes("analyze: '结果分析'"),
+  'ChatView should label persistent task turn modes in the answer badge area',
+)
+
+assert.ok(
+  source.includes('复用 {{ msg.reused_artifacts.length }} 项上下文') &&
+    source.includes('上下文已刷新'),
+  'ChatView should show compact reuse and context invalidation badges',
+)
+
+assert.ok(
+  source.includes("handleSend('retry')") && source.includes('turn_mode: turnMode'),
+  'ChatView should request retry mode when the user reruns the latest question',
+)
+
+assert.ok(
+  source.includes('task_id: item.task_id') &&
+    source.includes('turn_id: item.turn_id') &&
+    source.includes('turn_mode: item.turn_mode') &&
+    source.includes('task_status: item.task_status') &&
+    source.includes('reused_artifacts: item.reused_artifacts') &&
+    source.includes('invalidated_artifacts: item.invalidated_artifacts') &&
+    source.includes('context_invalidated: item.context_invalidated'),
+  'ChatView should preserve all task metadata when rebuilding messages from history',
+)

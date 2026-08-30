@@ -16,6 +16,14 @@ def test_rule_based_intent_keeps_schema_question_as_metadata_query():
     assert rule_based_intent("订单表有哪些字段") == "metadata_query"
 
 
+def test_schema_question_with_query_verb_stays_metadata_query():
+    assert rule_based_intent("查询订单表有哪些字段") == "metadata_query"
+
+
+def test_capability_question_with_query_verb_stays_chat():
+    assert rule_based_intent("你能查询哪些数据？") == "chat"
+
+
 def test_followup_question_uses_recent_data_history():
     history = [
         {"role": "user", "content": "贷款排名前三的申请区域是什么，分别申请了多少笔"},

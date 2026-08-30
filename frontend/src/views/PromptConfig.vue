@@ -2,7 +2,6 @@
   <div class="page-shell" :class="{ embedded }">
     <div v-if="!embedded" class="page-header">
       <div>
-        <span class="page-kicker">Prompt Center</span>
         <h2>Prompt 配置</h2>
         <p>按节点、智能体、模型和语义层维护提示词模板，优先匹配更具体的作用域。</p>
       </div>
@@ -362,14 +361,6 @@ async function handleDelete(template: PromptTemplateItem) {
   align-items: flex-end;
   gap: 20px;
   margin-bottom: 18px;
-}
-
-.page-kicker {
-  display: block;
-  margin-bottom: 7px;
-  color: var(--wq-primary);
-  font-size: 12px;
-  font-weight: 720;
 }
 
 .page-header h2 {

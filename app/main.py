@@ -33,27 +33,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from app.agent.graph import AgentState, build_mvp_graph
-from app.agent.nodes.analysis_pipeline import (
-    planner_node,
-    python_analyze_node,
-    python_generate_node,
-    report_generator_node,
-)
-from app.agent.nodes.sql_execute import sql_execute_node
+from app.agent.nodes.intent import rule_based_intent_with_history
 from app.api.deps import get_current_user, require_agent_access
 from app.config import get_settings
 from app.db.migrations import run_management_migrations
 from app.db.mysql import get_management_db
 from app.logging_config import configure_file_logging
+from app.models.user import PublicUser
 from app.security import auth_and_rate_limit_middleware
 from app.services.datasource_service import get_datasource_service
-from app.models.user import PublicUser
+from app.services.task_checkpoint_service import get_task_checkpoint_service
 
 configure_file_logging()
 
 ANSWER_CHUNK_SIZE = 32
 STREAM_PROGRESS_INTERVAL_SECONDS = 0.5
 MIN_NODE_DISPLAY_SECONDS = 1.0
+FAST_DISPLAY_NODES = {"react_controller", "conversation", "respond"}
+GRAPH_RECURSION_LIMIT = 96
 logger = logging.getLogger(__name__)
 
 # 需要通过 wenqu_token custom event 转发流式输出的节点(不走 on_chat_model_stream)
@@ -85,6 +82,9 @@ NODE_LABELS = {
     "python_generate": "Python 生成",
     "python_analyze": "Python 分析",
     "report_generator": "报告生成",
+    "react_controller": "执行决策",
+    "conversation": "对话回复",
+    "respond": "整理回答",
 }
 
 
@@ -158,6 +158,79 @@ def get_graph():
     return _graph
 
 
+def graph_run_config() -> dict[str, int]:
+    return {"recursion_limit": GRAPH_RECURSION_LIMIT}
+
+
+async def mark_task_failed(state: dict[str, Any], error: Exception) -> None:
+    """Persist a terminal failure without masking the original graph exception."""
+    if not all(state.get(key) for key in ("task_id", "user_id", "agent_id", "session_id")):
+        return
+    try:
+        await get_task_checkpoint_service().mark_failed(
+            int(state["user_id"]),
+            int(state["agent_id"]),
+            str(state["session_id"]),
+            error,
+        )
+    except Exception:
+        logger.exception("failed to mark task checkpoint as failed")
+
+
+async def prepare_chat_state(
+    *,
+    question: str,
+    agent_id: int,
+    datasource_id: int | None,
+    session_id: str,
+    trace_id: str,
+    history: list[dict[str, Any]],
+    user: PublicUser,
+    requested_mode: str | None,
+    require_sql_confirmation: bool,
+    enable_low_confidence_clarification: bool,
+) -> AgentState:
+    """Load, reconcile and hydrate the durable task state for one turn."""
+    state = await get_task_checkpoint_service().prepare_turn(
+        question=question,
+        agent_id=agent_id,
+        user_id=user.id,
+        session_id=session_id,
+        datasource_id=datasource_id,
+        trace_id=trace_id,
+        requested_mode=requested_mode,
+        require_sql_confirmation=require_sql_confirmation,
+        enable_low_confidence_clarification=enable_low_confidence_clarification,
+    )
+    # Keep the caller's role in the graph state so Ontology context/tool
+    # visibility is deterministic across resumed turns.
+    state["user_role"] = user.role
+    state["chat_history"] = history
+    return state
+
+
+def task_response_fields(state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "task_id": state.get("task_id"),
+        "turn_id": state.get("turn_id"),
+        "turn_mode": state.get("turn_mode", "new_task"),
+        "task_status": state.get("task_status", "completed"),
+        "checkpoint_revision": state.get("checkpoint_revision"),
+        "reused_artifacts": state.get("reused_artifacts", []),
+        "invalidated_artifacts": state.get("invalidated_artifacts", []),
+        "context_invalidated": state.get("context_invalidated", False),
+    }
+
+
+def task_history_metadata(state: dict[str, Any]) -> dict[str, Any]:
+    """Return the compact task-resume summary stored with an assistant turn."""
+    return {
+        "reused_artifacts": list(state.get("reused_artifacts") or []),
+        "invalidated_artifacts": list(state.get("invalidated_artifacts") or []),
+        "context_invalidated": bool(state.get("context_invalidated", False)),
+    }
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -176,22 +249,29 @@ async def chat(request: dict, current_user: PublicUser = Depends(get_current_use
     started_at = time.monotonic()
 
     await require_agent_access(agent_id, current_user)
-    datasource_id = await resolve_datasource_access(agent_id, datasource_id)
 
     # 加载历史上下文
     history = await load_history(agent_id, session_id, limit=5, user=current_user)
+    datasource_id = await resolve_chat_datasource_access(
+        agent_id,
+        datasource_id,
+        question,
+        history,
+    )
 
     graph = get_graph()
-    state: AgentState = {
-        "question": question,
-        "agent_id": agent_id,
-        "session_id": session_id,
-        "datasource_id": datasource_id,
-        "trace_id": trace_id,
-        "require_sql_confirmation": require_sql_confirmation,
-        "enable_low_confidence_clarification": enable_low_confidence_clarification,
-        "chat_history": history,
-    }
+    state = await prepare_chat_state(
+        question=question,
+        agent_id=agent_id,
+        datasource_id=datasource_id,
+        session_id=session_id,
+        trace_id=trace_id,
+        history=history,
+        user=current_user,
+        requested_mode=request.get("turn_mode"),
+        require_sql_confirmation=require_sql_confirmation,
+        enable_low_confidence_clarification=enable_low_confidence_clarification,
+    )
 
     logger.info(
         "chat request started trace_id=%s session_id=%s agent_id=%s datasource_id=%s",
@@ -200,11 +280,15 @@ async def chat(request: dict, current_user: PublicUser = Depends(get_current_use
         agent_id,
         datasource_id,
     )
-    result = await graph.ainvoke(state)
+    try:
+        result = await graph.ainvoke(state, config=graph_run_config())
+    except Exception as exc:
+        await mark_task_failed(state, exc)
+        raise
     execution_trace = merge_execution_trace(result.get("execution_trace"), trace_id, started_at)
 
     # 保存本轮对话
-    answer = result.get("final_answer", "")
+    answer = ensure_final_answer(result)
     sql = result.get("compiled_sql") or result.get("sql_text", "")
     sql_result = result.get("sql_result", [])
     await save_turn(
@@ -221,6 +305,11 @@ async def chat(request: dict, current_user: PublicUser = Depends(get_current_use
         semantic_check=result.get("semantic_check"),
         python_result=result.get("python_result"),
         report_payload=result.get("report_payload"),
+        task_id=result.get("task_id"),
+        turn_id=result.get("turn_id"),
+        turn_mode=result.get("turn_mode"),
+        task_status=result.get("task_status"),
+        task_metadata=task_history_metadata(result),
         user=current_user,
     )
 
@@ -239,6 +328,15 @@ async def chat(request: dict, current_user: PublicUser = Depends(get_current_use
         "report_payload": result.get("report_payload"),
         "human_confirmation": result.get("human_confirmation"),
         "clarification": result.get("clarification"),
+        "conversation": result.get("conversation") or result.get("response"),
+        "conversation_metadata": result.get("conversation_metadata")
+        or result.get("conversation")
+        or result.get("response"),
+        "react_trace": (execution_trace.get("react") or {}).get("steps", []),
+        "react_next_action": result.get("react_next_action"),
+        "react_termination_reason": result.get("react_termination_reason"),
+        "analysis_required": result.get("analysis_required", False),
+        **task_response_fields(result),
         "execution_trace": execution_trace,
     }
 
@@ -255,25 +353,34 @@ async def chat_stream(request: dict, current_user: PublicUser = Depends(get_curr
     enable_low_confidence_clarification = bool(request.get("enable_low_confidence_clarification"))
 
     await require_agent_access(agent_id, current_user)
-    datasource_id = await resolve_datasource_access(agent_id, datasource_id)
 
     history = await load_history(agent_id, session_id, limit=5, user=current_user)
+    datasource_id = await resolve_chat_datasource_access(
+        agent_id,
+        datasource_id,
+        question,
+        history,
+    )
 
     async def event_generator():
         stream_started_at = time.monotonic()
         graph = get_graph()
-        state: AgentState = {
-            "question": question,
-            "agent_id": agent_id,
-            "session_id": session_id,
-            "datasource_id": datasource_id,
-            "trace_id": trace_id,
-            "require_sql_confirmation": require_sql_confirmation,
-            "enable_low_confidence_clarification": enable_low_confidence_clarification,
-            "chat_history": history,
-        }
+        state = await prepare_chat_state(
+            question=question,
+            agent_id=agent_id,
+            datasource_id=datasource_id,
+            session_id=session_id,
+            trace_id=trace_id,
+            history=history,
+            user=current_user,
+            requested_mode=request.get("turn_mode"),
+            require_sql_confirmation=require_sql_confirmation,
+            enable_low_confidence_clarification=enable_low_confidence_clarification,
+        )
 
-        final_result = {}
+        # Reused checkpoint artifacts may not be emitted by any node in this
+        # turn, so seed the accumulator with the reconciled state.
+        final_result = dict(state)
         current_node = ""
         reasoning_buffer = ""
         node_token_buffers: dict[str, str] = {}
@@ -562,7 +669,7 @@ async def chat_stream(request: dict, current_user: PublicUser = Depends(get_curr
             return
 
         # 最终结果
-        answer = final_result.get("final_answer", "")
+        answer = ensure_final_answer(final_result)
         sql = final_result.get("compiled_sql") or final_result.get("sql_text", "")
         sql_result = final_result.get("sql_result", [])
         execution_trace = merge_execution_trace(
@@ -623,6 +730,11 @@ async def chat_stream(request: dict, current_user: PublicUser = Depends(get_curr
                 python_result=final_result.get("python_result"),
                 report_payload=final_result.get("report_payload"),
                 reasoning_trace=reasoning_trace,
+                task_id=final_result.get("task_id"),
+                turn_id=final_result.get("turn_id"),
+                turn_mode=final_result.get("turn_mode"),
+                task_status=final_result.get("task_status"),
+                task_metadata=task_history_metadata(final_result),
                 user=current_user,
             )
         except Exception:
@@ -646,6 +758,20 @@ async def chat_stream(request: dict, current_user: PublicUser = Depends(get_curr
                         "report_payload": final_result.get("report_payload"),
                         "human_confirmation": final_result.get("human_confirmation"),
                         "clarification": final_result.get("clarification"),
+                        "conversation": final_result.get("conversation")
+                        or final_result.get("response"),
+                        "conversation_metadata": final_result.get("conversation_metadata")
+                        or final_result.get("conversation")
+                        or final_result.get("response"),
+                        "react_trace": (execution_trace.get("react") or {}).get(
+                            "steps", []
+                        ),
+                        "react_next_action": final_result.get("react_next_action"),
+                        "react_termination_reason": final_result.get(
+                            "react_termination_reason"
+                        ),
+                        "analysis_required": final_result.get("analysis_required", False),
+                        **task_response_fields(final_result),
                         "execution_trace": execution_trace,
                         "reasoning_trace": reasoning_trace,
                     },
@@ -666,45 +792,57 @@ async def confirm_sql_execution(
     """Execute a previously generated SQL after explicit human confirmation."""
     agent_id = request.get("agent_id", 1)
     datasource_id = request.get("datasource_id")
-    session_id = request.get("session_id", str(uuid.uuid4()))
+    session_id = str(request.get("session_id") or "").strip()
     trace_id = request.get("trace_id") or new_trace_id()
     question = request.get("question") or "确认执行 SQL"
-    sql = request.get("sql") or request.get("compiled_sql") or ""
     started_at = time.monotonic()
-
-    if not sql:
-        raise HTTPException(status_code=400, detail="缺少待确认执行的 SQL")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="缺少待确认任务的会话 ID")
 
     await require_agent_access(agent_id, current_user)
     datasource_id = await resolve_datasource_access(agent_id, datasource_id)
-
-    state: AgentState = {
-        "question": question,
-        "enhanced_question": request.get("enhanced_question", ""),
-        "agent_id": agent_id,
-        "session_id": session_id,
-        "datasource_id": datasource_id,
-        "trace_id": trace_id,
-        "compiled_sql": sql,
-        "sql_text": sql,
-        "logic_form": request.get("logic_form") or {},
-        "semantic_runtime": request.get("semantic_runtime") or {},
-        "execution_trace": {
-            "trace_id": trace_id,
-            "human_confirmation": {
-                "required": True,
-                "status": "confirmed",
-                "sql": sql,
-            },
-        },
+    checkpoint = await get_task_checkpoint_service().load(current_user.id, agent_id, session_id)
+    sql = resolve_pending_confirmation_sql(checkpoint, request)
+    history = await load_history(agent_id, session_id, limit=5, user=current_user)
+    state = await prepare_chat_state(
+        question=question,
+        agent_id=agent_id,
+        datasource_id=datasource_id,
+        session_id=session_id,
+        trace_id=trace_id,
+        history=history,
+        user=current_user,
+        requested_mode="retry",
+        require_sql_confirmation=False,
+        enable_low_confidence_clarification=False,
+    )
+    if state.get("context_invalidated"):
+        raise HTTPException(status_code=409, detail="任务配置已变化，请重新生成 SQL 后再确认")
+    confirmation = {
+        "required": True,
+        "status": "confirmed",
+        "sql": sql,
     }
-
-    state.update(await sql_execute_node(state))
-    if not state.get("sql_error"):
-        state.update(await planner_node(state))
-        state.update(await python_generate_node(state))
-        state.update(await python_analyze_node(state))
-        state.update(await report_generator_node(state))
+    state.update(
+        {
+            "compiled_sql": sql,
+            "sql_text": sql,
+            "logic_form": state.get("logic_form") or {},
+            "semantic_runtime": state.get("semantic_runtime") or {},
+            "require_sql_confirmation": False,
+            "human_confirmation": confirmation,
+            "execution_trace": {
+                **dict(state.get("execution_trace") or {}),
+                "human_confirmation": confirmation,
+            },
+        }
+    )
+    try:
+        result = await get_graph().ainvoke(state, config=graph_run_config())
+    except Exception as exc:
+        await mark_task_failed(state, exc)
+        raise
+    state.update(result)
 
     answer = state.get("final_answer", "")
     safe_sql = state.get("compiled_sql") or state.get("sql_text") or sql
@@ -727,6 +865,11 @@ async def confirm_sql_execution(
             semantic_check=state.get("semantic_check"),
             python_result=state.get("python_result"),
             report_payload=state.get("report_payload"),
+            task_id=state.get("task_id"),
+            turn_id=state.get("turn_id"),
+            turn_mode=state.get("turn_mode"),
+            task_status=state.get("task_status"),
+            task_metadata=task_history_metadata(state),
             user=current_user,
         )
     except Exception:
@@ -750,8 +893,34 @@ async def confirm_sql_execution(
             "status": "confirmed",
             "sql": safe_sql,
         },
+        **task_response_fields(state),
         "execution_trace": execution_trace,
     }
+
+
+def resolve_pending_confirmation_sql(
+    checkpoint: dict[str, Any] | None,
+    request: dict[str, Any],
+) -> str:
+    """Bind a confirmation request to the exact SQL stored in its paused task."""
+    if not checkpoint or checkpoint.get("task_status") != "awaiting_input":
+        raise HTTPException(status_code=409, detail="当前会话没有待确认的 SQL 任务")
+    confirmation = checkpoint.get("human_confirmation") or {}
+    checkpoint_sql = str(
+        checkpoint.get("compiled_sql")
+        or checkpoint.get("sql_text")
+        or confirmation.get("sql")
+        or ""
+    ).strip()
+    if confirmation.get("status") != "pending" or not checkpoint_sql:
+        raise HTTPException(status_code=409, detail="当前任务的 SQL 不处于待确认状态")
+    requested_task_id = str(request.get("task_id") or "").strip()
+    if requested_task_id and requested_task_id != str(checkpoint.get("task_id") or ""):
+        raise HTTPException(status_code=409, detail="待确认任务已变化，请刷新后重试")
+    supplied_sql = str(request.get("sql") or request.get("compiled_sql") or "").strip()
+    if supplied_sql and supplied_sql.rstrip(";") != checkpoint_sql.rstrip(";"):
+        raise HTTPException(status_code=409, detail="待确认 SQL 与任务 checkpoint 不一致")
+    return checkpoint_sql
 
 
 async def pump_graph_events(graph, state: AgentState, event_queue: asyncio.Queue[dict]) -> None:
@@ -761,9 +930,14 @@ async def pump_graph_events(graph, state: AgentState, event_queue: asyncio.Queue
     实现生产者-消费者解耦。异常时放入 error 事件,结束时放入 done 事件。
     """
     try:
-        async for event in graph.astream_events(state, version="v2"):
+        async for event in graph.astream_events(
+            state,
+            version="v2",
+            config=graph_run_config(),
+        ):
             await event_queue.put({"kind": "event", "event": event})
     except Exception as exc:
+        await mark_task_failed(state, exc)
         await event_queue.put({"kind": "error", "error": exc})
     finally:
         await event_queue.put({"kind": "done"})
@@ -800,7 +974,7 @@ async def hold_node_for_display(
     reasoning_trace: list[dict],
     trace_id: str | None = None,
 ):
-    if MIN_NODE_DISPLAY_SECONDS <= 0:
+    if MIN_NODE_DISPLAY_SECONDS <= 0 or node in FAST_DISPLAY_NODES:
         return
     started_at = node_started_at.get(node)
     if started_at is None:
@@ -989,6 +1163,18 @@ def summarize_trace_step(node: str, output: dict) -> str:
     """为每个节点生成一句中文摘要,用于 reasoning_trace 展示。"""
     if node == "intent_recognition":
         return f"→ {output.get('intent', '')}"
+    if node == "react_controller":
+        action = output.get("action") or output.get("next_action") or "respond"
+        reason = str(output.get("reason") or "").strip()
+        return f"选择动作：{action}。{reason}" if reason else f"选择动作：{action}"
+    if node == "conversation":
+        mode = output.get("mode") or "chat"
+        return f"已生成{mode}回复"
+    if node == "respond":
+        row_count = output.get("row_count")
+        if row_count is not None:
+            return f"已整理回答 · {row_count} 条结果"
+        return "已整理回答"
     if node == "semantic_enhance":
         enhance = output.get("semantic_enhancement") or {}
         original = str(enhance.get("original_question") or "")
@@ -1035,7 +1221,7 @@ def summarize_trace_step(node: str, output: dict) -> str:
         confirmation = output.get("human_confirmation") or {}
         return str(confirmation.get("message") or "等待用户确认执行 SQL")
     if node == "sql_execute":
-        error = output.get("error")
+        error = output.get("error") or output.get("sql_error")
         return f"错误: {error}" if error else f"{output.get('row_count', 0)} 条结果"
     if node == "planner":
         plan = output.get("plan") or {}
@@ -1065,6 +1251,12 @@ def node_progress_message(node: str, index: int = 0) -> str:
     """返回节点的进度提示消息(轮播式,按 index 取不同文案)。"""
     messages = {
         "intent_recognition": ["正在识别问题意图...", "正在判断是否进入问数链路..."],
+        "react_controller": [
+            "正在根据当前观察选择下一步...",
+            "正在检查是否需要修复、确认或深度分析...",
+        ],
+        "conversation": ["正在整理对话回复..."],
+        "respond": ["正在整理查询结果..."],
         "semantic_enhance": ["正在补全省略的指标、维度和 TopN 口径..."],
         "semantic_runtime_recall": [
             "正在检索知识库、匹配语义资产...",
@@ -1112,7 +1304,12 @@ def node_progress_message(node: str, index: int = 0) -> str:
     return options[index % len(options)]
 
 
-async def resolve_datasource_access(agent_id: int, datasource_id: int | None) -> int:
+async def resolve_datasource_access(
+    agent_id: int,
+    datasource_id: int | None,
+    *,
+    allow_missing: bool = False,
+) -> int | None:
     """Resolve and validate the datasource used by a chat request.
 
     The chat UI only exposes agent selection. If the request omits datasource_id,
@@ -1124,8 +1321,33 @@ async def resolve_datasource_access(agent_id: int, datasource_id: int | None) ->
         return int(datasource_id)
     datasources = await get_datasource_service().list_by_agent(agent_id)
     if not datasources:
+        if allow_missing:
+            return None
         raise HTTPException(status_code=400, detail="当前智能体未绑定可用数据源")
     return int(datasources[0].id)
+
+
+async def resolve_chat_datasource_access(
+    agent_id: int,
+    datasource_id: int | None,
+    question: str,
+    history: list[dict[str, Any]] | None = None,
+) -> int | None:
+    """Resolve a chat datasource without blocking non-query conversation turns.
+
+    Explicit datasource ids are always validated.  When the request omits an id,
+    only an obvious data-query follow-up requires a bound datasource up front;
+    casual chat and metadata/model questions can reach the conversation branch
+    and return a useful answer even for an agent that has no datasource yet.
+    Data nodes still enforce datasource availability before executing SQL.
+    """
+    preliminary_intent = rule_based_intent_with_history(question, history or [])
+    allow_missing = preliminary_intent != "data_query"
+    return await resolve_datasource_access(
+        agent_id,
+        datasource_id,
+        allow_missing=allow_missing,
+    )
 
 
 async def validate_datasource_access(agent_id: int, datasource_id: int | None):
@@ -1143,10 +1365,55 @@ def chunk_text(text: str, chunk_size: int = ANSWER_CHUNK_SIZE) -> Iterator[str]:
         yield text[start : start + chunk_size]
 
 
+def ensure_final_answer(result: dict[str, Any]) -> str:
+    """Guarantee a useful non-empty answer even if a custom graph stops early."""
+    answer = str(result.get("final_answer") or "").strip()
+    if answer:
+        return answer
+    intent = str(result.get("intent") or "").strip().lower()
+    if intent in {"chat", "metadata_query"}:
+        answer = "我可以帮你查询数据、查看表结构，也可以说明当前模型配置。"
+    elif result.get("sql_result"):
+        answer = f"查询完成，共 {len(result.get('sql_result') or [])} 条结果。"
+    else:
+        answer = "这次没有生成可用回答，请补充更明确的问题后再试。"
+    result["final_answer"] = answer
+    return answer
+
+
 def _extract_node_output(node: str, output: dict) -> dict:
     """提取每个节点的关键输出用于前端展示."""
     if node == "intent_recognition":
         return {"intent": output.get("intent", "")}
+    elif node == "react_controller":
+        trace = output.get("execution_trace") or {}
+        react = trace.get("react") or {}
+        steps = react.get("steps") or []
+        last_step = steps[-1] if isinstance(steps, list) and steps else {}
+        return {
+            "iteration": output.get("react_iteration", react.get("iteration")),
+            "action": output.get("react_next_action", react.get("next_action")),
+            "analysis_required": output.get(
+                "analysis_required", react.get("analysis_required", False)
+            ),
+            "reason": last_step.get("reason", "") if isinstance(last_step, dict) else "",
+            "termination_reason": output.get("react_termination_reason")
+            or react.get("termination_reason"),
+        }
+    elif node == "conversation":
+        conversation = output.get("conversation") or output.get("response") or {}
+        return {
+            "intent": conversation.get("intent", ""),
+            "mode": conversation.get("mode", "chat"),
+            "source": conversation.get("source", ""),
+        }
+    elif node == "respond":
+        response = output.get("response") or {}
+        return {
+            "mode": response.get("mode", ""),
+            "row_count": response.get("row_count", 0),
+            "analysis_skipped": response.get("analysis_skipped", False),
+        }
     elif node == "semantic_enhance":
         enhance = output.get("semantic_enhancement") or {}
         return {
@@ -1371,7 +1638,8 @@ async def get_history(
     params["sid"] = session_id
     rows = await db.execute_query(
         "SELECT role, content, reasoning_trace, logic_form, compiled_sql, sql_text, sql_result, "
-        "plan_payload, semantic_check, python_result, report_payload, created_at "
+        "plan_payload, semantic_check, python_result, report_payload, "
+        "task_id, turn_id, turn_mode, task_status, task_metadata, created_at "
         f"FROM chat_history WHERE {user_filter} AND session_id = :sid ORDER BY id",
         params,
     )
@@ -1394,12 +1662,24 @@ async def get_history(
                     row["reasoning_trace"] = json.loads(row["reasoning_trace"])
                 except json.JSONDecodeError:
                     row["reasoning_trace"] = []
-        for field in ("plan_payload", "semantic_check", "python_result", "report_payload"):
+        for field in (
+            "plan_payload",
+            "semantic_check",
+            "python_result",
+            "report_payload",
+            "task_metadata",
+        ):
             if row.get(field) and isinstance(row[field], str):
                 try:
                     row[field] = json.loads(row[field])
                 except json.JSONDecodeError:
                     row[field] = None
+        task_metadata = row.pop("task_metadata", None)
+        if not isinstance(task_metadata, dict):
+            task_metadata = {}
+        row["reused_artifacts"] = list(task_metadata.get("reused_artifacts") or [])
+        row["invalidated_artifacts"] = list(task_metadata.get("invalidated_artifacts") or [])
+        row["context_invalidated"] = bool(task_metadata.get("context_invalidated", False))
         if row.get("compiled_sql"):
             row["sql_text"] = row["compiled_sql"]
     return {"history": rows}
@@ -1419,6 +1699,11 @@ async def delete_session(
     await db.execute_query(
         f"DELETE FROM chat_history WHERE {user_filter} AND session_id = :sid",
         params,
+    )
+    await get_task_checkpoint_service().delete(
+        None if current_user.role == "admin" else current_user.id,
+        agent_id,
+        session_id,
     )
     return {"message": "会话已删除"}
 
@@ -1480,6 +1765,11 @@ async def save_turn(
     python_result: dict | None = None,
     report_payload: dict | None = None,
     reasoning_trace: list[dict] | None = None,
+    task_id: str | None = None,
+    turn_id: str | None = None,
+    turn_mode: str | None = None,
+    task_status: str | None = None,
+    task_metadata: dict | None = None,
     user: PublicUser | None = None,
 ):
     """保存一轮对话到 chat_history."""
@@ -1512,6 +1802,11 @@ async def save_turn(
         python_result=python_result,
         report_payload=report_payload,
         reasoning_trace=reasoning_trace,
+        task_id=task_id,
+        turn_id=turn_id,
+        turn_mode=turn_mode,
+        task_status=task_status,
+        task_metadata=task_metadata,
         user_id=user.id if user else None,
     )
 
@@ -1542,6 +1837,11 @@ def build_assistant_history_params(
     python_result: dict | None,
     report_payload: dict | None,
     reasoning_trace: list[dict] | None,
+    task_id: str | None,
+    turn_id: str | None,
+    turn_mode: str | None,
+    task_status: str | None,
+    task_metadata: dict | None,
     user_id: int | None,
 ) -> dict[str, Any]:
     return {
@@ -1565,6 +1865,13 @@ def build_assistant_history_params(
         "report_payload": json.dumps(report_payload, ensure_ascii=False)
         if report_payload
         else None,
+        "task_id": task_id,
+        "turn_id": turn_id,
+        "turn_mode": turn_mode,
+        "task_status": task_status,
+        "task_metadata": json.dumps(task_metadata, ensure_ascii=False)
+        if task_metadata is not None
+        else None,
     }
 
 
@@ -1573,10 +1880,12 @@ async def insert_assistant_turn(db, params: dict[str, Any]) -> None:
         "INSERT INTO chat_history "
         "(agent_id, user_id, session_id, role, content, reasoning_trace, logic_form, "
         "compiled_sql, execution_trace, "
-        "sql_text, sql_result, plan_payload, semantic_check, python_result, report_payload) "
+        "sql_text, sql_result, plan_payload, semantic_check, python_result, report_payload, "
+        "task_id, turn_id, turn_mode, task_status, task_metadata) "
         "VALUES (:aid, :user_id, :sid, 'assistant', :content, :reasoning_trace, "
         ":logic_form, :compiled_sql, :trace, "
-        ":sql, :result, :plan_payload, :semantic_check, :python_result, :report_payload)",
+        ":sql, :result, :plan_payload, :semantic_check, :python_result, :report_payload, "
+        ":task_id, :turn_id, :turn_mode, :task_status, :task_metadata)",
         params,
     )
 
@@ -1692,6 +2001,7 @@ from app.api.auth import router as auth_router  # noqa: E402
 from app.api.datasource import router as ds_router  # noqa: E402
 from app.api.feedback import router as feedback_router  # noqa: E402
 from app.api.model_config import router as model_config_router  # noqa: E402
+from app.api.ontology import router as ontology_router  # noqa: E402
 from app.api.prompt import router as prompt_router  # noqa: E402
 from app.api.semantic import router as semantic_router  # noqa: E402
 from app.api.system_parameter import router as system_parameter_router  # noqa: E402
@@ -1702,6 +2012,7 @@ app.include_router(agent_router, prefix="/api/agent", tags=["智能体"])
 app.include_router(ds_router, prefix="/api/datasource", tags=["数据源"])
 app.include_router(feedback_router, prefix="/api/feedback", tags=["反馈"])
 app.include_router(model_config_router, prefix="/api/model-config", tags=["模型配置"])
+app.include_router(ontology_router, prefix="/api/ontology", tags=["业务本体"])
 app.include_router(prompt_router, prefix="/api/prompt", tags=["Prompt配置"])
 app.include_router(semantic_router, prefix="/api/semantic", tags=["知识召回"])
 app.include_router(system_parameter_router, prefix="/api/system", tags=["系统参数"])

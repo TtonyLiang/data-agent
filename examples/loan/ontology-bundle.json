@@ -1,0 +1,238 @@
+{
+  "format": "wenqu-ontology",
+  "version": 1,
+  "domain": {
+    "domain_key": "loan_risk",
+    "name": "贷款风控运营本体",
+    "description": "将信贷问数语义映射为可查询、可执行、可审计的贷款业务对象。"
+  },
+  "object_types": [
+    {
+      "object_key": "Customer",
+      "name": "客户",
+      "description": "申请贷款并承担还款义务的客户主体。",
+      "primary_property": "customer_id",
+      "display_property": "name",
+      "status": "active",
+      "properties": [
+        {"property_key": "customer_id", "name": "客户ID", "data_type": "integer", "required": true, "unique": true, "sort_order": 0},
+        {"property_key": "name", "name": "客户名称", "data_type": "string", "required": true, "sort_order": 1},
+        {"property_key": "region", "name": "所在区域", "data_type": "string", "required": true, "sort_order": 2},
+        {"property_key": "customer_segment", "name": "客户分层", "data_type": "string", "required": true, "sort_order": 3},
+        {"property_key": "monthly_income", "name": "月收入", "data_type": "number", "required": true, "sort_order": 4},
+        {"property_key": "debt_income_ratio", "name": "负债收入比", "data_type": "number", "required": true, "sort_order": 5},
+        {"property_key": "risk_grade", "name": "风险等级", "data_type": "string", "required": true, "sort_order": 6},
+        {"property_key": "is_blacklist_hit", "name": "是否命中黑名单", "data_type": "boolean", "required": true, "sort_order": 7}
+      ]
+    },
+    {
+      "object_key": "LoanApplication",
+      "name": "贷款申请",
+      "description": "客户提交的贷款申请及其审批状态。",
+      "primary_property": "application_id",
+      "display_property": "application_no",
+      "status": "active",
+      "properties": [
+        {"property_key": "application_id", "name": "申请ID", "data_type": "integer", "required": true, "unique": true, "sort_order": 0},
+        {"property_key": "application_no", "name": "申请编号", "data_type": "string", "required": true, "unique": true, "sort_order": 1},
+        {"property_key": "customer_id", "name": "客户ID", "data_type": "integer", "required": true, "sort_order": 2},
+        {"property_key": "product_type", "name": "产品类型", "data_type": "string", "required": true, "sort_order": 3},
+        {"property_key": "requested_amount", "name": "申请金额", "data_type": "number", "required": true, "sort_order": 4},
+        {"property_key": "requested_term_months", "name": "申请期限（月）", "data_type": "integer", "required": true, "sort_order": 5},
+        {"property_key": "risk_grade", "name": "风险等级", "data_type": "string", "required": true, "sort_order": 6},
+        {"property_key": "model_pd", "name": "预测违约概率", "data_type": "number", "required": true, "sort_order": 7},
+        {"property_key": "approval_status", "name": "审批状态", "data_type": "string", "required": true, "default_value": "manual_review", "sort_order": 8},
+        {"property_key": "approved_amount", "name": "审批金额", "data_type": "number", "required": true, "default_value": 0, "sort_order": 9},
+        {"property_key": "is_blacklist_hit", "name": "是否命中黑名单", "data_type": "boolean", "required": true, "sort_order": 10},
+        {"property_key": "decision_note", "name": "审批说明", "data_type": "text", "required": false, "sort_order": 11},
+        {"property_key": "decided_at", "name": "审批时间", "data_type": "datetime", "required": false, "sort_order": 12}
+      ]
+    },
+    {
+      "object_key": "LoanAccount",
+      "name": "贷款账户",
+      "description": "放款后持续跟踪余额、逾期和催收状态的贷款借据。",
+      "primary_property": "loan_id",
+      "display_property": "loan_no",
+      "status": "active",
+      "properties": [
+        {"property_key": "loan_id", "name": "贷款ID", "data_type": "integer", "required": true, "unique": true, "sort_order": 0},
+        {"property_key": "loan_no", "name": "借据号", "data_type": "string", "required": true, "unique": true, "sort_order": 1},
+        {"property_key": "application_id", "name": "申请ID", "data_type": "integer", "required": true, "sort_order": 2},
+        {"property_key": "customer_id", "name": "客户ID", "data_type": "integer", "required": true, "sort_order": 3},
+        {"property_key": "product_type", "name": "产品类型", "data_type": "string", "required": true, "sort_order": 4},
+        {"property_key": "loan_amount", "name": "放款金额", "data_type": "number", "required": true, "sort_order": 5},
+        {"property_key": "current_status", "name": "贷款状态", "data_type": "string", "required": true, "sort_order": 6},
+        {"property_key": "remaining_principal", "name": "剩余本金", "data_type": "number", "required": true, "sort_order": 7},
+        {"property_key": "current_overdue_days", "name": "当前逾期天数", "data_type": "integer", "required": true, "sort_order": 8},
+        {"property_key": "max_overdue_days", "name": "历史最大逾期天数", "data_type": "integer", "required": true, "sort_order": 9},
+        {"property_key": "overdue_bucket", "name": "逾期阶段", "data_type": "string", "required": true, "sort_order": 10},
+        {"property_key": "is_written_off", "name": "是否核销", "data_type": "boolean", "required": true, "sort_order": 11},
+        {"property_key": "collection_status", "name": "催收状态", "data_type": "string", "required": true, "default_value": "not_started", "sort_order": 12},
+        {"property_key": "collection_strategy", "name": "催收策略", "data_type": "string", "required": false, "sort_order": 13},
+        {"property_key": "collection_note", "name": "催收说明", "data_type": "text", "required": false, "sort_order": 14},
+        {"property_key": "updated_at", "name": "更新时间", "data_type": "datetime", "required": false, "sort_order": 15}
+      ]
+    },
+    {
+      "object_key": "RepaymentPeriod",
+      "name": "还款期次",
+      "description": "贷款账户下的分期应还、实还和逾期表现。",
+      "primary_property": "repay_period_id",
+      "display_property": "period_label",
+      "status": "active",
+      "properties": [
+        {"property_key": "repay_period_id", "name": "期次ID", "data_type": "integer", "required": true, "unique": true, "sort_order": 0},
+        {"property_key": "period_label", "name": "期次名称", "data_type": "string", "required": true, "sort_order": 1},
+        {"property_key": "loan_id", "name": "贷款ID", "data_type": "integer", "required": true, "sort_order": 2},
+        {"property_key": "period_no", "name": "期数", "data_type": "integer", "required": true, "sort_order": 3},
+        {"property_key": "due_date", "name": "应还日", "data_type": "date", "required": true, "sort_order": 4},
+        {"property_key": "scheduled_total", "name": "应还总额", "data_type": "number", "required": true, "sort_order": 5},
+        {"property_key": "paid_total", "name": "实还总额", "data_type": "number", "required": true, "sort_order": 6},
+        {"property_key": "repay_status", "name": "还款状态", "data_type": "string", "required": true, "sort_order": 7},
+        {"property_key": "overdue_days", "name": "逾期天数", "data_type": "integer", "required": true, "sort_order": 8},
+        {"property_key": "overdue_bucket", "name": "逾期阶段", "data_type": "string", "required": true, "sort_order": 9}
+      ]
+    },
+    {
+      "object_key": "CustomerRiskSnapshot",
+      "name": "客户风险快照",
+      "description": "客户某个月的风险评分、负债压力和行为表现。",
+      "primary_property": "snapshot_id",
+      "display_property": "snapshot_label",
+      "status": "active",
+      "properties": [
+        {"property_key": "snapshot_id", "name": "快照ID", "data_type": "integer", "required": true, "unique": true, "sort_order": 0},
+        {"property_key": "snapshot_label", "name": "快照名称", "data_type": "string", "required": true, "sort_order": 1},
+        {"property_key": "customer_id", "name": "客户ID", "data_type": "integer", "required": true, "sort_order": 2},
+        {"property_key": "stat_month", "name": "统计月份", "data_type": "date", "required": true, "sort_order": 3},
+        {"property_key": "outstanding_principal", "name": "未还本金", "data_type": "number", "required": true, "sort_order": 4},
+        {"property_key": "dti", "name": "负债收入比", "data_type": "number", "required": true, "sort_order": 5},
+        {"property_key": "max_dpd_12m", "name": "近12月最大逾期天数", "data_type": "integer", "required": true, "sort_order": 6},
+        {"property_key": "risk_grade", "name": "风险等级", "data_type": "string", "required": true, "sort_order": 7},
+        {"property_key": "model_pd", "name": "预测违约概率", "data_type": "number", "required": true, "sort_order": 8},
+        {"property_key": "fraud_risk_level", "name": "欺诈风险等级", "data_type": "string", "required": true, "sort_order": 9},
+        {"property_key": "is_blacklist_hit", "name": "是否命中黑名单", "data_type": "boolean", "required": true, "sort_order": 10}
+      ]
+    },
+    {
+      "object_key": "CollectionCase",
+      "name": "催收案件",
+      "description": "逾期贷款进入催收后的分配、触达和回收案件。",
+      "primary_property": "case_id",
+      "display_property": "case_no",
+      "status": "active",
+      "properties": [
+        {"property_key": "case_id", "name": "案件ID", "data_type": "integer", "required": true, "unique": true, "sort_order": 0},
+        {"property_key": "case_no", "name": "案件编号", "data_type": "string", "required": true, "unique": true, "sort_order": 1},
+        {"property_key": "loan_id", "name": "贷款ID", "data_type": "integer", "required": true, "sort_order": 2},
+        {"property_key": "customer_id", "name": "客户ID", "data_type": "integer", "required": true, "sort_order": 3},
+        {"property_key": "case_status", "name": "案件状态", "data_type": "string", "required": true, "sort_order": 4},
+        {"property_key": "overdue_bucket_at_entry", "name": "入催逾期阶段", "data_type": "string", "required": true, "sort_order": 5},
+        {"property_key": "entry_overdue_days", "name": "入催逾期天数", "data_type": "integer", "required": true, "sort_order": 6},
+        {"property_key": "entry_overdue_principal", "name": "入催逾期本金", "data_type": "number", "required": true, "sort_order": 7},
+        {"property_key": "assigned_team", "name": "分配团队", "data_type": "string", "required": true, "sort_order": 8},
+        {"property_key": "collection_strategy", "name": "催收策略", "data_type": "string", "required": true, "sort_order": 9},
+        {"property_key": "recovered_principal", "name": "回收本金", "data_type": "number", "required": true, "default_value": 0, "sort_order": 10},
+        {"property_key": "recovery_rate", "name": "回收率", "data_type": "number", "required": true, "default_value": 0, "sort_order": 11},
+        {"property_key": "close_reason", "name": "结案原因", "data_type": "text", "required": false, "sort_order": 12},
+        {"property_key": "closed_at", "name": "结案时间", "data_type": "datetime", "required": false, "sort_order": 13}
+      ]
+    }
+  ],
+  "link_types": [
+    {"link_key": "customer_has_application", "name": "客户提交申请", "source_object_key": "Customer", "target_object_key": "LoanApplication", "source_property": "customer_id", "target_property": "customer_id", "cardinality": "one_to_many", "description": "一个客户可以提交多笔贷款申请。", "status": "active"},
+    {"link_key": "customer_has_account", "name": "客户拥有贷款", "source_object_key": "Customer", "target_object_key": "LoanAccount", "source_property": "customer_id", "target_property": "customer_id", "cardinality": "one_to_many", "description": "一个客户可以拥有多笔贷款。", "status": "active"},
+    {"link_key": "application_creates_account", "name": "申请形成贷款", "source_object_key": "LoanApplication", "target_object_key": "LoanAccount", "source_property": "application_id", "target_property": "application_id", "cardinality": "one_to_one", "description": "审批通过的申请形成贷款账户。", "status": "active"},
+    {"link_key": "account_has_repayment", "name": "贷款包含还款期次", "source_object_key": "LoanAccount", "target_object_key": "RepaymentPeriod", "source_property": "loan_id", "target_property": "loan_id", "cardinality": "one_to_many", "description": "一笔贷款包含多个还款期次。", "status": "active"},
+    {"link_key": "account_has_risk_snapshot", "name": "贷款关联客户风险", "source_object_key": "LoanAccount", "target_object_key": "CustomerRiskSnapshot", "source_property": "customer_id", "target_property": "customer_id", "cardinality": "many_to_many", "description": "贷款通过客户ID关联月度风险快照。", "status": "active"},
+    {"link_key": "account_has_collection_case", "name": "贷款进入催收案件", "source_object_key": "LoanAccount", "target_object_key": "CollectionCase", "source_property": "loan_id", "target_property": "loan_id", "cardinality": "one_to_many", "description": "逾期贷款可以进入一个或多个催收案件。", "status": "active"}
+  ],
+  "action_types": [
+    {
+      "action_key": "approve_application",
+      "name": "审批贷款申请",
+      "target_object_key": "LoanApplication",
+      "description": "对人工复核中的贷款申请作出通过决定并记录审批依据。",
+      "parameters": [
+        {"parameter_key": "approved_amount", "name": "审批金额", "data_type": "number", "required": true, "options": []},
+        {"parameter_key": "decision_note", "name": "审批说明", "data_type": "text", "required": true, "options": []}
+      ],
+      "preconditions": [
+        {"property": "approval_status", "operator": "eq", "value": "manual_review", "message": "只有人工复核中的申请可以审批"},
+        {"property": "is_blacklist_hit", "operator": "eq", "value": false, "message": "命中黑名单的申请不能通过本动作审批"}
+      ],
+      "effects": [
+        {"property": "approval_status", "value": "approved"},
+        {"property": "approved_amount", "value": "$param.approved_amount"},
+        {"property": "decision_note", "value": "$param.decision_note"},
+        {"property": "decided_at", "value": "$now"}
+      ],
+      "allowed_roles": ["admin", "user"],
+      "requires_approval": true,
+      "status": "active"
+    },
+    {
+      "action_key": "start_collection",
+      "name": "发起电话催收",
+      "target_object_key": "LoanAccount",
+      "description": "对M1及以上逾期且未核销的贷款发起催收，并记录策略和理由。",
+      "parameters": [
+        {"parameter_key": "collection_strategy", "name": "催收策略", "data_type": "string", "required": true, "options": ["电话催收", "短信提醒", "委外催收"]},
+        {"parameter_key": "reason", "name": "决策理由", "data_type": "text", "required": true, "options": []}
+      ],
+      "preconditions": [
+        {"property": "current_status", "operator": "eq", "value": "overdue", "message": "只有逾期贷款可以发起催收"},
+        {"property": "current_overdue_days", "operator": "gt", "value": 30, "message": "当前逾期天数必须大于30天（M1+）"},
+        {"property": "is_written_off", "operator": "eq", "value": false, "message": "已核销贷款不能重复发起催收"}
+      ],
+      "effects": [
+        {"property": "collection_status", "value": "ready"},
+        {"property": "collection_strategy", "value": "$param.collection_strategy"},
+        {"property": "collection_note", "value": "$param.reason"},
+        {"property": "updated_at", "value": "$now"}
+      ],
+      "allowed_roles": ["admin", "user"],
+      "requires_approval": false,
+      "status": "active"
+    },
+    {
+      "action_key": "close_collection_case",
+      "name": "结案催收案件",
+      "target_object_key": "CollectionCase",
+      "description": "记录催收案件的回收本金和结案原因。",
+      "parameters": [
+        {"parameter_key": "recovered_principal", "name": "回收本金", "data_type": "number", "required": true, "options": []},
+        {"parameter_key": "close_reason", "name": "结案原因", "data_type": "text", "required": true, "options": []}
+      ],
+      "preconditions": [
+        {"property": "case_status", "operator": "eq", "value": "open", "message": "只有打开状态的案件可以结案"}
+      ],
+      "effects": [
+        {"property": "case_status", "value": "closed"},
+        {"property": "recovered_principal", "value": "$param.recovered_principal"},
+        {"property": "close_reason", "value": "$param.close_reason"},
+        {"property": "closed_at", "value": "$now"}
+      ],
+      "allowed_roles": ["admin", "user"],
+      "requires_approval": false,
+      "status": "active"
+    }
+  ],
+  "objects": [
+    {"object_type_key": "Customer", "primary_value": 200001, "display_name": "张先生（演示客户）", "properties": {"customer_id": 200001, "name": "张先生（演示客户）", "region": "华东", "customer_segment": "工薪客群", "monthly_income": 18000, "debt_income_ratio": 0.62, "risk_grade": "C", "is_blacklist_hit": false}, "status": "active"},
+    {"object_type_key": "LoanApplication", "primary_value": 900001, "display_name": "APP-20260830-0001", "properties": {"application_id": 900001, "application_no": "APP-20260830-0001", "customer_id": 200001, "product_type": "消费贷", "requested_amount": 60000, "requested_term_months": 12, "risk_grade": "C", "model_pd": 0.071, "approval_status": "manual_review", "approved_amount": 0, "is_blacklist_hit": false}, "status": "active"},
+    {"object_type_key": "LoanAccount", "primary_value": 700001, "display_name": "LN-20250001", "properties": {"loan_id": 700001, "loan_no": "LN-20250001", "application_id": 900001, "customer_id": 200001, "product_type": "消费贷", "loan_amount": 50000, "current_status": "overdue", "remaining_principal": 42000, "current_overdue_days": 45, "max_overdue_days": 45, "overdue_bucket": "M1", "is_written_off": false, "collection_status": "not_started"}, "status": "active"},
+    {"object_type_key": "RepaymentPeriod", "primary_value": 800001, "display_name": "第6期", "properties": {"repay_period_id": 800001, "period_label": "LN-20250001-第6期", "loan_id": 700001, "period_no": 6, "due_date": "2026-07-15", "scheduled_total": 4800, "paid_total": 0, "repay_status": "overdue", "overdue_days": 45, "overdue_bucket": "M1"}, "status": "active"},
+    {"object_type_key": "CustomerRiskSnapshot", "primary_value": 600001, "display_name": "200001-2026年08月风险快照", "properties": {"snapshot_id": 600001, "snapshot_label": "200001-2026年08月风险快照", "customer_id": 200001, "stat_month": "2026-08-01", "outstanding_principal": 42000, "dti": 0.62, "max_dpd_12m": 45, "risk_grade": "C", "model_pd": 0.071, "fraud_risk_level": "low", "is_blacklist_hit": false}, "status": "active"},
+    {"object_type_key": "CollectionCase", "primary_value": 500001, "display_name": "COL-20260830-0001", "properties": {"case_id": 500001, "case_no": "COL-20260830-0001", "loan_id": 700001, "customer_id": 200001, "case_status": "open", "overdue_bucket_at_entry": "M1", "entry_overdue_days": 45, "entry_overdue_principal": 42000, "assigned_team": "待分配", "collection_strategy": "电话催收", "recovered_principal": 0, "recovery_rate": 0}, "status": "active"}
+  ],
+  "links": [
+    {"link_key": "customer_has_application", "source_primary_value": 200001, "target_primary_value": 900001, "properties": {"source": "loan_application_indicator.customer_id"}},
+    {"link_key": "customer_has_account", "source_primary_value": 200001, "target_primary_value": 700001, "properties": {"source": "loan_account_indicator.customer_id"}},
+    {"link_key": "application_creates_account", "source_primary_value": 900001, "target_primary_value": 700001, "properties": {"source": "loan_account_indicator.application_id"}},
+    {"link_key": "account_has_repayment", "source_primary_value": 700001, "target_primary_value": 800001, "properties": {"source": "loan_repayment_period_indicator.loan_id"}},
+    {"link_key": "account_has_risk_snapshot", "source_primary_value": 700001, "target_primary_value": 600001, "properties": {"source": "customer_risk_monthly_indicator.customer_id"}},
+    {"link_key": "account_has_collection_case", "source_primary_value": 700001, "target_primary_value": 500001, "properties": {"source": "collection_case_indicator.loan_id"}}
+  ]
+}

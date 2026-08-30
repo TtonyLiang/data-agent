@@ -3,19 +3,27 @@ import pytest
 from app import main
 from app.models.user import PublicUser
 
-
 ADMIN_USER = PublicUser(id=1, username="admin", role="admin", status="active")
 
 
 @pytest.mark.asyncio
 async def test_confirm_sql_execution_runs_analysis_and_saves_turn(monkeypatch):
     saved_turns = []
+    checkpoint = {
+        "task_id": "task-confirm",
+        "task_status": "awaiting_input",
+        "compiled_sql": "SELECT 1 AS application_count",
+        "human_confirmation": {"status": "pending", "sql": "SELECT 1 AS application_count"},
+    }
 
     async def fake_validate_datasource_access(agent_id, datasource_id):
         return None
 
-    async def fake_sql_execute_node(state):
-        return {
+    class FakeGraph:
+        async def ainvoke(self, state, config=None):
+            assert state["compiled_sql"] == "SELECT 1 AS application_count"
+            assert config == {"recursion_limit": main.GRAPH_RECURSION_LIMIT}
+            return {
             "compiled_sql": "SELECT 1 AS application_count LIMIT 1000",
             "sql_text": "SELECT 1 AS application_count LIMIT 1000",
             "sql_result": [{"application_count": 1}],
@@ -25,22 +33,41 @@ async def test_confirm_sql_execution_runs_analysis_and_saves_turn(monkeypatch):
                 "sql_execution": {"row_count": 1, "duration_ms": 3, "slow_query": False},
             },
             "final_answer": "申请笔数为 1。",
-        }
-
-    async def fake_planner_node(state):
-        return {"plan": {"row_count": 1, "analysis_steps": ["基础统计"]}}
-
-    async def fake_python_generate_node(state):
-        return {"python_code": "print('{}')", "python_result": {"status": "generated"}}
-
-    async def fake_python_analyze_node(state):
-        return {"python_result": {"status": "success", "metrics": [{"field": "application_count"}]}}
-
-    async def fake_report_generator_node(state):
-        return {
+            "plan": {"row_count": 1, "analysis_steps": ["基础统计"]},
+            "python_code": "print('{}')",
+            "python_result": {
+                "status": "success",
+                "metrics": [{"field": "application_count"}],
+            },
             "report_payload": {"title": "申请笔数分析", "summary": "申请笔数为 1。"},
-            "final_answer": "申请笔数为 1。",
+            "task_status": "completed",
+            }
+
+    async def fake_load_history(agent_id, session_id, limit=5, **kwargs):
+        return []
+
+    async def fake_prepare_chat_state(**kwargs):
+        return {
+            "question": "申请笔数是多少",
+            "agent_id": kwargs["agent_id"],
+            "user_id": kwargs["user"].id,
+            "datasource_id": kwargs["datasource_id"],
+            "session_id": kwargs["session_id"],
+            "trace_id": kwargs["trace_id"],
+            "task_id": "task-confirm",
+            "turn_id": "turn-confirm",
+            "turn_mode": "retry",
+            "task_status": "running",
+            "context_invalidated": False,
+            "compiled_sql": checkpoint["compiled_sql"],
+            "human_confirmation": checkpoint["human_confirmation"],
+            "execution_trace": {"trace_id": kwargs["trace_id"]},
+            "chat_history": [],
         }
+
+    class FakeCheckpointService:
+        async def load(self, user_id, agent_id, session_id):
+            return checkpoint
 
     async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
         saved_turns.append(
@@ -56,11 +83,10 @@ async def test_confirm_sql_execution_runs_analysis_and_saves_turn(monkeypatch):
         )
 
     monkeypatch.setattr(main, "validate_datasource_access", fake_validate_datasource_access)
-    monkeypatch.setattr(main, "sql_execute_node", fake_sql_execute_node)
-    monkeypatch.setattr(main, "planner_node", fake_planner_node)
-    monkeypatch.setattr(main, "python_generate_node", fake_python_generate_node)
-    monkeypatch.setattr(main, "python_analyze_node", fake_python_analyze_node)
-    monkeypatch.setattr(main, "report_generator_node", fake_report_generator_node)
+    monkeypatch.setattr(main, "load_history", fake_load_history)
+    monkeypatch.setattr(main, "prepare_chat_state", fake_prepare_chat_state)
+    monkeypatch.setattr(main, "get_graph", lambda: FakeGraph())
+    monkeypatch.setattr(main, "get_task_checkpoint_service", lambda: FakeCheckpointService())
     monkeypatch.setattr(main, "save_turn", fake_save_turn)
 
     response = await main.confirm_sql_execution(
@@ -91,3 +117,21 @@ async def test_confirm_sql_execution_requires_sql():
         await main.confirm_sql_execution({"agent_id": 1}, current_user=ADMIN_USER)
 
     assert exc.value.status_code == 400
+
+
+def test_confirm_sql_rejects_request_sql_that_differs_from_checkpoint():
+    checkpoint = {
+        "task_id": "task-confirm",
+        "task_status": "awaiting_input",
+        "compiled_sql": "SELECT 1 AS application_count",
+        "human_confirmation": {"status": "pending"},
+    }
+
+    with pytest.raises(main.HTTPException) as exc:
+        main.resolve_pending_confirmation_sql(
+            checkpoint,
+            {"task_id": "task-confirm", "sql": "SELECT secret FROM app_user"},
+        )
+
+    assert exc.value.status_code == 409
+    assert "checkpoint" in exc.value.detail

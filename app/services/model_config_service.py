@@ -16,6 +16,7 @@ API Key 保护机制:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -36,6 +37,7 @@ from app.services.embedding_adapter import (
     request_embedding,
 )
 from app.services.secret_service import get_secret_service
+from app.utils.openai_compat import normalize_openai_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +187,13 @@ class ModelConfigService:
         if config.api_key_enabled and not (config.api_key or "").strip():
             return {"ok": False, "message": "API Key 已启用但未配置"}
 
+        normalized_base_url = normalize_openai_base_url(config.base_url)
+        if not normalized_base_url:
+            return {
+                "ok": False,
+                "message": "Base URL 未配置，请填写 OpenAI 兼容接口地址（通常以 /v1 结尾）",
+            }
+
         headers = {"Content-Type": "application/json"}
         if config.api_key_enabled and config.api_key:
             headers["Authorization"] = f"Bearer {config.api_key}"
@@ -194,7 +203,7 @@ class ModelConfigService:
             if config.model_type == "embedding":
                 vector, meta = await request_embedding(
                     provider=config.provider,
-                    base_url=config.base_url,
+                    base_url=normalized_base_url,
                     model=config.model_name,
                     text="ping",
                     headers=headers,
@@ -216,7 +225,7 @@ class ModelConfigService:
                     "variant": meta.get("variant"),
                 }
 
-            url = f"{config.base_url.rstrip('/')}/chat/completions"
+            url = f"{normalized_base_url.rstrip('/')}/chat/completions"
             payload = {
                 "model": config.model_name,
                 "messages": [{"role": "user", "content": "ping"}],
@@ -237,6 +246,20 @@ class ModelConfigService:
                     "latency_ms": latency_ms,
                     "message": safe_response_error(response.text),
                 }
+            valid, validation_message = validate_chat_completion_response(response)
+            if not valid:
+                logger.warning(
+                    "model_config test_connection id=%s invalid_response status=%s message=%s",
+                    config_id,
+                    response.status_code,
+                    validation_message,
+                )
+                return {
+                    "ok": False,
+                    "status_code": response.status_code,
+                    "latency_ms": latency_ms,
+                    "message": validation_message,
+                }
             logger.info(
                 "model_config test_connection id=%s ok=true status=%s latency_ms=%s",
                 config_id, response.status_code, latency_ms,
@@ -250,7 +273,8 @@ class ModelConfigService:
         except EmbeddingProviderError as exc:
             latency_ms = round((time.monotonic() - started_at) * 1000, 2)
             logger.warning(
-                "model_config test_connection id=%s embedding failed status=%s latency_ms=%s attempts=%s",
+                "model_config test_connection id=%s embedding failed "
+                "status=%s latency_ms=%s attempts=%s",
                 config_id,
                 exc.status_code,
                 latency_ms,
@@ -263,7 +287,11 @@ class ModelConfigService:
                 "message": friendly_embedding_error_message(exc),
                 "detail": safe_response_error(exc.response_text),
                 "attempts": [
-                    {k: v for k, v in attempt.items() if k in {"variant", "status_code", "message", "error"}}
+                    {
+                        k: v
+                        for k, v in attempt.items()
+                        if k in {"variant", "status_code", "message", "error"}
+                    }
                     for attempt in exc.attempts
                 ],
             }
@@ -364,6 +392,60 @@ def safe_response_error(text: str) -> str:
     if not compact:
         return "模型服务返回错误"
     return compact[:220]
+
+
+def validate_chat_completion_response(response: httpx.Response) -> tuple[bool, str]:
+    """Validate the minimal OpenAI Chat Completions response contract.
+
+    A reverse proxy may return its HTML landing page with HTTP 200, which would
+    otherwise make a connectivity check report a false success.  Requiring a
+    JSON object with at least one choice catches that configuration error before
+    the agent attempts a real query.
+    """
+    headers = getattr(response, "headers", {}) or {}
+    content_type = ""
+    for key, value in headers.items():
+        if str(key).lower() == "content-type":
+            content_type = str(value).lower()
+            break
+    if "text/html" in content_type:
+        return (
+            False,
+            "模型服务返回了 HTML 页面，不是 OpenAI 兼容接口；请检查 Base URL，通常应包含 /v1。",
+        )
+
+    try:
+        payload = response.json()
+    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+        return (
+            False,
+            "模型服务返回的不是有效 JSON；请检查 Base URL 是否指向 OpenAI "
+            "Chat Completions 接口（通常包含 /v1）。",
+        )
+
+    if not isinstance(payload, dict):
+        return (
+            False,
+            "模型服务返回格式不兼容；请确认 Base URL 指向 OpenAI Chat Completions 接口。",
+        )
+    if payload.get("error"):
+        return (
+            False,
+            f"模型服务返回错误：{safe_response_error(getattr(response, 'text', ''))}".strip(),
+        )
+
+    choices = payload.get("choices")
+    if not isinstance(choices, list):
+        return (
+            False,
+            "模型服务返回格式不兼容，缺少 choices；请确认 Base URL 和模型名称正确。",
+        )
+    if not choices:
+        return (
+            False,
+            "模型服务返回格式不兼容，choices 为空；请确认模型名称有效且服务端已配置可用模型。",
+        )
+    return True, ""
 
 
 def api_key_expiry_flags(expires_at) -> tuple[bool, bool]:

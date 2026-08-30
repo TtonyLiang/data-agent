@@ -89,10 +89,18 @@
     </el-dialog>
 
     <el-dialog v-model="showPasswordDialog" title="重置密码" width="460px" align-center>
-      <el-input v-model="newPassword" type="password" show-password placeholder="请输入新密码" />
+      <p v-if="passwordUser" class="dialog-tip">为「{{ passwordUser.username }}」设置新密码</p>
+      <el-input
+        v-model="newPassword"
+        type="password"
+        show-password
+        autocomplete="new-password"
+        placeholder="请输入至少8个字符的新密码"
+        @keyup.enter="savePassword"
+      />
       <template #footer>
-        <el-button @click="showPasswordDialog = false">取消</el-button>
-        <el-button type="primary" @click="savePassword">确认重置</el-button>
+        <el-button :disabled="passwordSaving" @click="showPasswordDialog = false">取消</el-button>
+        <el-button type="primary" :loading="passwordSaving" @click="savePassword">确认重置</el-button>
       </template>
     </el-dialog>
   </div>
@@ -128,6 +136,7 @@ const permissionUser = ref<CurrentUser | null>(null)
 const passwordUser = ref<CurrentUser | null>(null)
 const selectedAgentIds = ref<number[]>([])
 const newPassword = ref('')
+const passwordSaving = ref(false)
 const userForm = reactive({
   username: '',
   password: '',
@@ -208,14 +217,35 @@ async function saveAgentPermission() {
 function openResetPassword(user: CurrentUser) {
   passwordUser.value = user
   newPassword.value = ''
+  passwordSaving.value = false
   showPasswordDialog.value = true
 }
 
 async function savePassword() {
-  if (!passwordUser.value || !newPassword.value) return
-  await resetUserPassword(passwordUser.value.id, newPassword.value)
-  ElMessage.success('密码已重置')
-  showPasswordDialog.value = false
+  if (!passwordUser.value) return
+  if (!newPassword.value) {
+    ElMessage.warning('请输入新密码')
+    return
+  }
+  if (newPassword.value.length < 8) {
+    ElMessage.warning('新密码至少需要8个字符')
+    return
+  }
+  if (new TextEncoder().encode(newPassword.value).byteLength > 72) {
+    ElMessage.warning('新密码不能超过72字节')
+    return
+  }
+  passwordSaving.value = true
+  try {
+    await resetUserPassword(passwordUser.value.id, newPassword.value)
+    ElMessage.success('密码已重置')
+    showPasswordDialog.value = false
+    newPassword.value = ''
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail || error?.message || '密码重置失败')
+  } finally {
+    passwordSaving.value = false
+  }
 }
 
 async function toggleStatus(user: CurrentUser) {

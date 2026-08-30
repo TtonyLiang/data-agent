@@ -21,15 +21,17 @@ flowchart LR
   U["用户"] --> FE["前端管理台 / ChatView"]
 
   FE --> API["FastAPI 后端<br/>Bearer 鉴权 / CORS / 限流<br/>app/main.py + app/api/*"]
-  API --> GRAPH["LangGraph 问数工作流<br/>app/agent/graph.py"]
+  API --> GRAPH["LangGraph 持久任务监督循环<br/>Observe / Decide / Act<br/>app/agent/graph.py"]
 
   GRAPH --> AGENT["智能体配置<br/>Agent / 模型 / 数据源 / 语义层绑定"]
   GRAPH --> SEM["语义运行时<br/>SemanticRuntimeService"]
   GRAPH --> META["元数据服务<br/>MetadataService"]
   GRAPH --> LLM["大语言模型服务<br/>LLMService"]
   GRAPH --> EXEC["Python 安全执行器<br/>PythonExecutor"]
+  GRAPH <--> CKPT["任务 checkpoint<br/>TaskCheckpointService"]
 
   AGENT --> MGMT[("管理库 MySQL<br/>agent/model/datasource/semantic/chat_history<br/>密码与 API Key 加密落盘")]
+  CKPT --> MGMT
   SEM --> MGMT
   META --> MGMT
   META --> BIZ[("业务库 MySQL<br/>已采集表结构 + 真实业务数据")]
@@ -51,8 +53,10 @@ flowchart LR
 ### 后端
 
 - `app/main.py`：FastAPI 入口、SSE 流式问数接口、日志和历史落盘。
-- `app/agent/graph.py`：LangGraph 查询工作流。
+- `app/agent/graph.py`：LangGraph 持久任务监督循环和动作路由。
+- `app/agent/react.py`：状态观察、受控动作决策、预算和终止策略。
 - `app/agent/nodes/*`：意图识别、语义增强、知识召回、数据定位、LogicForm、SQL、Python 分析、报告生成等节点。
+- `app/services/task_checkpoint_service.py`：MySQL checkpoint、轮次分类、上下文指纹和产物失效。
 - `app/services/*`：LLM、模型配置、语义运行时、元数据、Python 执行器等服务层。
 
 ## 3. 配置关系模型
@@ -69,6 +73,7 @@ erDiagram
   SEMANTIC_DOMAIN ||--o{ SEMANTIC_RULE : "规则"
   SEMANTIC_DOMAIN ||--o{ LOGIC_FORM_TEMPLATE : "模板"
   CHAT_SESSION ||--o{ CHAT_HISTORY : "多轮记录"
+  CHAT_SESSION ||--o| AGENT_TASK_CHECKPOINT : "当前任务状态"
 ```
 
 ### 设计原则
@@ -79,7 +84,7 @@ erDiagram
 - 语义资产的唯一真相源是页面配置和管理库；运行时、迁移和主测试不默认读取本地业务口径 JSON、seed 脚本或 backfill 代码。
 - `examples/` 目录只保存可显式导入的演示资产和案例数据，不参与系统启动、迁移或默认页面展示。
 - 模型配置分为大语言模型和向量模型。大语言模型用于理解、生成 LogicForm 或兜底 SQL；向量模型用于知识召回。
-- 会话历史保存用户问题、最终回答、SQL、结果、思考过程、分析报告，保证历史恢复。
+- `chat_history` 保存用户可见的轮次记录；`agent_task_checkpoint` 保存可执行任务状态。前者用于展示和审计，后者用于跨请求、跨进程续跑，不能互相替代。
 
 ## 3.1 安全与运行保护
 
@@ -98,39 +103,93 @@ SQL 与 Python 执行阶段继续采用纵深防护：
 - SQL 执行有连接超时和查询超时配置；执行失败重试耗尽后直接返回失败态，不再继续生成成功报告。
 - Python 分析只处理 SQL 结果集，不直接访问业务库；本地执行器限制导入、AST、超时、内存和工作目录，生产推荐 worker 或高隔离后端。
 
-## 4. 问数主流程
+## 4. Agent 持久任务循环
+
+旧实现把每次请求固定串成“意图识别 → 语义增强 → 召回 → LogicForm → SQL → 分析”，多轮追问也只能从头执行。当前架构用 Codex 风格的持久 `Observe → Decide → Act` 监督循环替代这条固定流水线：业务节点仍然保留，但它们是可选择的受控工具，不再是每轮必须全部经过的阶段。
 
 ```mermaid
 flowchart TD
-  A["用户提问"] --> B["意图识别"]
-
-  B -->|明显问数关键词| B2["语义增强<br/>原问题 -> 更清晰的业务问法"]
-  B -->|不明显| B1["大模型判断意图"]
-  B1 --> B2
-
-  B2 --> C["知识召回<br/>召回语义资产 / 指标 / 维度 / 规则"]
-  C --> D["数据定位<br/>召回候选表、字段、Join Hint"]
-  D --> E["LogicForm 生成<br/>自然语言 -> 指标/维度/过滤/排序/限制"]
-
-  E --> F["语义校验<br/>指标、维度、过滤、时间口径"]
-  F -->|通过| G["SQL 编译<br/>确定性 LogicForm -> SQL"]
-  G --> H["SQL 前语义一致性检查"]
-
-  F -->|失败或缺少语义资产| X["NL2SQL 兜底"]
-  G -->|确定性编译失败| X
-  X --> H
-
-  H -->|通过| I["SQL 执行"]
-  H -->|不通过且可修复| R1["LF 修复<br/>移除不支持维度/未知指标/无效时间"]
-  H -->|不通过且超过预算| R["返回可读错误 / 追问"]
-  R1 --> F
-
-  I --> J["分析计划 Planner"]
-  J --> K["PythonGenerate<br/>生成统计脚本"]
-  K --> L["PythonAnalyze<br/>执行统计分析"]
-  L --> M["ReportGenerator<br/>结构化报告"]
-  M --> N["流式返回结论、结果和报告"]
+  A["收到用户轮次"] --> B["从 MySQL 加载任务 checkpoint"]
+  B --> C["Reconcile<br/>判断 turn mode / 校验上下文指纹 / 最小化失效"]
+  C --> O["Observe<br/>读取目标、已有产物、错误、预算、HITL 状态"]
+  O --> D["Decide<br/>从动作白名单选择一个 next_action"]
+  D -->|工具动作| X["Act<br/>只执行一个业务节点"]
+  X --> P["记录 observation / action history<br/>写入 MySQL checkpoint"]
+  P -->|running| O
+  P -->|awaiting_input| H["等待追问或 SQL 确认"]
+  P -->|completed / failed| Z["返回当前任务结果"]
+  H --> A
 ```
+
+一次 `new_task` 在依赖均为空时，仍可能自然地依次选择语义增强、知识召回、数据定位、LogicForm、编译和执行；这只是状态依赖推导出的路径，不是写死的边。下一轮如果已有可复用产物，Controller 会从最靠近目标的有效状态继续，例如直接分析上次结果或重新执行已校验 SQL。
+
+### 4.1 持久状态与产物依赖
+
+任务由 `(user_id, agent_id, session_id)` 唯一定位，`task_id` 标识当前业务任务，`turn_id` 标识本次用户输入，`task_revision` 和 `checkpoint_revision` 分别记录任务轮次与持久化版本。状态分为以下几层：
+
+| 层级 | 主要产物 | 依赖 |
+| --- | --- | --- |
+| 输入与上下文 | `question`、`turn_mode`、`task_context`、数据源/模型/语义域指纹 | 智能体和当前请求 |
+| 语义 | `enhanced_question`、`semantic_runtime`、`runtime_evidence` | 问题、语义域、向量模型 |
+| 数据定位 | `schema_scope`、候选表/字段/关联、`schema_ready` | 语义证据、数据源 schema、权限 |
+| 查询 | `logic_form`、`lf_validation`、`compiled_sql`、`semantic_check` | 增强问题、语义层、候选 schema |
+| 执行 | `sql_result`、`sql_error`、执行 trace | 已校验 SQL、数据源、执行权限 |
+| 分析 | `plan`、`python_code`、`python_result`、`report_payload` | SQL 结果和分析目标 |
+| 控制 | `task_status`、动作历史、迭代/修复预算、HITL 状态 | 每次观察和动作结果 |
+
+产物只能在依赖仍有效时复用。失效必须沿依赖方向向下游传播，不能出现“问题已变但继续使用旧 SQL”或“数据源已变但继续分析旧结果”。
+
+### 4.2 多轮模式与最小续跑
+
+新轮次可以显式传入 `turn_mode`，未传时由当前问题和 checkpoint 确定性分类：
+
+| `turn_mode` | 典型输入 | 复用策略 | 下一候选动作 |
+| --- | --- | --- | --- |
+| `new_task` | 与上一问题无关的新目标 | 新建 `task_id`，清空上一任务全部派生产物 | `recognize_intent` |
+| `continue` | “继续”“接着执行”，或恢复未完成任务 | 保留全部有效产物和错误观察 | 从上次未完成状态继续 |
+| `refine` | “换成上个月”“只看华东”“再按地区拆分” | 保留未受影响的语义/Schema 上下文，清除 LogicForm 及其下游；涉及新指标、实体或维度时同时重做相应召回 | `semantic_enhance`、`semantic_recall` 或 `schema_recall` |
+| `retry` | “重新执行”“再跑一次” | 保留已校验 SQL，清除执行结果、错误和分析产物 | `execute_sql`，必要时先 `confirm` |
+| `analyze` | “分析刚才的结果”“生成图表” | 保留 `sql_result`，清除旧分析产物 | `analyze_result` |
+| `respond` | “刚才用了什么 SQL”“结果多少行” | 不调用查询或分析工具，直接读取当前状态 | `respond` |
+
+低置信度追问后的短回答属于对当前任务的 `refine`，而不是新任务。分类不确定时必须保守选择 `new_task` 或 `clarify`，不能仅凭宽泛关键词复用旧查询产物。
+
+### 4.3 失效规则与上下文指纹
+
+轮次协调器先清理上一轮的临时输出和 Controller 计数，再按依赖失效：
+
+- 过滤条件、时间范围、排序或 limit 修改：保留语义运行时和已定位 schema，失效 LogicForm、SQL、结果和分析。
+- 新增或替换维度、指标、业务实体：从受影响的语义召回或 schema 定位开始失效，并清理全部查询下游。
+- 重试执行：只失效 SQL 结果、执行错误和分析层。
+- 重做分析：只失效分析计划、Python 产物和报告。
+- 智能体绑定、数据源、采集 schema、语义资产、模型或权限配置变化：`task_context.fingerprint` 变化，清除语义、schema、查询、结果和分析产物，禁止执行旧 SQL。
+- 无关问题：创建新任务，不把上一任务的 artifact 混入新问题。
+
+`reused_artifacts`、`invalidated_artifacts` 和 `context_invalidated` 同时写入执行 trace 与 API 结果，用于前端解释本轮从哪里续跑，以及测试失效边界。
+
+### 4.4 动作白名单与执行预算
+
+Controller 每次只能选择一个白名单动作：
+
+```text
+recognize_intent, conversation, semantic_enhance, semantic_recall,
+schema_recall, generate_logic_form, validate_logic_form, compile_sql,
+fallback_sql, semantic_check, execute_sql, repair, confirm, clarify,
+analyze_result, generate_analysis_code, run_analysis, generate_report,
+respond, stop
+```
+
+动作先通过标准化和 LangGraph 路由映射，未知动作统一降级到 `respond`。每个工具节点执行后必须先写 checkpoint，再回到 Controller；工具不能自行跳转到另一个工具。当前每轮最多 24 次 Controller 决策、最多 2 次 SQL 修复，并限制连续重复动作；达到任一预算后停止调用工具，输出可审计的 `termination_reason`。安全、权限和缺少数据源类错误不可自动修复。
+
+Controller 当前采用确定性策略，便于回放和单元测试。未来允许模型参与决策时，模型只能提出候选动作和理由，最终动作仍须经过同一套白名单、依赖检查、权限检查、HITL 门禁和预算限制。
+
+### 4.5 暂停、终止与恢复
+
+- `clarify` 和 `confirm` 将任务置为 `awaiting_input`，checkpoint 保留当前目标和有效产物，图在本次请求结束。
+- 用户补充信息后由新轮次 reconcile 现有状态；SQL 确认后复用 checkpoint 中的同一份待确认 SQL，从执行动作继续。
+- `respond`、`conversation` 和 `generate_report` 将任务置为 `completed`。
+- 未处理异常将任务置为 `failed` 并保存错误观察；下一次 `continue` 可以从最后一个已成功 checkpoint 恢复。
+- checkpoint 是进程重启后的恢复源；LangGraph 进程内状态和 `chat_history` 都不是任务续跑的唯一依据。
 
 ## 5. 哪些节点调用模型
 
@@ -286,25 +345,22 @@ Python 阶段只处理 SQL 返回的结果集，不直接访问业务库。`Pyth
 sequenceDiagram
   participant FE as 前端 ChatView
   participant API as /api/chat/stream
-  participant G as LangGraph
-  participant LLM as LLM
-  participant DB as 业务库
+  participant CP as MySQL Checkpoint
+  participant C as ReAct Controller
+  participant T as 受控工具节点
 
   FE->>API: 提交问题
-  API->>G: 启动工作流
-  G-->>API: node_start
-  API-->>FE: node_start
-  G->>LLM: 语义增强
-  LLM-->>G: 增强后的业务问法
-  G->>LLM: LogicForm 生成
-  LLM-->>G: token / reasoning
-  G-->>API: on_chat_model_stream
-  API-->>FE: token / reasoning
-  G-->>API: node_complete
-  API-->>FE: node_complete
-  G->>DB: SQL 执行
-  DB-->>G: rows
-  G-->>API: report_payload
+  API->>CP: load + reconcile turn
+  CP-->>API: state / reused / invalidated
+  API->>C: 启动或恢复循环
+  C-->>API: node_complete(next_action / reason)
+  API-->>FE: Controller 决策事件
+  C->>T: 执行一个白名单动作
+  T-->>API: token / reasoning / node output
+  API-->>FE: node_start / token / node_complete
+  T->>CP: 保存动作后的 observation
+  CP-->>C: running / awaiting_input / completed
+  C->>T: 选择下一个必要动作
   API-->>FE: answer_delta / result / done
 ```
 
@@ -316,6 +372,7 @@ sequenceDiagram
   - `node_start / node_progress / node_complete`
   - `reasoning`
   - `token`
+- `react_controller` 的节点输出携带 `iteration`、`action`、`reason` 和 `termination_reason`；最终 `result` 携带 `task_id`、`turn_id`、`turn_mode`、`task_status`、`checkpoint_revision`、`reused_artifacts` 与 `invalidated_artifacts`。
 - 历史记录会把 `reasoning_trace.events / reasoning / streamText / output` 一并落盘，保证切换会话后还能恢复当时的过程内容，而不只是最终回答。
 - Phase 3 的 `python_generate / python_analyze / report_generator` 会把真实脚本、分析 JSON 和报告正文通过 `wenqu_token` 逐段透出；节点完成时再写入结构化 `python_result / report_payload`，用于历史恢复和报告展开页。
 
@@ -330,9 +387,10 @@ sequenceDiagram
 
 当前 `ChatView` 不再把“简单实时输出”和“展开技术细节”拆成两套内容，而是把每次问数渲染为一段持续增长的实时分析流：
 
-- 主聊天区按固定业务链路顺序输出：意图识别、语义增强、知识召回、数据定位、LogicForm 生成、语义校验、SQL 编译或 NL2SQL 兜底、语义一致性检查、SQL 执行、分析计划、Python 生成、Python 分析、报告生成。
+- 主聊天区按 SSE 实际到达顺序展示本轮被选择的动作，不为已复用或跳过的阶段制造占位。`retry` 可以从 SQL 执行开始，`analyze` 可以从分析计划开始，`respond` 可以没有任何查询节点。
 - LLM 的 token、Python 脚本、Python 分析 JSON、报告正文按到达顺序即时追加到对应章节。
 - 知识召回、数据定位、SQL 执行等代码节点在完成时把结构化结果渲染成候选资产、候选表字段、关联提示和结果样例。
+- Controller 决策、复用产物和失效产物属于执行轨迹；默认以简洁状态呈现，展开后可审计本轮为什么跳过或重做某一步。
 - 流程完成后自动收起过程，只保留“展开分析过程”入口；最终结论只在流程完成后展示，避免过程中提前出现结论占位。
 
 ## 9. 日志与持久化
@@ -341,11 +399,17 @@ sequenceDiagram
 - LLM prompt 和流式事件会写入后端日志，便于排查模型输入输出。
 - 同步和流式问数都会生成 `trace_id`，贯穿 SSE 事件、执行链路、历史结果和错误响应。
 - SQL 执行会记录耗时、慢查询标识和行数，便于排查数据库侧问题。
-- `chat_history` 保存：
-  - 用户问题和最终回答。
-  - SQL、LogicForm、SQL 结果。
-  - reasoning trace。
-  - plan、semantic_check、python_result、report_payload。
+
+持久化分为两种用途：
+
+| 存储 | 写入时机 | 内容 | 用途 |
+| --- | --- | --- | --- |
+| `chat_history` | 一轮对话形成用户可见结果后 | 问题、回答、SQL、LogicForm、结果、reasoning trace、分析和报告 | 会话展示、审计和反馈 |
+| `agent_task_checkpoint` | 每个工具动作形成 observation 后 | 完整可执行状态、任务/轮次 ID、状态、当前动作、版本和错误 | 多轮续跑、HITL 暂停、进程重启恢复 |
+
+checkpoint 以 `(user_id, agent_id, session_id)` 为主键，`revision` 每次保存递增；状态值为 `running`、`awaiting_input`、`completed` 或 `failed`。`chat_history`、流式 token buffer 等展示型临时字段不进入 checkpoint，避免把 UI 历史当成运行状态。删除会话时两类记录一起删除。
+
+为了避免并发请求互相覆盖，同一 key 同时只允许一个活动轮次，保存时必须校验 revision 或在服务层串行化。checkpoint 中包含 SQL 结果等业务数据，生产环境必须沿用会话权限边界，并配置大小限制、保留周期和清理策略。
 
 ## 10. 生产化控制面
 
@@ -382,9 +446,10 @@ sequenceDiagram
 
 当前 HITL 基础闭环包括：
 
-- SQL 执行前确认：请求携带 `require_sql_confirmation` 时，工作流停在 `sql_confirmation` 节点并返回待确认 SQL。
-- 确认后继续执行：`/api/chat/confirm-sql` 接收已确认 SQL，复用 SQL 安全、权限、脱敏和 Phase 3 报告链路继续执行。
-- 低置信度追问：请求启用 `enable_low_confidence_clarification` 且数据定位没有候选表/字段时，进入追问节点。
+- SQL 执行前确认：请求携带 `require_sql_confirmation` 时，Controller 选择 `confirm`，任务以 `awaiting_input` 状态和待确认 SQL 写入 checkpoint，本次循环终止。
+- 确认后继续执行：`/api/chat/confirm-sql` 必须校验用户、智能体、会话、上下文指纹及待确认 SQL 身份，恢复同一 checkpoint 后选择 `execute_sql`；执行时仍复用 SQL 安全、权限和脱敏链路。
+- 低置信度追问：请求启用 `enable_low_confidence_clarification` 且数据定位没有候选表/字段时，Controller 选择 `clarify` 并持久化问题上下文；用户回答作为同一任务的 `refine` 继续。
+- HITL 等待不是失败，也不能在同一个图调用里轮询用户；恢复必须由后续 HTTP 请求触发。
 - 用户反馈回流：`/api/feedback` 记录 `agent_id`、`session_id`、`trace_id`、评分、备注和上下文 payload，供后续评估和 Prompt/语义层迭代。
 
 ## 11. 后续演进方向

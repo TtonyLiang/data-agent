@@ -2,7 +2,6 @@
   <div class="page-shell">
     <div class="page-header">
       <div>
-        <span class="page-kicker">Model Registry</span>
         <h2>大模型配置</h2>
         <p>分别维护大语言模型和向量模型，供智能体按需绑定。</p>
       </div>
@@ -315,14 +314,6 @@ async function handleDelete(config: ModelConfigItem) {
   align-items: flex-end;
   gap: 20px;
   margin-bottom: 18px;
-}
-
-.page-kicker {
-  display: block;
-  margin-bottom: 7px;
-  color: var(--wq-primary);
-  font-size: 12px;
-  font-weight: 720;
 }
 
 .page-header h2 {

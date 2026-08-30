@@ -12,6 +12,7 @@ SemanticRuntime 贯穿后续所有语义节点(校验、编译、修复、NL2LF 
 import logging
 
 from app.services.embedding_service import get_embedding_service
+from app.services.ontology_service import get_ontology_service
 from app.services.semantic_runtime import get_semantic_runtime_service
 from app.services.vector_store import get_vector_store
 from app.utils.logging_helpers import (
@@ -93,6 +94,24 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
         "runtime_evidence": evidence[:8],
         "semantic_error": None,
     }
+    # Ontology is a sibling of the semantic runtime: it gives the Agent
+    # business objects and governed actions while the semantic runtime keeps
+    # metric-to-SQL mappings.  Loading it here makes both available in one
+    # deterministic graph observation.
+    try:
+        ontology_context = await get_ontology_service().build_agent_context(
+            domain_id,
+            role=str(state.get("user_role") or "user"),
+        )
+    except Exception as exc:
+        logger.warning(
+            "ontology context unavailable agent_id=%s domain_id=%s error=%s",
+            agent_id,
+            domain_id,
+            exc,
+        )
+        ontology_context = None
+    result["ontology_context"] = ontology_context
     runtime_payload = runtime.model_dump()
     logger.info(
         "semantic runtime recalled counts=%s evidence=%s",

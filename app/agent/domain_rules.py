@@ -5,7 +5,8 @@
 它不依赖数据库或模型调用,被以下节点直接调用:
 
 - ``semantic_enhance``:``contains_any`` / ``extract_top_limit`` / ``GENERIC_*_TERMS``
-- ``nl2lf_generate``:``find_logic_form_rules`` / ``canonicalize_field`` / ``schema_hints_from_runtime``
+- ``nl2lf_generate``:``find_logic_form_rules`` / ``canonicalize_field`` /
+  ``schema_hints_from_runtime``
 - ``schema_recall``:``business_groups_from_runtime`` / ``recall_profiles_from_runtime``
 - ``semantic_runtime_recall``:``recall_profiles_from_runtime``
 
@@ -21,7 +22,6 @@ from __future__ import annotations
 
 import re
 from typing import Any
-
 
 # ============================================================
 # 通用意图词表 —— 覆盖最常见的业务问法关键词
@@ -80,7 +80,7 @@ def extract_top_limit(text: str) -> int | None:
     - "前五"/"前十" → 5/10
     - 不区分大小写
     """
-    compact = compact_text(text)
+    compact = strip_temporal_windows(compact_text(text))
     # 先尝试阿拉伯数字:top5 或 前5
     match = re.search(r"(?:top|前)(\d{1,3})", compact, flags=re.IGNORECASE)
     if match:
@@ -90,6 +90,15 @@ def extract_top_limit(text: str) -> int | None:
     if match:
         return chinese_number_to_int(match.group(1))
     return None
+
+
+def strip_temporal_windows(text: str) -> str:
+    """Remove time windows such as ``前两个月`` before parsing ranking limits."""
+    return re.sub(
+        r"前(?:\d{1,3}|[一二两三四五六七八九十]+)(?:个)?(?:月|周|天|季度|年)",
+        "",
+        str(text or ""),
+    )
 
 
 def chinese_number_to_int(text: str) -> int | None:
@@ -354,9 +363,9 @@ def schema_hints_from_runtime(
         for hint in expression.get("schema_hints") or []:
             if not isinstance(hint, dict):
                 continue
-            match = hint.get("match") or {}
-            # match 为 dict 时走规则匹配器
-            if isinstance(match, dict):
+            match = hint.get("match")
+            # 只有存在实际条件时才走规则匹配器；空 match 不能代表无条件命中。
+            if isinstance(match, dict) and match:
                 if _rule_matches(match, question):
                     hints.append(hint)
                 continue

@@ -18,6 +18,7 @@ import logging
 from app.agent.prompts import default_prompt_templates
 from app.config import get_settings
 from app.db.mysql import get_management_db
+from app.db.ontology_schema import ONTOLOGY_TABLE_STATEMENTS
 from app.services.user_service import hash_password
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ async def run_management_migrations() -> None:
     db = get_management_db()
     # 建表语句(幂等)
     statements = [
+        *ONTOLOGY_TABLE_STATEMENTS,
         """
         CREATE TABLE IF NOT EXISTS model_config (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -163,6 +165,28 @@ async def run_management_migrations() -> None:
             INDEX idx_user_agent_permission_agent (agent_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户智能体访问权限'
         """,
+        """
+        CREATE TABLE IF NOT EXISTS agent_task_checkpoint (
+            user_id BIGINT NOT NULL COMMENT '归属用户ID',
+            agent_id BIGINT NOT NULL COMMENT '智能体ID',
+            session_id VARCHAR(64) NOT NULL COMMENT '会话ID',
+            task_id VARCHAR(64) NOT NULL COMMENT '持久任务ID',
+            turn_id VARCHAR(64) NOT NULL COMMENT '当前轮次ID',
+            revision BIGINT NOT NULL DEFAULT 1 COMMENT 'checkpoint修订号',
+            status VARCHAR(32) NOT NULL DEFAULT 'running'
+                COMMENT 'running/awaiting_input/completed/failed',
+            turn_mode VARCHAR(32) NOT NULL DEFAULT 'new_task'
+                COMMENT 'new_task/continue/refine/retry/analyze/respond',
+            current_action VARCHAR(64) DEFAULT NULL COMMENT '最近执行动作',
+            checkpoint_json LONGTEXT NOT NULL COMMENT '完整任务状态JSON',
+            error_message TEXT DEFAULT NULL COMMENT '最近失败信息',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, agent_id, session_id),
+            INDEX idx_task_checkpoint_task (task_id),
+            INDEX idx_task_checkpoint_status (status, updated_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent持久任务checkpoint'
+        """,
     ]
     for statement in statements:
         await db.execute_query(statement)
@@ -256,6 +280,36 @@ async def run_management_migrations() -> None:
         "report_payload",
         "ALTER TABLE chat_history ADD COLUMN report_payload JSON DEFAULT NULL "
         "COMMENT '结构化分析报告' AFTER python_result",
+    )
+    await add_column_if_missing(
+        "chat_history",
+        "task_id",
+        "ALTER TABLE chat_history ADD COLUMN task_id VARCHAR(64) DEFAULT NULL "
+        "COMMENT '持久任务ID' AFTER report_payload",
+    )
+    await add_column_if_missing(
+        "chat_history",
+        "turn_id",
+        "ALTER TABLE chat_history ADD COLUMN turn_id VARCHAR(64) DEFAULT NULL "
+        "COMMENT '任务轮次ID' AFTER task_id",
+    )
+    await add_column_if_missing(
+        "chat_history",
+        "turn_mode",
+        "ALTER TABLE chat_history ADD COLUMN turn_mode VARCHAR(32) DEFAULT NULL "
+        "COMMENT '任务轮次模式' AFTER turn_id",
+    )
+    await add_column_if_missing(
+        "chat_history",
+        "task_status",
+        "ALTER TABLE chat_history ADD COLUMN task_status VARCHAR(32) DEFAULT NULL "
+        "COMMENT '任务状态' AFTER turn_mode",
+    )
+    await add_column_if_missing(
+        "chat_history",
+        "task_metadata",
+        "ALTER TABLE chat_history ADD COLUMN task_metadata JSON DEFAULT NULL "
+        "COMMENT '任务复用与失效摘要' AFTER task_status",
     )
     # 改列类型:sql_result 从 VARCHAR 升级为 LONGTEXT(支持大结果集)
     await ensure_column_type(

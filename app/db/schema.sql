@@ -251,6 +251,146 @@ CREATE TABLE IF NOT EXISTS logic_form_template (
     INDEX idx_domain_intent (domain_id, intent_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LogicForm模板';
 
+-- 运营本体: 对象类型
+CREATE TABLE IF NOT EXISTS ontology_object_type (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    domain_id BIGINT NOT NULL COMMENT '所属语义领域',
+    object_key VARCHAR(128) NOT NULL COMMENT '对象类型标识',
+    name VARCHAR(256) NOT NULL COMMENT '业务名称',
+    description TEXT COMMENT '业务定义',
+    primary_property VARCHAR(128) NOT NULL COMMENT '业务主属性',
+    display_property VARCHAR(128) DEFAULT NULL COMMENT '显示属性',
+    status VARCHAR(32) DEFAULT 'draft' COMMENT 'draft/active/deprecated',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_ontology_object_type (domain_id, object_key),
+    INDEX idx_ontology_object_domain (domain_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Ontology对象类型';
+
+-- 运营本体: 对象属性
+CREATE TABLE IF NOT EXISTS ontology_property (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    object_type_id BIGINT NOT NULL COMMENT '对象类型ID',
+    property_key VARCHAR(128) NOT NULL COMMENT '属性标识',
+    name VARCHAR(256) NOT NULL COMMENT '属性名称',
+    data_type VARCHAR(32) NOT NULL COMMENT '属性数据类型',
+    required TINYINT(1) DEFAULT 0 COMMENT '是否必填',
+    `unique` TINYINT(1) DEFAULT 0 COMMENT '是否业务唯一',
+    description TEXT COMMENT '属性说明',
+    default_value JSON DEFAULT NULL COMMENT '默认值',
+    sort_order INT DEFAULT 0 COMMENT '展示顺序',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_ontology_property (object_type_id, property_key),
+    INDEX idx_ontology_property_object (object_type_id, sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Ontology对象属性';
+
+-- 运营本体: 关系类型
+CREATE TABLE IF NOT EXISTS ontology_link_type (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    domain_id BIGINT NOT NULL COMMENT '所属语义领域',
+    link_key VARCHAR(128) NOT NULL COMMENT '关系标识',
+    name VARCHAR(256) NOT NULL COMMENT '关系名称',
+    source_object_key VARCHAR(128) NOT NULL COMMENT '起点对象类型',
+    target_object_key VARCHAR(128) NOT NULL COMMENT '终点对象类型',
+    source_property VARCHAR(128) NOT NULL COMMENT '起点连接属性',
+    target_property VARCHAR(128) NOT NULL COMMENT '终点连接属性',
+    cardinality VARCHAR(32) NOT NULL COMMENT '关系基数',
+    description TEXT COMMENT '关系说明',
+    status VARCHAR(32) DEFAULT 'draft' COMMENT 'draft/active/deprecated',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_ontology_link_type (domain_id, link_key),
+    INDEX idx_ontology_link_domain (domain_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Ontology关系类型';
+
+-- 运营本体: 动作类型
+CREATE TABLE IF NOT EXISTS ontology_action_type (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    domain_id BIGINT NOT NULL COMMENT '所属语义领域',
+    action_key VARCHAR(128) NOT NULL COMMENT '动作标识',
+    name VARCHAR(256) NOT NULL COMMENT '动作名称',
+    target_object_key VARCHAR(128) NOT NULL COMMENT '目标对象类型',
+    description TEXT COMMENT '业务动作说明',
+    parameters JSON DEFAULT NULL COMMENT '动作参数定义',
+    preconditions JSON DEFAULT NULL COMMENT '执行前置条件',
+    effects JSON DEFAULT NULL COMMENT '对象状态效果',
+    allowed_roles JSON DEFAULT NULL COMMENT '允许执行的角色',
+    requires_approval TINYINT(1) DEFAULT 0 COMMENT '是否需要审批单号',
+    status VARCHAR(32) DEFAULT 'draft' COMMENT 'draft/active/deprecated',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_ontology_action_type (domain_id, action_key),
+    INDEX idx_ontology_action_domain (domain_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Ontology动作类型';
+
+-- 运营本体: 对象实例
+CREATE TABLE IF NOT EXISTS ontology_object (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    domain_id BIGINT NOT NULL COMMENT '所属语义领域',
+    object_type_id BIGINT NOT NULL COMMENT '对象类型ID',
+    primary_value VARCHAR(512) NOT NULL COMMENT '业务主键值',
+    display_name VARCHAR(512) NOT NULL COMMENT '显示名称',
+    properties JSON NOT NULL COMMENT '对象属性值',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '乐观版本',
+    status VARCHAR(32) DEFAULT 'active' COMMENT 'active/archived',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_ontology_object (object_type_id, primary_value),
+    INDEX idx_ontology_object_domain (domain_id, object_type_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Ontology对象实例';
+
+-- 运营本体: 关系实例
+CREATE TABLE IF NOT EXISTS ontology_link (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    domain_id BIGINT NOT NULL COMMENT '所属语义领域',
+    link_type_id BIGINT NOT NULL COMMENT '关系类型ID',
+    source_object_id BIGINT NOT NULL COMMENT '起点对象ID',
+    target_object_id BIGINT NOT NULL COMMENT '终点对象ID',
+    properties JSON DEFAULT NULL COMMENT '关系属性',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_ontology_link (link_type_id, source_object_id, target_object_id),
+    INDEX idx_ontology_link_domain (domain_id, link_type_id),
+    INDEX idx_ontology_link_source (source_object_id),
+    INDEX idx_ontology_link_target (target_object_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Ontology关系实例';
+
+-- 运营本体: 动作执行审计
+CREATE TABLE IF NOT EXISTS ontology_action_run (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    domain_id BIGINT NOT NULL COMMENT '所属语义领域',
+    action_type_id BIGINT NOT NULL COMMENT '动作类型ID',
+    target_object_id BIGINT DEFAULT NULL COMMENT '目标对象ID',
+    user_id BIGINT DEFAULT NULL COMMENT '执行用户ID',
+    status VARCHAR(32) NOT NULL COMMENT 'running/succeeded/failed',
+    parameters JSON DEFAULT NULL COMMENT '执行参数',
+    decision_context JSON DEFAULT NULL COMMENT '决策上下文',
+    before_state JSON DEFAULT NULL COMMENT '执行前对象状态',
+    after_state JSON DEFAULT NULL COMMENT '执行后对象状态',
+    error_message TEXT COMMENT '失败原因',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP NULL DEFAULT NULL,
+    INDEX idx_ontology_run_domain (domain_id, created_at),
+    INDEX idx_ontology_run_user (user_id, created_at),
+    INDEX idx_ontology_run_action (action_type_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Ontology动作与决策审计';
+
+-- 运营本体: 发布快照
+CREATE TABLE IF NOT EXISTS ontology_release (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    domain_id BIGINT NOT NULL COMMENT '所属语义领域',
+    version INT NOT NULL COMMENT '递增发布版本',
+    name VARCHAR(256) NOT NULL COMMENT '版本名称',
+    description TEXT COMMENT '发布说明',
+    validation_json JSON NOT NULL COMMENT '发布校验结果',
+    definition_json JSON NOT NULL COMMENT '不可变定义快照',
+    published_by BIGINT DEFAULT NULL COMMENT '发布用户ID',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_ontology_release (domain_id, version),
+    INDEX idx_ontology_release_domain (domain_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Ontology发布版本';
+
 -- Prompt 模板: 可按智能体、模型配置、语义层覆盖各节点系统提示词
 CREATE TABLE IF NOT EXISTS prompt_template (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -294,11 +434,37 @@ CREATE TABLE IF NOT EXISTS chat_history (
     semantic_check JSON DEFAULT NULL COMMENT 'SQL前语义一致性校验结果',
     python_result JSON DEFAULT NULL COMMENT 'Python分析结果',
     report_payload JSON DEFAULT NULL COMMENT '结构化分析报告',
+    task_id VARCHAR(64) DEFAULT NULL COMMENT '持久任务ID',
+    turn_id VARCHAR(64) DEFAULT NULL COMMENT '任务轮次ID',
+    turn_mode VARCHAR(32) DEFAULT NULL COMMENT '任务轮次模式',
+    task_status VARCHAR(32) DEFAULT NULL COMMENT '任务状态',
+    task_metadata JSON DEFAULT NULL COMMENT '任务复用与失效摘要',
     sql_text TEXT DEFAULT NULL COMMENT '兼容字段: 生成的SQL',
     sql_result LONGTEXT DEFAULT NULL COMMENT 'SQL执行结果(JSON)',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_session (agent_id, session_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='对话历史';
+
+-- Agent 持久任务 checkpoint；聊天历史用于展示，本表用于跨请求/重启续跑
+CREATE TABLE IF NOT EXISTS agent_task_checkpoint (
+    user_id BIGINT NOT NULL COMMENT '归属用户ID',
+    agent_id BIGINT NOT NULL COMMENT '智能体ID',
+    session_id VARCHAR(64) NOT NULL COMMENT '会话ID',
+    task_id VARCHAR(64) NOT NULL COMMENT '持久任务ID',
+    turn_id VARCHAR(64) NOT NULL COMMENT '当前轮次ID',
+    revision BIGINT NOT NULL DEFAULT 1 COMMENT 'checkpoint修订号',
+    status VARCHAR(32) NOT NULL DEFAULT 'running' COMMENT 'running/awaiting_input/completed/failed',
+    turn_mode VARCHAR(32) NOT NULL DEFAULT 'new_task'
+        COMMENT 'new_task/continue/refine/retry/analyze/respond',
+    current_action VARCHAR(64) DEFAULT NULL COMMENT '最近执行动作',
+    checkpoint_json LONGTEXT NOT NULL COMMENT '完整任务状态JSON',
+    error_message TEXT DEFAULT NULL COMMENT '最近失败信息',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, agent_id, session_id),
+    INDEX idx_task_checkpoint_task (task_id),
+    INDEX idx_task_checkpoint_status (status, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent持久任务checkpoint';
 
 -- 用户反馈回流
 CREATE TABLE IF NOT EXISTS user_feedback (

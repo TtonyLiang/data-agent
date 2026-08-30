@@ -8,13 +8,37 @@ import pytest
 from app import main
 from app.models.user import PublicUser
 
-
 ADMIN_USER = PublicUser(id=1, username="admin", role="admin", status="active")
 
 
+@pytest.fixture(autouse=True)
+def stub_task_state(monkeypatch):
+    async def fake_prepare_chat_state(**kwargs):
+        return {
+            "question": kwargs["question"],
+            "agent_id": kwargs["agent_id"],
+            "user_id": kwargs["user"].id,
+            "datasource_id": kwargs["datasource_id"],
+            "session_id": kwargs["session_id"],
+            "trace_id": kwargs["trace_id"],
+            "chat_history": kwargs["history"],
+            "turn_mode": kwargs.get("requested_mode") or "new_task",
+            "task_status": "running",
+            "reused_artifacts": [],
+            "invalidated_artifacts": [],
+            "require_sql_confirmation": kwargs["require_sql_confirmation"],
+            "enable_low_confidence_clarification": kwargs[
+                "enable_low_confidence_clarification"
+            ],
+        }
+
+    monkeypatch.setattr(main, "prepare_chat_state", fake_prepare_chat_state)
+
+
 class FakeStreamGraph:
-    async def astream_events(self, state, version):
+    async def astream_events(self, state, version, config=None):
         assert version == "v2"
+        assert config == {"recursion_limit": main.GRAPH_RECURSION_LIMIT}
         assert state["question"] == "近三个月M1+逾期率是多少"
         yield {"event": "on_chain_start", "name": "sql_execute", "data": {}}
         yield {
@@ -34,7 +58,7 @@ class FakeStreamGraph:
 
 
 class IncrementalStreamGraph:
-    async def astream_events(self, state, version):
+    async def astream_events(self, state, version, config=None):
         yield {
             "event": "on_chain_end",
             "name": "intent_recognition",
@@ -60,13 +84,13 @@ class IncrementalStreamGraph:
 
 
 class FailingStreamGraph:
-    async def astream_events(self, state, version):
+    async def astream_events(self, state, version, config=None):
         yield {"event": "on_chain_start", "name": "lf_to_sql_compile", "data": {}}
         raise RuntimeError("model connection dropped")
 
 
 class SlowSemanticRuntimeGraph:
-    async def astream_events(self, state, version):
+    async def astream_events(self, state, version, config=None):
         yield {"event": "on_chain_start", "name": "semantic_runtime_recall", "data": {}}
         await asyncio.sleep(0.03)
         yield {
@@ -84,7 +108,7 @@ class SlowSemanticRuntimeGraph:
 
 
 class SemanticEnhanceStreamGraph:
-    async def astream_events(self, state, version):
+    async def astream_events(self, state, version, config=None):
         yield {"event": "on_chain_start", "name": "semantic_enhance", "data": {}}
         yield {
             "event": "on_chain_end",
@@ -123,7 +147,7 @@ class SemanticEnhanceStreamGraph:
 
 
 class ClarificationStreamGraph:
-    async def astream_events(self, state, version):
+    async def astream_events(self, state, version, config=None):
         assert state["enable_low_confidence_clarification"] is True
         yield {"event": "on_chain_start", "name": "clarification", "data": {}}
         yield {
@@ -145,7 +169,7 @@ class ClarificationStreamGraph:
 
 
 class TokenStreamGraph:
-    async def astream_events(self, state, version):
+    async def astream_events(self, state, version, config=None):
         class Chunk:
             content = '{"metrics":["application_count"]}'
             additional_kwargs = {}
@@ -165,7 +189,7 @@ class TokenStreamGraph:
 
 
 class CustomTokenStreamGraph:
-    async def astream_events(self, state, version):
+    async def astream_events(self, state, version, config=None):
         yield {"event": "on_chain_start", "name": "nl2lf_generate", "data": {}}
         yield {
             "event": "on_custom_event",
@@ -190,7 +214,7 @@ class CustomTokenStreamGraph:
 
 
 class MixedTokenStreamGraph:
-    async def astream_events(self, state, version):
+    async def astream_events(self, state, version, config=None):
         class Chunk:
             content = "{\n"
             additional_kwargs = {}

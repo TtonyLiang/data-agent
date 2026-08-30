@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from app.agent.domain_rules import schema_hints_from_runtime
 from app.agent.nodes import semantic_runtime_recall
 from app.agent.nodes.nl2lf_generate import (
     augment_logic_form_with_physical_schema,
@@ -21,7 +22,6 @@ from app.models.knowledge import (
 )
 from app.services.semantic_runtime import SemanticRuntimeService
 from scripts import import_semantic_bundle as semantic_bundle
-
 
 EXAMPLE_SEMANTIC_PATH = Path("examples/loan/semantic-domain.json")
 
@@ -281,6 +281,14 @@ def test_physical_schema_dimension_requires_semantic_hint():
     assert augmented.dimensions == ["application_product_type"]
 
 
+def test_schema_hint_requires_its_match_terms():
+    runtime = build_runtime().model_dump()
+
+    assert schema_hints_from_runtime(runtime, "各催收团队催收回收率排名") == []
+    hints = schema_hints_from_runtime(runtime, "按客户年龄段查看贷款申请分布")
+    assert any(item.get("key") == "customer_age_dimension" for item in hints)
+
+
 def test_collection_recovery_rate_logic_form_compiles_with_sort():
     runtime = build_runtime()
     svc = SemanticRuntimeService()
@@ -300,7 +308,9 @@ def test_collection_recovery_rate_logic_form_compiles_with_sort():
 def test_application_count_by_region_top3_logic_form_compiles_to_count():
     runtime = build_runtime()
     svc = SemanticRuntimeService()
-    logic_form = fallback_logic_form("贷款排名前三的申请区域是什么，分别申请了多少笔", runtime.model_dump())
+    logic_form = fallback_logic_form(
+        "贷款排名前三的申请区域是什么，分别申请了多少笔", runtime.model_dump()
+    )
 
     validation = svc.validate_logic_form(logic_form, runtime)
     compiled = svc.compile_logic_form(logic_form, runtime)
@@ -330,7 +340,12 @@ def test_application_count_followup_corrects_amount_metric_with_history():
         {"role": "assistant", "content": "按地区返回了放款金额前三。"},
     ]
 
-    normalized = normalize_logic_form("我问的是笔数，为什么查出来的是金额", logic_form, history, build_runtime().model_dump())
+    normalized = normalize_logic_form(
+        "我问的是笔数，为什么查出来的是金额",
+        logic_form,
+        history,
+        build_runtime().model_dump(),
+    )
 
     assert normalized.metrics == ["application_count"]
     assert normalized.dimensions == ["application_region"]
@@ -371,6 +386,17 @@ def test_semantic_enhancement_resolves_top5_followup():
     assert "前五" in result["enhanced_question"]
     assert "申请区域" in result["enhanced_question"]
     assert "多少笔" in result["enhanced_question"]
+
+
+def test_semantic_enhancement_treats_previous_months_as_time_not_topn():
+    history = [{"role": "user", "content": "查询贷款账户总余额。"}]
+
+    result = deterministic_enhancement("换成前两个月", history)
+
+    assert result is not None
+    assert result["enhanced_question"] == "查询贷款账户总余额，时间范围改为前两个月。"
+    assert result["preserved_constraints"] == ["时间范围=前两个月", "延续上一轮业务口径"]
+    assert not any(item.startswith("TopN=") for item in result["preserved_constraints"])
 
 
 def test_semantic_enhancement_clarifies_application_count_region_question():
@@ -464,7 +490,9 @@ def test_application_count_trend_normalize_keeps_default_recent_window():
         limit=None,
     )
 
-    normalized = normalize_logic_form("各个贷款申请量变化趋势", logic_form, runtime=build_runtime().model_dump())
+    normalized = normalize_logic_form(
+        "各个贷款申请量变化趋势", logic_form, runtime=build_runtime().model_dump()
+    )
 
     assert normalized.metrics == ["application_count"]
     assert normalized.dimensions == ["application_product_type"]
@@ -505,7 +533,9 @@ def test_high_pd_balance_and_overdue_logic_form_is_normalized():
         sort=[{"field": "pd", "direction": "desc"}],
     )
 
-    normalized = normalize_logic_form("高 PD 客户的余额和逾期情况", logic_form, runtime=build_runtime().model_dump())
+    normalized = normalize_logic_form(
+        "高 PD 客户的余额和逾期情况", logic_form, runtime=build_runtime().model_dump()
+    )
 
     assert normalized.metrics == ["outstanding_balance", "m1_plus_rate"]
     assert normalized.dimensions == []

@@ -45,13 +45,20 @@ logger = logging.getLogger(__name__)
 DOMAIN_REWRITE_CACHE_TTL_SECONDS = 300
 _domain_rewrite_cache: dict[int, tuple[float, list[dict[str, Any]]]] = {}
 DOMAIN_REWRITE_TERM_KEYS = ("count_terms", "trend_terms", "region_terms", "product_terms")
+TIME_RANGE_PATTERN = re.compile(
+    r"本月|上(?:个)?月|本周|上周|本季度|上季度|今年|去年|"
+    r"(?:近|前)(?:\d{1,3}|[一二两三四五六七八九十]+)(?:个)?(?:月|周|天|季度|年)"
+)
 
 
 async def semantic_enhance_node(state: dict) -> dict:
     """Rewrite the original user question into a clearer business question."""
     log_node_start(logger, "semantic_enhance", state, keys=("trace_id", "agent_id", "question"))
     question = str(state.get("question") or "").strip()
-    history = state.get("chat_history") or []
+    history = list(state.get("chat_history") or [])
+    task_subject = str(state.get("task_subject_question") or "").strip()
+    if state.get("turn_mode") == "refine" and task_subject and task_subject != question:
+        history.append({"role": "user", "content": task_subject})
     runtime = state.get("semantic_runtime") or {}
     if not question:
         result = _build_result(question, question, "no_change", [], "原始问题为空，跳过语义增强。")
@@ -189,8 +196,17 @@ def deterministic_enhancement(
     runtime: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Handle common follow-up and domain rewrite cases with deterministic rules."""
-    top_limit = extract_followup_top_limit(question)
     previous = last_user_data_question(history)
+    time_range = extract_followup_time_range(question)
+    if time_range and previous:
+        return {
+            "enhanced_question": replace_time_range(previous, time_range),
+            "rewrite_type": "followup_resolution",
+            "preserved_constraints": [f"时间范围={time_range}", "延续上一轮业务口径"],
+            "reason": "当前问题是时间范围追问，已结合上一轮任务补全完整问法。",
+        }
+
+    top_limit = extract_followup_top_limit(question)
     if top_limit and previous:
         enhanced = replace_top_limit(previous, top_limit)
         return {
@@ -414,7 +430,9 @@ async def load_domain_rewrites(agent_id: int | None) -> list[dict[str, Any]]:
         _domain_rewrite_cache[int(agent_id)] = (now, rewrites)
         return rewrites
     except Exception as exc:
-        logger.warning("semantic enhance domain rewrite load failed agent_id=%s error=%s", agent_id, exc)
+        logger.warning(
+            "semantic enhance domain rewrite load failed agent_id=%s error=%s", agent_id, exc
+        )
         return []
 
 
@@ -424,7 +442,9 @@ def rewrite_rule_matches(question: str, match: dict[str, Any]) -> bool:
         return False
     if match.get("any") and not contains_any(question, match.get("any") or []):
         return False
-    if match.get("all") and not all(contains_any(question, [term]) for term in match.get("all") or []):
+    if match.get("all") and not all(
+        contains_any(question, [term]) for term in match.get("all") or []
+    ):
         return False
     intents = set(match.get("intents") or [])
     if "count" in intents and not contains_count_intent(question, match.get("count_terms")):
@@ -433,7 +453,9 @@ def rewrite_rule_matches(question: str, match: dict[str, Any]) -> bool:
         return False
     if "region" in intents and not contains_region_intent(question, match.get("region_terms")):
         return False
-    if "product" in intents and not contains_product_type_intent(question, match.get("product_terms")):
+    if "product" in intents and not contains_product_type_intent(
+        question, match.get("product_terms")
+    ):
         return False
     return True
 
@@ -451,6 +473,23 @@ def replace_top_limit(previous_question: str, limit: int) -> str:
     if "排名" in text:
         return text.replace("排名", f"排名{marker}", 1)
     return f"{text}，请返回{marker}项。"
+
+
+def extract_followup_time_range(question: str) -> str | None:
+    """Extract an explicit time-window refinement from a short follow-up."""
+    compact = compact_text(question)
+    match = TIME_RANGE_PATTERN.search(compact)
+    return match.group(0) if match else None
+
+
+def replace_time_range(previous_question: str, time_range: str) -> str:
+    """Replace the previous query's time range while retaining its business subject."""
+    text = str(previous_question or "").strip()
+    if not text:
+        return f"查询{time_range}上一轮相同业务口径的数据。"
+    if TIME_RANGE_PATTERN.search(text):
+        return TIME_RANGE_PATTERN.sub(time_range, text, count=1)
+    return f"{text.rstrip('。！？!?.,，')}，时间范围改为{time_range}。"
 
 
 def force_count_metric(previous_question: str) -> str:
@@ -491,7 +530,7 @@ def extract_followup_top_limit(question: str) -> int | None:
 
 def extract_top_limit(text: str) -> int | None:
     """Extract numeric or Chinese TopN limits from text."""
-    compact = compact_text(text)
+    compact = TIME_RANGE_PATTERN.sub("", compact_text(text))
     match = re.search(r"(?:top|前)(\d{1,3})", compact, flags=re.IGNORECASE)
     if match:
         return int(match.group(1))
@@ -557,28 +596,36 @@ def is_count_correction(question: str) -> bool:
     )
 
 
-def contains_count_intent(text: str, extra_terms: list[str] | tuple[str, ...] | None = None) -> bool:
+def contains_count_intent(
+    text: str, extra_terms: list[str] | tuple[str, ...] | None = None
+) -> bool:
     """Detect words that indicate count or quantity semantics."""
     compact = compact_text(text)
     terms = (*GENERIC_COUNT_TERMS, *(extra_terms or ()))
     return any(str(token).lower() in compact for token in terms)
 
 
-def contains_region_intent(text: str, extra_terms: list[str] | tuple[str, ...] | None = None) -> bool:
+def contains_region_intent(
+    text: str, extra_terms: list[str] | tuple[str, ...] | None = None
+) -> bool:
     """Detect region or area grouping intent."""
     compact = compact_text(text)
     terms = (*GENERIC_REGION_TERMS, *(extra_terms or ()))
     return any(str(token).lower() in compact for token in terms)
 
 
-def contains_product_type_intent(text: str, extra_terms: list[str] | tuple[str, ...] | None = None) -> bool:
+def contains_product_type_intent(
+    text: str, extra_terms: list[str] | tuple[str, ...] | None = None
+) -> bool:
     """Detect product-type grouping or filtering intent."""
     compact = compact_text(text)
     terms = (*GENERIC_PRODUCT_TERMS, *(extra_terms or ()))
     return any(str(token).lower() in compact for token in terms)
 
 
-def contains_trend_intent(text: str, extra_terms: list[str] | tuple[str, ...] | None = None) -> bool:
+def contains_trend_intent(
+    text: str, extra_terms: list[str] | tuple[str, ...] | None = None
+) -> bool:
     """Detect trend or time-series wording."""
     compact = compact_text(text)
     terms = (*GENERIC_TREND_TERMS, *(extra_terms or ()))

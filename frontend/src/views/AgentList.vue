@@ -2,7 +2,6 @@
   <div class="page-shell">
     <div class="page-header">
       <div>
-        <span class="page-kicker">Agent Console</span>
         <h2>智能体管理</h2>
         <p>配置问数助手说明、模型绑定、语义领域和可访问数据源。</p>
       </div>
@@ -404,14 +403,6 @@ async function handleDelete(agent: AgentItem) {
   align-items: flex-end;
   gap: 20px;
   margin-bottom: 18px;
-}
-
-.page-kicker {
-  display: block;
-  margin-bottom: 7px;
-  color: var(--wq-primary);
-  font-size: 12px;
-  font-weight: 720;
 }
 
 .page-header h2 {

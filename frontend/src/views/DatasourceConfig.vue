@@ -2,7 +2,6 @@
   <div class="page-shell">
     <div class="page-header">
       <div>
-        <span class="page-kicker">Data Connections</span>
         <h2>数据源管理</h2>
         <p>维护可复用的数据连接，智能体访问权限在智能体管理中绑定。</p>
       </div>
@@ -687,14 +686,6 @@ async function handleDelete(ds: DatasourceItem) {
   align-items: flex-end;
   gap: 20px;
   margin-bottom: 18px;
-}
-
-.page-kicker {
-  display: block;
-  margin-bottom: 7px;
-  color: var(--wq-primary);
-  font-size: 12px;
-  font-weight: 720;
 }
 
 .page-header h2 {

@@ -204,6 +204,27 @@ class SemanticRuntimeService:
         if not existing:
             return False
         for table in (
+            "ontology_action_run",
+            "ontology_link",
+            "ontology_object",
+            "ontology_release",
+            "ontology_action_type",
+            "ontology_link_type",
+        ):
+            await db.execute_query(
+                f"DELETE FROM {table} WHERE domain_id = :id",
+                {"id": domain_id},
+            )
+        await db.execute_query(
+            "DELETE p FROM ontology_property p JOIN ontology_object_type o "
+            "ON o.id = p.object_type_id WHERE o.domain_id = :id",
+            {"id": domain_id},
+        )
+        await db.execute_query(
+            "DELETE FROM ontology_object_type WHERE domain_id = :id",
+            {"id": domain_id},
+        )
+        for table in (
             "logic_form_template",
             "semantic_mapping",
             "semantic_rule",

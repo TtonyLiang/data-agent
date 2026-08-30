@@ -154,7 +154,7 @@ npm install
 npm run dev
 ```
 
-前端默认运行在 `http://localhost:5173`，后端 API 运行在 `http://localhost:4400`。
+前端默认运行在 `http://localhost:4399`（局域网可使用启动日志中的 Network 地址），后端 API 运行在 `http://localhost:4400`。
 
 ### 5. 导入演示数据（可选）
 
@@ -176,7 +176,7 @@ uv run python examples/douyin_ecommerce/seed_douyin_ecommerce.py
 
 ### 6. 验证
 
-打开 `http://localhost:5173`，注册账号，在智能体管理中授权后，进入对话页面提问：
+打开 `http://localhost:4399`，注册账号，在智能体管理中授权后，进入对话页面提问：
 
 ```
 贷款排名前三的申请区域是什么，分别申请了多少笔？

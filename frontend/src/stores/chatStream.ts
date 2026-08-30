@@ -1,3 +1,5 @@
+import type { ChatTurnMode } from '../api'
+
 export type ChatRole = 'user' | 'assistant'
 export type AssistantStatus = 'running' | 'complete' | 'error'
 export type StepStatus = 'running' | 'done' | 'pending'
@@ -41,6 +43,13 @@ export interface ChatMessage {
   execution_trace?: Record<string, unknown>
   human_confirmation?: Record<string, unknown>
   clarification?: Record<string, unknown>
+  task_id?: string
+  turn_id?: string
+  turn_mode?: ChatTurnMode
+  task_status?: string
+  reused_artifacts?: string[]
+  invalidated_artifacts?: string[]
+  context_invalidated?: boolean
   steps: ChatReasoningStep[]
 }
 
@@ -186,6 +195,13 @@ export function reduceChatStreamEvent(
     assistant.execution_trace = (data.execution_trace as Record<string, unknown>) || undefined
     assistant.human_confirmation = (data.human_confirmation as Record<string, unknown>) || undefined
     assistant.clarification = (data.clarification as Record<string, unknown>) || undefined
+    if (typeof data.task_id === 'string') assistant.task_id = data.task_id
+    if (typeof data.turn_id === 'string') assistant.turn_id = data.turn_id
+    if (typeof data.turn_mode === 'string') assistant.turn_mode = data.turn_mode as ChatTurnMode
+    if (typeof data.task_status === 'string') assistant.task_status = data.task_status
+    if (Array.isArray(data.reused_artifacts)) assistant.reused_artifacts = data.reused_artifacts.map(String)
+    if (Array.isArray(data.invalidated_artifacts)) assistant.invalidated_artifacts = data.invalidated_artifacts.map(String)
+    if (typeof data.context_invalidated === 'boolean') assistant.context_invalidated = data.context_invalidated
     const trace = data.reasoning_trace as ChatReasoningStep[] | undefined
     if (Array.isArray(trace) && trace.length) {
       assistant.steps = trace.map(step => ({
@@ -352,6 +368,8 @@ function cloneMessage(message: ChatMessage): ChatMessage {
     execution_trace: message.execution_trace ? { ...message.execution_trace } : message.execution_trace,
     human_confirmation: message.human_confirmation ? { ...message.human_confirmation } : message.human_confirmation,
     clarification: message.clarification ? { ...message.clarification } : message.clarification,
+    reused_artifacts: message.reused_artifacts ? [...message.reused_artifacts] : message.reused_artifacts,
+    invalidated_artifacts: message.invalidated_artifacts ? [...message.invalidated_artifacts] : message.invalidated_artifacts,
   }
 }
 

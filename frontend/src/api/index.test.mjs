@@ -23,6 +23,8 @@ writeFileSync(tempPath, compiled)
 
 const axiosCalls = []
 const requestInterceptors = []
+let axiosGetData = {}
+let axiosPostData = {}
 
 globalThis.__axios = {
   create() {
@@ -44,12 +46,12 @@ globalThis.__axios = {
       async get(url, config = {}) {
         const next = await instance.applyConfig(config)
         axiosCalls.push(['get', url, next])
-        return Promise.resolve({ data: {} })
+        return Promise.resolve({ data: axiosGetData })
       },
       async post(url, body, config = {}) {
         const next = await instance.applyConfig(config)
         axiosCalls.push(['post', url, body, next])
-        return Promise.resolve({ data: {} })
+        return Promise.resolve({ data: axiosPostData })
       },
       async put(url, body, config = {}) {
         const next = await instance.applyConfig(config)
@@ -90,6 +92,59 @@ function stripAxiosConfig(calls) {
   assert.deepEqual(api.buildAuthHeaders(), { Authorization: 'Bearer test-token' })
   await api.fetchAgents()
   assert.equal(axiosCalls[0][2].headers.Authorization, 'Bearer test-token')
+  axiosCalls.length = 0
+}
+
+{
+  const expectedResponse = {
+    session_id: 'session-task',
+    intent: 'data_query',
+    sql: 'SELECT 1',
+    answer: '完成',
+    sql_result: [{ value: 1 }],
+    task_id: 'task-sync',
+    turn_id: 'turn-sync',
+    turn_mode: 'analyze',
+    task_status: 'completed',
+    reused_artifacts: ['sql_result'],
+    invalidated_artifacts: ['analysis'],
+    context_invalidated: false,
+  }
+  axiosPostData = expectedResponse
+  const response = await api.sendMessage({
+    question: '分析刚才的结果',
+    session_id: 'session-task',
+    turn_mode: 'analyze',
+  })
+  assert.deepEqual(response, expectedResponse)
+  assert.deepEqual(stripAxiosConfig(axiosCalls), [
+    ['post', '/chat', {
+      question: '分析刚才的结果',
+      session_id: 'session-task',
+      turn_mode: 'analyze',
+    }],
+  ])
+  axiosPostData = {}
+  axiosCalls.length = 0
+}
+
+{
+  const expectedHistory = [{
+    role: 'assistant',
+    content: '已按地区细化。',
+    created_at: '2026-08-29T10:00:00',
+    task_id: 'task-history',
+    turn_id: 'turn-history',
+    turn_mode: 'refine',
+    task_status: 'completed',
+    reused_artifacts: ['semantic_runtime', 'schema'],
+    invalidated_artifacts: ['logic_form', 'compiled_sql'],
+    context_invalidated: false,
+  }]
+  axiosGetData = { history: expectedHistory }
+  const history = await api.fetchHistory(1, 'session-history')
+  assert.deepEqual(history, expectedHistory)
+  axiosGetData = {}
   axiosCalls.length = 0
 }
 
@@ -248,6 +303,11 @@ assert.ok(
   'ChatRequest should expose the low-confidence clarification switch',
 )
 
+assert.ok(
+  source.includes('turn_mode?: ChatTurnMode') && source.includes('reused_artifacts?: string[]'),
+  'chat API contracts should expose persistent task mode and reuse metadata',
+)
+
 {
   let capturedHeaders = null
   const events = []
@@ -284,5 +344,16 @@ assert.ok(
 
   assert.deepEqual(events, [
     { event: 'error', data: { message: '网络连接失败' } },
+  ])
+}
+
+{
+  axiosCalls.length = 0
+  await api.resetUserPassword(14, 'Reset-Test-2026!')
+  assert.deepEqual(stripAxiosConfig(axiosCalls), [
+    ['post', '/users/14/reset-password', {
+      password: 'Reset-Test-2026!',
+      must_change_password: true,
+    }],
   ])
 }

@@ -83,10 +83,40 @@ def rule_based_intent(question: str) -> str | None:
     if not normalized:
         return "chat"
 
+    # Capability/model questions may contain words such as "查询" or "模型"
+    # but are conversation turns, not requests to execute SQL.  Keep these
+    # narrow patterns ahead of the broad data keyword list so the assistant can
+    # answer naturally even before a datasource is configured.
+    compact = normalized.replace(" ", "")
+    conversation_patterns = (
+        "你能查询哪些数据",
+        "你可以查询哪些数据",
+        "你能做什么",
+        "你会什么",
+        "有什么功能",
+        "你的能力",
+        "能帮我做什么",
+        "当前用的是什么模型",
+        "现在用的什么模型",
+        "用的是什么模型",
+        "使用的是什么模型",
+        "哪个模型",
+        "模型名称",
+        "模型版本",
+        "模型配置",
+        "模型设置",
+    )
+    if any(pattern in compact for pattern in conversation_patterns):
+        return "chat"
+
     has_data_signal = any(keyword in normalized for keyword in DATA_QUERY_KEYWORDS)
     has_metadata_signal = any(keyword in normalized for keyword in METADATA_QUERY_KEYWORDS)
 
-    if has_metadata_signal and not has_data_signal:
+    # "查询/查看" are often just verbs in a schema question.  Treat a request
+    # that contains no metric/aggregation signal as metadata even when it says
+    # "查询有哪些字段".
+    metric_data_signals = set(DATA_QUERY_KEYWORDS) - {"查询"}
+    if has_metadata_signal and not any(keyword in normalized for keyword in metric_data_signals):
         return "metadata_query"
     if has_data_signal:
         return "data_query"

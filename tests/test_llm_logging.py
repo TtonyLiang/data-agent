@@ -2,7 +2,9 @@ import asyncio
 import logging
 from types import SimpleNamespace
 
-from app.services.llm_service import LLMService
+import pytest
+
+from app.services.llm_service import LLMResponseError, LLMService
 
 
 def test_llm_service_logs_prompt_messages(caplog):
@@ -155,3 +157,92 @@ def test_llm_service_achat_uses_short_ttl_cache(monkeypatch):
     assert first == "cached-ok"
     assert second == "cached-ok"
     assert fake_client.calls == 1
+
+
+def test_llm_service_achat_stream_falls_back_when_stream_is_empty(monkeypatch):
+    class FakeResponse:
+        content = "fallback response"
+
+    class EmptyStreamingClient:
+        async def astream_events(self, messages, version):
+            if False:
+                yield None
+            raise ValueError("No generation chunks were returned")
+
+        async def astream(self, messages):
+            if False:
+                yield None
+            raise ValueError("No generation chunks were returned")
+
+    class NonStreamingClient:
+        async def ainvoke(self, messages):
+            return FakeResponse()
+
+    service = LLMService()
+    service._settings = SimpleNamespace(
+        llm_model="gpt",
+        llm_cache_enabled=False,
+        detailed_data_logging_enabled=False,
+        llm_prompt_logging_enabled=True,
+    )
+
+    def fake_get_client(**kwargs):
+        return NonStreamingClient() if kwargs.get("streaming") is False else EmptyStreamingClient()
+
+    monkeypatch.setattr(service, "get_client", fake_get_client)
+
+    async def collect():
+        return [chunk async for chunk in service.achat_stream([{"role": "user", "content": "hi"}])]
+
+    chunks = asyncio.run(collect())
+
+    assert len(chunks) == 1
+    assert chunks[0].content == "fallback response"
+
+
+def test_llm_service_achat_stream_preserves_provider_errors(monkeypatch):
+    class FailingStreamingClient:
+        async def astream_events(self, messages, version):
+            if False:
+                yield None
+            raise RuntimeError("401 unauthorized")
+
+        async def astream(self, messages):
+            if False:
+                yield None
+            raise AssertionError("provider errors must not trigger a duplicate request")
+
+    service = LLMService()
+    service._settings = SimpleNamespace(
+        llm_provider="openai-compatible",
+        llm_model="test-model",
+        llm_cache_enabled=False,
+        detailed_data_logging_enabled=False,
+        llm_prompt_logging_enabled=True,
+    )
+    monkeypatch.setattr(service, "get_client", lambda **kwargs: FailingStreamingClient())
+
+    async def collect():
+        return [chunk async for chunk in service.achat_stream([{"role": "user", "content": "hi"}])]
+
+    with pytest.raises(LLMResponseError, match="大模型调用失败"):
+        asyncio.run(collect())
+
+
+def test_llm_service_achat_wraps_malformed_provider_response(monkeypatch):
+    class MalformedClient:
+        async def ainvoke(self, messages):
+            raise AttributeError("'str' object has no attribute 'model_dump'")
+
+    service = LLMService()
+    service._settings = SimpleNamespace(
+        llm_provider="openai-compatible",
+        llm_model="test-model",
+        llm_cache_enabled=False,
+        detailed_data_logging_enabled=False,
+        llm_prompt_logging_enabled=True,
+    )
+    monkeypatch.setattr(service, "get_client", lambda **kwargs: MalformedClient())
+
+    with pytest.raises(LLMResponseError, match="非 OpenAI 兼容格式"):
+        asyncio.run(service.achat([{"role": "user", "content": "hi"}]))

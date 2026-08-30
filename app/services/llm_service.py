@@ -18,7 +18,7 @@ import hashlib
 import logging
 import time
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from app.config import get_settings
@@ -29,8 +29,13 @@ from app.utils.logging_helpers import (
 from app.utils.logging_helpers import (
     truncate_text as safe_truncate_text,
 )
+from app.utils.openai_compat import normalize_openai_base_url
 
 logger = logging.getLogger(__name__)
+
+
+class LLMResponseError(RuntimeError):
+    """模型服务返回内容或调用结果不符合当前客户端约定。"""
 
 
 class LLMService:
@@ -63,6 +68,7 @@ class LLMService:
         model = model or self._settings.llm_model
         if not base_url:
             base_url, api_key = self._resolve_provider(provider)
+        base_url = normalize_openai_base_url(base_url)
         api_key = self._normalize_api_key(api_key)
         key = (
             f"{provider}:{base_url or ''}:{model}:{temperature}:{streaming}:"
@@ -111,6 +117,59 @@ class LLMService:
         value = (api_key or "").strip()
         return value or self.API_KEY_PLACEHOLDER
 
+    @staticmethod
+    def _content_text(message) -> str:
+        """把 LangChain 文本或内容块统一为字符串。"""
+        content = getattr(message, "content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, dict):
+                    value = block.get("text") or block.get("content") or ""
+                else:
+                    value = block
+                if value:
+                    parts.append(str(value))
+            return "".join(parts)
+        return str(content or "")
+
+    def _format_call_error(self, exc: Exception, kwargs: dict) -> LLMResponseError:
+        """将 SDK 的低层异常转换为可操作的配置提示。"""
+        if isinstance(exc, LLMResponseError):
+            return exc
+        detail = safe_truncate_text(str(exc or "").strip(), 320)
+        model = kwargs.get("model") or getattr(self._settings, "llm_model", "") or "未指定"
+        lowered = detail.lower()
+        if "no generation chunks" in lowered:
+            message = (
+                f"大模型未返回有效生成内容（模型 {model}）。"
+                "请检查 Base URL 是否包含 /v1、模型名称是否可用，以及服务是否支持流式输出。"
+            )
+        elif "model_dump" in lowered or "html" in lowered:
+            message = (
+                f"大模型返回了非 OpenAI 兼容格式（模型 {model}）。"
+                "请检查 Base URL 是否指向 /v1/chat/completions，而不是网页地址。"
+            )
+        else:
+            message = (
+                f"大模型调用失败（模型 {model}）。"
+                "请检查 Base URL、模型名称、API Key 和上游服务状态。"
+            )
+        if detail:
+            message = f"{message} 原始错误：{detail}"
+        return LLMResponseError(message)
+
+    @staticmethod
+    def _can_retry_stream(exc: Exception) -> bool:
+        """只对流式协议不兼容或空分块重试，避免重复发送鉴权/网络错误。"""
+        detail = str(exc or "").lower()
+        return (
+            "no generation chunks" in detail
+            or isinstance(exc, (TypeError, AttributeError))
+        )
+
     def _api_key_cache_token(self, api_key: str) -> str:
         """返回 api_key 的短摘要(非密文),用于缓存键和诊断日志。"""
         return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12]
@@ -119,8 +178,10 @@ class LLMService:
         """构建请求级别的缓存键(消息内容 + 模型参数),用于响应缓存匹配。"""
         payload = {
             "messages": messages,
-            "provider": kwargs.get("provider") or self._settings.llm_provider,
-            "model": kwargs.get("model") or self._settings.llm_model,
+            "provider": kwargs.get("provider")
+            or getattr(self._settings, "llm_provider", ""),
+            "model": kwargs.get("model")
+            or getattr(self._settings, "llm_model", ""),
             "base_url": kwargs.get("base_url") or "",
             "temperature": kwargs.get("temperature", 0),
         }
@@ -247,7 +308,10 @@ class LLMService:
             logger.info(
                 "LLM response preview model=%s content=%s reasoning=%s",
                 model or self._settings.llm_model,
-                safe_truncate_text(content, getattr(self._settings, "max_llm_prompt_log_chars", 8000)),
+                safe_truncate_text(
+                    content,
+                    getattr(self._settings, "max_llm_prompt_log_chars", 8000),
+                ),
                 safe_truncate_text(
                     reasoning,
                     getattr(self._settings, "max_reasoning_trace_chars", 12000),
@@ -268,8 +332,13 @@ class LLMService:
             self.log_response_text(cached, model=kwargs.get("model"), cache_hit=True)
             return cached
         client = self.get_client(**kwargs, streaming=False)
-        resp = client.invoke(self._to_lc_messages(messages))
-        content = str(resp.content or "")
+        try:
+            resp = client.invoke(self._to_lc_messages(messages))
+            content = self._content_text(resp)
+            if not content.strip():
+                raise LLMResponseError("大模型返回空内容，请检查模型名称和服务状态。")
+        except Exception as exc:
+            raise self._format_call_error(exc, kwargs) from exc
         self._cache_put(cache_key, content)
         self.log_response_text(content, model=kwargs.get("model"))
         return content
@@ -289,8 +358,13 @@ class LLMService:
             return cached
         client = self.get_client(**kwargs, streaming=False)
         lc_messages = self._to_lc_messages(messages)
-        resp = await client.ainvoke(lc_messages)
-        content = str(resp.content or "")
+        try:
+            resp = await client.ainvoke(lc_messages)
+            content = self._content_text(resp)
+            if not content.strip():
+                raise LLMResponseError("大模型返回空内容，请检查模型名称和服务状态。")
+        except Exception as exc:
+            raise self._format_call_error(exc, kwargs) from exc
         self._cache_put(cache_key, content)
         self.log_response_text(content, model=kwargs.get("model"))
         return content
@@ -302,7 +376,8 @@ class LLMService:
         1. 优先用 astream_events(version='v2') 获取结构化事件流,
            从中提取 on_chat_model_stream 事件的 chunk。
         2. 如果 astream_events 失败(如 API 不兼容),回退到 astream。
-        3. 全程记录 chunk 数和 content 总字符数。
+        3. 两种流式方式都没有内容时,回退到同配置的非流式请求。
+        4. 全程记录 chunk 数和 content 总字符数。
         """
         self.log_prompt_messages(
             messages,
@@ -313,22 +388,67 @@ class LLMService:
         lc_messages = self._to_lc_messages(messages)
         content_chars = 0
         chunk_count = 0
+        streamed_any = False
+        has_output = False
+        stream_error: Exception | None = None
         try:
-            # 优先用 astream_events:支持 reasoning 等结构化事件
-            async for event in client.astream_events(lc_messages, version="v2"):
-                if event.get("event") != "on_chat_model_stream":
-                    continue
-                chunk = event.get("data", {}).get("chunk")
-                if chunk is not None:
-                    chunk_count += 1
-                    content_chars += len(str(getattr(chunk, "content", "") or ""))
-                    yield chunk
-        except Exception:
-            # 回退:直接用 astream,逐 chunk yield
-            async for chunk in client.astream(lc_messages):
-                chunk_count += 1
-                content_chars += len(str(getattr(chunk, "content", "") or ""))
-                yield chunk
+            try:
+                # 优先用 astream_events:支持 reasoning 等结构化事件
+                async for event in client.astream_events(lc_messages, version="v2"):
+                    if event.get("event") != "on_chat_model_stream":
+                        continue
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk is not None:
+                        streamed_any = True
+                        chunk_text = self._content_text(chunk)
+                        additional_kwargs = getattr(chunk, "additional_kwargs", {}) or {}
+                        reasoning = additional_kwargs.get("reasoning_content", "")
+                        has_output = has_output or bool(chunk_text or reasoning)
+                        chunk_count += 1
+                        content_chars += len(chunk_text)
+                        yield chunk
+            except Exception as exc:
+                stream_error = exc
+                # 已经向调用方交付过分块后再失败，不能重新请求并拼接重复内容。
+                if streamed_any or not self._can_retry_stream(exc):
+                    raise self._format_call_error(exc, kwargs) from exc
+
+            if not streamed_any:
+                try:
+                    async for chunk in client.astream(lc_messages):
+                        streamed_any = True
+                        chunk_text = self._content_text(chunk)
+                        additional_kwargs = getattr(chunk, "additional_kwargs", {}) or {}
+                        reasoning = additional_kwargs.get("reasoning_content", "")
+                        has_output = has_output or bool(chunk_text or reasoning)
+                        chunk_count += 1
+                        content_chars += len(chunk_text)
+                        yield chunk
+                except Exception as exc:
+                    stream_error = exc
+                    if streamed_any or not self._can_retry_stream(exc):
+                        raise self._format_call_error(exc, kwargs) from exc
+
+            # 某些 OpenAI 兼容端点接受 stream=true 但返回空响应,用普通请求兜底。
+            if not has_output:
+                logger.warning(
+                    "LLM stream empty; falling back to non-streaming model=%s",
+                    kwargs.get("model") or self._settings.llm_model,
+                )
+                fallback_client = self.get_client(**kwargs, streaming=False)
+                try:
+                    response = await fallback_client.ainvoke(lc_messages)
+                    content = self._content_text(response)
+                except Exception as exc:
+                    raise self._format_call_error(exc, kwargs) from exc
+                if not content.strip():
+                    cause = stream_error or LLMResponseError("大模型返回空内容。")
+                    raise self._format_call_error(cause, kwargs) from cause
+                streamed_any = True
+                has_output = True
+                chunk_count = 1
+                content_chars = len(content)
+                yield AIMessageChunk(content=content)
         finally:
             logger.info(
                 "LLM stream finished model=%s chunks=%s content_chars=%s",
@@ -374,8 +494,13 @@ class LLMService:
 
         client = self.get_client(**kwargs, streaming=False)
         lc_messages = self._to_lc_messages(messages)
-        resp = await client.ainvoke(lc_messages)
-        content = str(resp.content or "")
+        try:
+            resp = await client.ainvoke(lc_messages)
+            content = self._content_text(resp)
+            if not content.strip():
+                raise LLMResponseError("大模型返回空内容，请检查模型名称和服务状态。")
+        except Exception as exc:
+            raise self._format_call_error(exc, kwargs) from exc
 
         # MiMo 推理模型适配:reasoning_content 在 additional_kwargs 或 response_metadata 中
         reasoning = ""
@@ -384,7 +509,9 @@ class LLMService:
         if not reasoning and hasattr(resp, "response_metadata"):
             reasoning = resp.response_metadata.get("reasoning_content", "")
 
-        reasoning = safe_truncate_text(str(reasoning or ""), self._settings.max_reasoning_trace_chars)
+        reasoning = safe_truncate_text(
+            str(reasoning or ""), self._settings.max_reasoning_trace_chars
+        )
         # 缓存时把 content 和 reasoning 拼接,用分隔符隔开
         self._cache_put(cache_key, f"{content}\n---REASONING---\n{reasoning}")
         self.log_response_text(content, model=kwargs.get("model"), reasoning=reasoning)
@@ -395,33 +522,11 @@ class LLMService:
 
         用于需要同时转发 content 和 reasoning 流的节点(如 semantic_enhance)。
         """
-        self.log_prompt_messages(
-            messages,
-            model=kwargs.get("model"),
-            streaming=True,
-        )
-        client = self.get_client(**kwargs, streaming=True)
-        lc_messages = self._to_lc_messages(messages)
-        try:
-            async for event in client.astream_events(lc_messages, version="v2"):
-                if event.get("event") != "on_chat_model_stream":
-                    continue
-                chunk = event.get("data", {}).get("chunk")
-                if chunk is None:
-                    continue
-                content = chunk.content or ""
-                reasoning = ""
-                if hasattr(chunk, "additional_kwargs"):
-                    reasoning = chunk.additional_kwargs.get("reasoning_content", "")
-                yield content, reasoning
-        except Exception:
-            # 回退:直接用 astream
-            async for chunk in client.astream(lc_messages):
-                content = chunk.content or ""
-                reasoning = ""
-                if hasattr(chunk, "additional_kwargs"):
-                    reasoning = chunk.additional_kwargs.get("reasoning_content", "")
-                yield content, reasoning
+        async for chunk in self.achat_stream(messages, **kwargs):
+            content = self._content_text(chunk)
+            additional_kwargs = getattr(chunk, "additional_kwargs", {}) or {}
+            reasoning = additional_kwargs.get("reasoning_content", "")
+            yield content, reasoning
 
 
 # 全局单例

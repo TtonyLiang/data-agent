@@ -7,7 +7,6 @@ from app.api import datasource as datasource_api
 from app.db.mysql import safe_param_keys
 from app.models.user import PublicUser
 
-
 ADMIN_USER = PublicUser(id=1, username="admin", role="admin", status="active")
 
 
@@ -62,7 +61,7 @@ class FakeDatasourceService:
 class FakeGraph:
     seen_state: dict | None = None
 
-    async def ainvoke(self, state):
+    async def ainvoke(self, state, config=None):
         self.seen_state = state
         if state.get("datasource_id") == 7:
             return {"final_answer": "ok", "sql_result": [], "execution_trace": {}}
@@ -146,9 +145,21 @@ async def test_chat_resolves_default_agent_datasource_when_request_omits_datasou
     async def fake_save_turn(agent_id, session_id, question, answer, sql, sql_result, **kwargs):
         saved_turns.append({"agent_id": agent_id, "user": kwargs.get("user")})
 
+    async def fake_prepare_chat_state(**kwargs):
+        return {
+            "question": kwargs["question"],
+            "agent_id": kwargs["agent_id"],
+            "user_id": kwargs["user"].id,
+            "datasource_id": kwargs["datasource_id"],
+            "session_id": kwargs["session_id"],
+            "trace_id": kwargs["trace_id"],
+            "chat_history": kwargs["history"],
+        }
+
     graph = FakeGraph()
     monkeypatch.setattr(main, "load_history", fake_load_history)
     monkeypatch.setattr(main, "save_turn", fake_save_turn)
+    monkeypatch.setattr(main, "prepare_chat_state", fake_prepare_chat_state)
     monkeypatch.setattr(main, "get_graph", lambda: graph)
     monkeypatch.setattr(
         main,
@@ -169,3 +180,28 @@ async def test_chat_resolves_default_agent_datasource_when_request_omits_datasou
     assert response["answer"] == "ok"
     assert graph.seen_state["datasource_id"] == 7
     assert saved_turns[0]["user"].id == ADMIN_USER.id
+
+
+@pytest.mark.asyncio
+async def test_non_query_chat_does_not_require_datasource(monkeypatch):
+    class NoDatasourceService:
+        async def list_by_agent(self, agent_id):
+            return []
+
+    monkeypatch.setattr(main, "get_datasource_service", lambda: NoDatasourceService())
+
+    assert await main.resolve_chat_datasource_access(1, None, "你好", []) is None
+
+
+@pytest.mark.asyncio
+async def test_data_query_still_requires_datasource_when_omitted(monkeypatch):
+    class NoDatasourceService:
+        async def list_by_agent(self, agent_id):
+            return []
+
+    monkeypatch.setattr(main, "get_datasource_service", lambda: NoDatasourceService())
+
+    with pytest.raises(HTTPException) as exc_info:
+        await main.resolve_chat_datasource_access(1, None, "查询申请笔数", [])
+
+    assert exc_info.value.status_code == 400

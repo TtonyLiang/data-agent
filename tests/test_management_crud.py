@@ -411,7 +411,11 @@ async def test_model_config_connection_test_uses_openai_compatible_endpoint(monk
 
     class FakeResponse:
         status_code = 200
-        text = '{"ok": true}'
+        headers = {"content-type": "application/json"}
+        text = '{"choices": [{"message": {"content": "pong"}}]}'
+
+        def json(self):
+            return json.loads(self.text)
 
     class FakeAsyncClient:
         def __init__(self, timeout):
@@ -436,6 +440,106 @@ async def test_model_config_connection_test_uses_openai_compatible_endpoint(monk
     assert calls[0]["url"] == "https://example.com/v1/chat/completions"
     assert calls[0]["headers"]["Authorization"] == "Bearer secret-key"
     assert "secret-key" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_model_config_connection_rejects_html_success_response(monkeypatch):
+    class FakeModelConfigDB:
+        async def execute_query(self, sql: str, params: dict | None = None):
+            return [
+                {
+                    "id": params["id"],
+                    "name": "网关模型",
+                    "model_type": "chat",
+                    "provider": "openai-compatible",
+                    "base_url": "https://gateway.example.com",
+                    "model_name": "model",
+                    "api_key": "secret-key",
+                    "api_key_enabled": 1,
+                    "embedding_dimension": None,
+                    "status": "active",
+                }
+            ]
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"Content-Type": "text/html; charset=utf-8"}
+        text = "<!doctype html><html><body>Gateway UI</body></html>"
+
+        def json(self):
+            raise ValueError("not JSON")
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, json, headers):
+            assert url == "https://gateway.example.com/v1/chat/completions"
+            return FakeResponse()
+
+    monkeypatch.setattr(model_config_service, "get_management_db", lambda: FakeModelConfigDB())
+    monkeypatch.setattr(model_config_service.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await ModelConfigService().test_connection(1)
+
+    assert result["ok"] is False
+    assert "HTML" in result["message"]
+    assert "/v1" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_model_config_connection_rejects_success_response_without_choices(monkeypatch):
+    class FakeModelConfigDB:
+        async def execute_query(self, sql: str, params: dict | None = None):
+            return [
+                {
+                    "id": params["id"],
+                    "name": "网关模型",
+                    "model_type": "chat",
+                    "provider": "openai-compatible",
+                    "base_url": "https://gateway.example.com/v1",
+                    "model_name": "model",
+                    "api_key": "secret-key",
+                    "api_key_enabled": 1,
+                    "embedding_dimension": None,
+                    "status": "active",
+                }
+            ]
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        text = '{"ok": true}'
+
+        def json(self):
+            return json.loads(self.text)
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, json, headers):
+            return FakeResponse()
+
+    monkeypatch.setattr(model_config_service, "get_management_db", lambda: FakeModelConfigDB())
+    monkeypatch.setattr(model_config_service.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await ModelConfigService().test_connection(1)
+
+    assert result["ok"] is False
+    assert "choices" in result["message"]
 
 
 @pytest.mark.asyncio

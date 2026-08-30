@@ -199,6 +199,13 @@ function assistantMessage(state) {
       sql: 'select * from sales',
       answer: '查询完成。',
       sql_result: [{ amount: 42 }],
+      task_id: 'task-3',
+      turn_id: 'turn-3',
+      turn_mode: 'refine',
+      task_status: 'completed',
+      reused_artifacts: ['semantic_runtime', 'schema'],
+      invalidated_artifacts: ['logic_form'],
+      context_invalidated: false,
     },
   })
   state = reduceChatStreamEvent(state, { runId: 3, event: 'done', data: {} })
@@ -209,6 +216,13 @@ function assistantMessage(state) {
   assert.equal(message.steps[0].showReasoning, false)
   assert.equal(message.sql, 'select * from sales')
   assert.deepEqual(message.sql_result, [{ amount: 42 }])
+  assert.equal(message.task_id, 'task-3')
+  assert.equal(message.turn_id, 'turn-3')
+  assert.equal(message.turn_mode, 'refine')
+  assert.equal(message.task_status, 'completed')
+  assert.deepEqual(message.reused_artifacts, ['semantic_runtime', 'schema'])
+  assert.deepEqual(message.invalidated_artifacts, ['logic_form'])
+  assert.equal(message.context_invalidated, false)
 
   state = toggleAssistantReasoning(state, message.id, 'lf_to_sql_compile')
   assert.equal(assistantMessage(state).steps[0].showReasoning, true)

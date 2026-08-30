@@ -341,6 +341,41 @@ async def test_report_accepts_structured_metric_and_dimension_items():
 
 
 @pytest.mark.asyncio
+async def test_report_final_answer_prefers_semantic_labels_when_available():
+    state = {
+        "question": "分析团队回收率",
+        "logic_form": {
+            "metrics": ["collection_recovery_rate"],
+            "dimensions": ["assigned_team"],
+        },
+        "compiled_sql": "SELECT assigned_team, collection_recovery_rate FROM collections",
+        "sql_result": [{"assigned_team": "A组", "collection_recovery_rate": 0.8}],
+        "semantic_runtime": {
+            "metrics": [{"metric_key": "collection_recovery_rate", "name": "催收回收率"}],
+            "mappings": [{"asset_key": "assigned_team"}],
+        },
+        "plan": {"mode": "ranking", "mode_label": "排名分析"},
+        "python_result": {
+            "status": "success",
+            "metrics": [
+                {
+                    "field": "collection_recovery_rate",
+                    "avg": 0.8,
+                    "max": 0.8,
+                    "sum": 0.8,
+                }
+            ],
+            "dimensions": [{"field": "assigned_team"}],
+        },
+    }
+
+    result = await report_generator_node(state)
+
+    assert result["final_answer"].startswith("催收回收率按负责团队的排名分析")
+    assert "collection_recovery_rate 按 assigned_team" not in result["final_answer"]
+
+
+@pytest.mark.asyncio
 async def test_report_chart_kind_preserves_python_declared_pie():
     state = {
         "question": "各产品申请占比如何",

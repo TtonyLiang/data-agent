@@ -25,6 +25,19 @@ export function buildAuthHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+export type ChatTurnMode = 'new_task' | 'continue' | 'refine' | 'retry' | 'analyze' | 'respond'
+
+export interface ChatTaskMetadata {
+  task_id?: string
+  turn_id?: string
+  turn_mode?: ChatTurnMode
+  task_status?: string
+  checkpoint_revision?: number
+  reused_artifacts?: string[]
+  invalidated_artifacts?: string[]
+  context_invalidated?: boolean
+}
+
 api.interceptors.request.use((config) => {
   const headers = buildAuthHeaders()
   if (headers.Authorization) {
@@ -40,11 +53,12 @@ export interface ChatRequest {
   datasource_id?: number | null
   session_id?: string
   trace_id?: string
+  turn_mode?: ChatTurnMode
   require_sql_confirmation?: boolean
   enable_low_confidence_clarification?: boolean
 }
 
-export interface ChatResponse {
+export interface ChatResponse extends ChatTaskMetadata {
   session_id: string
   intent: string
   sql: string
@@ -719,6 +733,337 @@ export async function syncSemanticVector(domainId: number) {
   return data
 }
 
+export type OntologyPropertyType =
+  | 'string'
+  | 'text'
+  | 'integer'
+  | 'number'
+  | 'boolean'
+  | 'date'
+  | 'datetime'
+  | 'json'
+
+export interface OntologyProperty {
+  id?: number
+  property_key: string
+  name: string
+  data_type: OntologyPropertyType
+  required: boolean
+  unique: boolean
+  description?: string
+  default_value?: unknown
+  sort_order: number
+}
+
+export interface OntologyObjectType {
+  id: number
+  domain_id: number
+  object_key: string
+  name: string
+  description?: string
+  primary_property: string
+  display_property?: string | null
+  status: 'draft' | 'active' | 'deprecated'
+  properties: OntologyProperty[]
+}
+
+export interface OntologyLinkType {
+  id: number
+  domain_id: number
+  link_key: string
+  name: string
+  source_object_key: string
+  target_object_key: string
+  source_property?: string | null
+  target_property?: string | null
+  cardinality: 'one_to_one' | 'one_to_many' | 'many_to_one' | 'many_to_many'
+  description?: string
+  status: 'draft' | 'active' | 'deprecated'
+}
+
+export interface OntologyActionParameter {
+  parameter_key: string
+  name: string
+  data_type: OntologyPropertyType
+  required: boolean
+  options: unknown[]
+  description?: string
+}
+
+export interface OntologyPrecondition {
+  property: string
+  operator: 'eq' | 'ne' | 'in' | 'not_in' | 'gt' | 'gte' | 'lt' | 'lte' | 'exists'
+  value: unknown
+  message?: string
+}
+
+export interface OntologyEffect {
+  property: string
+  value: unknown
+}
+
+export interface OntologyActionType {
+  id: number
+  domain_id: number
+  action_key: string
+  name: string
+  target_object_key: string
+  description?: string
+  parameters: OntologyActionParameter[]
+  preconditions: OntologyPrecondition[]
+  effects: OntologyEffect[]
+  allowed_roles: Array<'admin' | 'user'>
+  requires_approval: boolean
+  status: 'draft' | 'active' | 'deprecated'
+}
+
+export interface OntologyObject {
+  id: number
+  domain_id: number
+  object_type_id: number
+  object_type_key: string
+  object_type_name: string
+  primary_value: string
+  display_name: string
+  properties: Record<string, unknown>
+  version: number
+  status: 'active' | 'archived'
+  created_at?: string
+  updated_at?: string
+}
+
+export interface OntologyLink {
+  id: number
+  link_type_id: number
+  link_key: string
+  link_type_name: string
+  source_object_id: number
+  source_name: string
+  source_primary_value: string
+  target_object_id: number
+  target_name: string
+  target_primary_value: string
+  properties: Record<string, unknown>
+}
+
+export interface OntologyActionRun {
+  id: number
+  action_type_id: number
+  action_key: string
+  action_name: string
+  target_object_id?: number
+  target_name?: string
+  user_id?: number
+  user_name?: string
+  username?: string
+  status: 'running' | 'succeeded' | 'failed'
+  parameters: Record<string, unknown>
+  decision_context: Record<string, unknown>
+  before_state: Record<string, unknown>
+  after_state: Record<string, unknown>
+  error_message?: string
+  created_at?: string
+  completed_at?: string
+}
+
+export interface OntologySummary {
+  domain: SemanticDomain
+  counts: {
+    object_types: number
+    link_types: number
+    action_types: number
+    objects: number
+    links: number
+    action_runs: number
+  }
+  latest_release?: {
+    id: number
+    version: number
+    name: string
+    description?: string
+    created_at?: string
+  } | null
+}
+
+export interface OntologyAgentToolDefinition {
+  name: 'ontology_query_objects' | 'ontology_execute_action' | string
+  description: string
+  parameters: Record<string, unknown>
+}
+
+export interface OntologyAgentContext {
+  domain: SemanticDomain | Record<string, unknown>
+  release?: Record<string, unknown> | null
+  role: 'admin' | 'user' | string
+  object_types: Array<Record<string, unknown>>
+  link_types: Array<Record<string, unknown>>
+  actions: Array<Record<string, unknown>>
+  capabilities: { query_objects: boolean; execute_actions: boolean }
+  tools: OntologyAgentToolDefinition[]
+}
+
+export async function fetchOntologyDomains(): Promise<SemanticDomain[]> {
+  const { data } = await api.get<{ domains: SemanticDomain[] }>('/ontology/domains')
+  return data.domains || []
+}
+
+export async function fetchOntologySummary(domainId: number): Promise<OntologySummary> {
+  const { data } = await api.get(`/ontology/domains/${domainId}/summary`)
+  return data
+}
+
+export async function fetchOntologyObjectTypes(domainId: number): Promise<OntologyObjectType[]> {
+  const { data } = await api.get(`/ontology/domains/${domainId}/object-types`)
+  return data.object_types || []
+}
+
+export async function saveOntologyObjectType(domainId: number, payload: Record<string, unknown>) {
+  const { data } = await api.post(`/ontology/domains/${domainId}/object-types`, payload)
+  return data
+}
+
+export async function deleteOntologyObjectType(domainId: number, objectTypeId: number) {
+  const { data } = await api.delete(`/ontology/domains/${domainId}/object-types/${objectTypeId}`)
+  return data
+}
+
+export async function fetchOntologyLinkTypes(domainId: number): Promise<OntologyLinkType[]> {
+  const { data } = await api.get(`/ontology/domains/${domainId}/link-types`)
+  return data.link_types || []
+}
+
+export async function saveOntologyLinkType(domainId: number, payload: Record<string, unknown>) {
+  const { data } = await api.post(`/ontology/domains/${domainId}/link-types`, payload)
+  return data
+}
+
+export async function deleteOntologyLinkType(domainId: number, linkTypeId: number) {
+  const { data } = await api.delete(`/ontology/domains/${domainId}/link-types/${linkTypeId}`)
+  return data
+}
+
+export async function fetchOntologyActionTypes(domainId: number): Promise<OntologyActionType[]> {
+  const { data } = await api.get(`/ontology/domains/${domainId}/action-types`)
+  return data.action_types || []
+}
+
+export async function fetchOntologyAgentContext(domainId: number): Promise<OntologyAgentContext> {
+  const { data } = await api.get<OntologyAgentContext>(`/ontology/domains/${domainId}/agent-context`)
+  return data
+}
+
+export async function queryOntologyObjects(
+  domainId: number,
+  params?: { object_type_key?: string; search?: string; limit?: number; offset?: number },
+) {
+  const { data } = await api.get(`/ontology/domains/${domainId}/query`, { params })
+  return data
+}
+
+export async function executeOntologyTool(
+  domainId: number,
+  toolName: string,
+  arguments_: Record<string, unknown>,
+) {
+  const { data } = await api.post(`/ontology/domains/${domainId}/agent-tools/${toolName}`, {
+    arguments: arguments_,
+  })
+  return data
+}
+
+export async function saveOntologyActionType(domainId: number, payload: Record<string, unknown>) {
+  const { data } = await api.post(`/ontology/domains/${domainId}/action-types`, payload)
+  return data
+}
+
+export async function deleteOntologyActionType(domainId: number, actionTypeId: number) {
+  const { data } = await api.delete(`/ontology/domains/${domainId}/action-types/${actionTypeId}`)
+  return data
+}
+
+export async function validateOntology(domainId: number) {
+  const { data } = await api.post(`/ontology/domains/${domainId}/validate`)
+  return data
+}
+
+export async function publishOntology(domainId: number, payload: Record<string, unknown>) {
+  const { data } = await api.post(`/ontology/domains/${domainId}/publish`, payload)
+  return data
+}
+
+export async function fetchOntologyReleases(domainId: number) {
+  const { data } = await api.get(`/ontology/domains/${domainId}/releases`)
+  return data.releases || []
+}
+
+export async function exportOntologyBundle(domainId: number, includeInstances = true) {
+  const { data } = await api.get(`/ontology/domains/${domainId}/export`, {
+    params: { include_instances: includeInstances },
+  })
+  return data
+}
+
+export async function importOntologyBundle(
+  domainId: number,
+  bundle: Record<string, unknown>,
+  replace = false,
+) {
+  const { data } = await api.post(`/ontology/domains/${domainId}/import`, { bundle, replace })
+  return data
+}
+
+export async function fetchOntologyObjects(
+  domainId: number,
+  objectTypeId?: number,
+): Promise<OntologyObject[]> {
+  const { data } = await api.get(`/ontology/domains/${domainId}/objects`, {
+    params: objectTypeId ? { object_type_id: objectTypeId } : undefined,
+  })
+  return data.objects || []
+}
+
+export async function saveOntologyObject(domainId: number, payload: Record<string, unknown>) {
+  const { data } = await api.post(`/ontology/domains/${domainId}/objects`, payload)
+  return data
+}
+
+export async function deleteOntologyObject(domainId: number, objectId: number) {
+  const { data } = await api.delete(`/ontology/domains/${domainId}/objects/${objectId}`)
+  return data
+}
+
+export async function fetchOntologyLinks(domainId: number): Promise<OntologyLink[]> {
+  const { data } = await api.get(`/ontology/domains/${domainId}/links`)
+  return data.links || []
+}
+
+export async function saveOntologyLink(domainId: number, payload: Record<string, unknown>) {
+  const { data } = await api.post(`/ontology/domains/${domainId}/links`, payload)
+  return data
+}
+
+export async function deleteOntologyLink(domainId: number, linkId: number) {
+  const { data } = await api.delete(`/ontology/domains/${domainId}/links/${linkId}`)
+  return data
+}
+
+export async function executeOntologyAction(
+  domainId: number,
+  actionTypeId: number,
+  payload: Record<string, unknown>,
+) {
+  const { data } = await api.post(
+    `/ontology/domains/${domainId}/actions/${actionTypeId}/execute`,
+    payload,
+  )
+  return data
+}
+
+export async function fetchOntologyActionRuns(domainId: number): Promise<OntologyActionRun[]> {
+  const { data } = await api.get(`/ontology/domains/${domainId}/action-runs`)
+  return data.runs || []
+}
+
 // 会话历史
 export interface SessionItem {
   session_id: string
@@ -727,7 +1072,7 @@ export interface SessionItem {
   last_question: string
 }
 
-export interface HistoryItem {
+export interface HistoryItem extends ChatTaskMetadata {
   role: 'user' | 'assistant'
   content: string
   sql_text?: string

@@ -19,10 +19,12 @@ from langchain_core.callbacks.manager import adispatch_custom_event
 from app.agent.domain_rules import (
     canonicalize_field,
     contains_any,
-    extract_top_limit as extract_configured_top_limit,
     explicitly_mentioned_metrics,
     find_logic_form_rules,
     schema_hints_from_runtime,
+)
+from app.agent.domain_rules import (
+    extract_top_limit as extract_configured_top_limit,
 )
 from app.agent.prompts import load_prompt
 from app.models.knowledge import LogicFilter, LogicForm, LogicSort
@@ -63,6 +65,7 @@ async def nl2lf_generate_node(state: dict) -> dict:
     schema_scope = state.get("schema_scope") or {}
     runtime_context = build_runtime_context(
         runtime,
+        ontology_context=state.get("ontology_context"),
         relevant_tables=relevant_tables,
         relevant_columns=relevant_columns,
         likely_joins=likely_joins,
@@ -156,7 +159,6 @@ def normalize_logic_form(
     limit = logic_form.limit
     grain = logic_form.grain
     initial_metrics = list(metrics)
-    asks_trend = asks_trend_question(context_text)
 
     # 第1步:从 semantic_runtime 中匹配适用的 normalization 规则
     matched_rules = find_logic_form_rules(
@@ -222,7 +224,12 @@ def normalize_logic_form(
         if asks_ranking(context_compact):
             sort_field = str(actions.get("sort_field") or (metrics[0] if metrics else ""))
             if sort_field:
-                sort = [LogicSort(field=sort_field, direction=str(actions.get("sort_direction") or "desc"))]
+                sort = [
+                    LogicSort(
+                        field=sort_field,
+                        direction=str(actions.get("sort_direction") or "desc"),
+                    )
+                ]
             limit = (
                 extract_configured_top_limit(compact)
                 or extract_configured_top_limit(context_compact)
@@ -286,7 +293,9 @@ def contextual_question_text(question: str, history: list[dict] | None = None) -
 
 def asks_ranking(compact_text: str) -> bool:
     """Detect ranking or TopN intent."""
-    return any(token in compact_text for token in ("最多", "排名", "排行", "top", "前"))
+    return any(token in compact_text for token in ("最多", "排名", "排行", "top")) or bool(
+        extract_configured_top_limit(compact_text)
+    )
 
 
 def asks_trend_question(text: str) -> bool:
@@ -300,26 +309,7 @@ def asks_trend_question(text: str) -> bool:
 
 def extract_top_limit(compact_text: str) -> int | None:
     """Extract numeric or Chinese TopN limits from compact text."""
-    match = re.search(r"(?:top|前)(\d{1,3})", compact_text)
-    if match:
-        return int(match.group(1))
-    chinese_digits = {
-        "一": 1,
-        "二": 2,
-        "两": 2,
-        "三": 3,
-        "四": 4,
-        "五": 5,
-        "六": 6,
-        "七": 7,
-        "八": 8,
-        "九": 9,
-        "十": 10,
-    }
-    match = re.search(r"前([一二两三四五六七八九十])", compact_text)
-    if match:
-        return chinese_digits.get(match.group(1))
-    return None
+    return extract_configured_top_limit(compact_text)
 
 
 def augment_logic_form_with_physical_schema(
@@ -512,6 +502,7 @@ def unique_strings(values: list[str]) -> list[str]:
 def build_runtime_context(
     runtime: dict,
     *,
+    ontology_context: dict | None = None,
     relevant_tables: list[dict] | None = None,
     relevant_columns: list[dict] | None = None,
     likely_joins: list[dict] | None = None,
@@ -577,12 +568,21 @@ def build_runtime_context(
             for item in (likely_joins or [])
         ],
     }
+    ontology = ontology_context if isinstance(ontology_context, dict) else {}
+    ontology_payload = {
+        "domain": ontology.get("domain") or {},
+        "release": ontology.get("release"),
+        "object_types": ontology.get("object_types") or [],
+        "link_types": ontology.get("link_types") or [],
+        "actions": ontology.get("actions") or [],
+    }
     return json.dumps(
         {
             "metrics": metrics,
             "dimensions_and_filters": dimensions,
             "rules": rules,
             "physical_schema": physical_schema,
+            "ontology": ontology_payload,
         },
         ensure_ascii=False,
     )
@@ -609,7 +609,19 @@ def build_user_prompt(
 def parse_logic_form(response: str) -> LogicForm:
     """Parse a LogicForm JSON response from model output."""
     text = extract_json_object(response)
-    return LogicForm(**json.loads(text))
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise ValueError("LogicForm JSON 顶层必须是对象")
+    # Models occasionally emit ``filters: {}``/``sort: {}`` for an empty slot.
+    # Normalize those harmless variants before Pydantic validation so they do
+    # not trigger an unnecessary NL2SQL fallback.
+    for key in ("filters", "sort"):
+        value = payload.get(key)
+        if value in (None, "", {}):
+            payload[key] = []
+        elif isinstance(value, dict):
+            payload[key] = [value]
+    return LogicForm(**payload)
 
 
 def extract_json_object(response: str) -> str:
@@ -691,7 +703,12 @@ def fallback_logic_form(question: str, runtime: dict[str, Any] | None = None) ->
         if asks_ranking(compact):
             sort_field = str(actions.get("sort_field") or (metrics[0] if metrics else ""))
             if sort_field:
-                sort = [{"field": sort_field, "direction": str(actions.get("sort_direction") or "desc")}]
+                sort = [
+                    {
+                        "field": sort_field,
+                        "direction": str(actions.get("sort_direction") or "desc"),
+                    }
+                ]
             limit = extract_configured_top_limit(compact) or actions.get("default_limit") or limit
         if actions.get("remove_dimensions"):
             remove = set(actions.get("remove_dimensions") or [])

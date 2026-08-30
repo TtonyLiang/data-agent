@@ -2,7 +2,6 @@
   <div class="page-shell">
     <div class="page-header">
       <div>
-        <span class="page-kicker">Semantic Layer</span>
         <h2>语义层配置</h2>
         <p>管理领域本体、指标口径、关系路径、规则和 LogicForm 模板。</p>
       </div>
@@ -2133,14 +2132,6 @@ function columnNameLabel(assetKey: string, columnName: string) {
   align-items: flex-end;
   gap: 20px;
   margin-bottom: 18px;
-}
-
-.page-kicker {
-  display: block;
-  margin-bottom: 7px;
-  color: var(--wq-primary);
-  font-size: 12px;
-  font-weight: 720;
 }
 
 .page-header h2 {

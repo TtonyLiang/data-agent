@@ -154,7 +154,7 @@ npm install
 npm run dev
 ```
 
-Frontend runs at `http://localhost:5173` by default, backend API at `http://localhost:4400`.
+Frontend runs at `http://localhost:4399` by default (use the Network URL printed at startup for LAN access), backend API at `http://localhost:4400`.
 
 ### 5. Import Demo Data (Optional)
 
@@ -176,7 +176,7 @@ uv run python examples/douyin_ecommerce/seed_douyin_ecommerce.py
 
 ### 6. Verify
 
-Open `http://localhost:5173`, register an account, get authorized for an agent in Agent Management, then ask a question in the Chat page:
+Open `http://localhost:4399`, register an account, get authorized for an agent in Agent Management, then ask a question in the Chat page:
 
 ```
 What are the top 3 application regions by loan count, and how many applications did each have?
