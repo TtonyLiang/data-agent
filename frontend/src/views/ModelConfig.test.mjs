@@ -42,3 +42,8 @@ assert.ok(
   source.includes('api_key_expires_at') && source.includes('即将过期'),
   'ModelConfig should expose API key expiration reminders',
 )
+
+assert.ok(
+  source.includes('format="YYYY-MM-DD HH:mm:ss"') && source.includes('formatDateTime(detailConfig.api_key_expires_at)'),
+  'ModelConfig should display API key expiration timestamps only to seconds',
+)

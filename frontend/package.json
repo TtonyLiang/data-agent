@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "node src/stores/chatStream.test.mjs && node src/api/index.test.mjs && node src/views/ChatView.test.mjs && node src/views/KnowledgeConfig.test.mjs && node src/views/OntologyWorkbench.test.mjs && node src/views/UserManagement.test.mjs && node src/views/ModelConfig.test.mjs && node src/views/PromptConfig.test.mjs",
+    "test": "node src/utils/datetime.test.mjs && node src/stores/chatStream.test.mjs && node src/api/index.test.mjs && node src/views/ChatView.test.mjs && node src/views/KnowledgeConfig.test.mjs && node src/views/OntologyWorkbench.test.mjs && node src/views/UserManagement.test.mjs && node src/views/ModelConfig.test.mjs && node src/views/PromptConfig.test.mjs",
     "build": "vue-tsc && vite build",
     "preview": "vite preview"
   },

@@ -10,7 +10,7 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy import text
 
-from app.db.mysql import get_management_db
+from app.db.mysql import get_datasource_db, get_management_db
 from app.models.ontology import (
     OntologyActionExecutePayload,
     OntologyActionTypePayload,
@@ -18,6 +18,12 @@ from app.models.ontology import (
     OntologyLinkTypePayload,
     OntologyObjectPayload,
     OntologyObjectTypePayload,
+)
+from app.services.permission_service import get_permission_service
+from app.utils.sql_validator import (
+    find_top_level_keyword,
+    normalize_sql_for_execution,
+    tokenize_sql,
 )
 
 JSON_FIELDS = {
@@ -27,6 +33,8 @@ JSON_FIELDS = {
     "effects",
     "allowed_roles",
     "properties",
+    "source_properties",
+    "overlay_properties",
     "decision_context",
     "before_state",
     "after_state",
@@ -41,6 +49,8 @@ JSON_FALLBACKS: dict[str, Any] = {
     "effects": [],
     "allowed_roles": [],
     "properties": {},
+    "source_properties": {},
+    "overlay_properties": {},
     "decision_context": {},
     "before_state": {},
     "after_state": {},
@@ -71,7 +81,7 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     for key in JSON_FIELDS:
         if key in normalized:
             normalized[key] = _loads(normalized[key], JSON_FALLBACKS[key])
-    for key in ("required", "unique", "requires_approval"):
+    for key in ("required", "unique", "requires_approval", "sync_enabled"):
         if key in normalized:
             normalized[key] = bool(normalized[key])
     return normalized
@@ -104,6 +114,14 @@ class OntologyService:
                 {"domain_id": domain_id},
             )
             counts[key] = int(rows[0]["count"]) if rows else 0
+        source_count_rows = await db.execute_query(
+            "SELECT COALESCE(SUM(last_sync_total), 0) AS count "
+            "FROM ontology_object_type WHERE domain_id = :domain_id AND sync_enabled = 1",
+            {"domain_id": domain_id},
+        )
+        counts["source_objects"] = (
+            int(source_count_rows[0].get("count") or 0) if source_count_rows else 0
+        )
         release_rows = await db.execute_query(
             "SELECT id, version, name, description, published_by, created_at "
             "FROM ontology_release WHERE domain_id = :domain_id ORDER BY version DESC LIMIT 1",
@@ -157,6 +175,15 @@ class OntologyService:
             raise ValueError("主属性必须是对象已定义的属性")
         if payload.display_property and payload.display_property not in property_keys:
             raise ValueError("显示属性必须是对象已定义的属性")
+        source_query = payload.source_query.strip().rstrip(";")
+        if payload.sync_enabled and not source_query:
+            raise ValueError("启用业务库同步时必须配置只读 SELECT")
+        if source_query:
+            validation = normalize_sql_for_execution(source_query, max_limit=payload.sync_limit)
+            if not validation.ok:
+                raise ValueError(f"对象同步 SQL 无效: {validation.reason}")
+            if find_top_level_keyword(tokenize_sql(validation.sql), "ORDER") is None:
+                raise ValueError("对象同步 SQL 必须包含稳定的 ORDER BY，保证分页结果一致")
 
         db = get_management_db()
         duplicate = await db.execute_query(
@@ -170,7 +197,11 @@ class OntologyService:
         )
         if duplicate:
             raise ValueError(f"对象标识已存在: {payload.object_key}")
-        params = payload.model_dump(exclude={"id", "properties"})
+        params = {
+            **payload.model_dump(exclude={"id", "properties", "source_query"}),
+            "source_query": source_query,
+            "sync_enabled": int(payload.sync_enabled),
+        }
         if payload.id:
             existing = await db.execute_query(
                 "SELECT id FROM ontology_object_type WHERE id = :id AND domain_id = :domain_id",
@@ -181,7 +212,9 @@ class OntologyService:
             await db.execute_query(
                 "UPDATE ontology_object_type SET object_key = :object_key, name = :name, "
                 "description = :description, primary_property = :primary_property, "
-                "display_property = :display_property, status = :status WHERE id = :id",
+                "display_property = :display_property, sync_enabled = :sync_enabled, "
+                "source_query = :source_query, sync_limit = :sync_limit, status = :status "
+                "WHERE id = :id",
                 {**params, "id": payload.id},
             )
             object_type_id = payload.id
@@ -189,9 +222,9 @@ class OntologyService:
             object_type_id = await db.execute_insert(
                 "INSERT INTO ontology_object_type "
                 "(domain_id, object_key, name, description, primary_property, "
-                "display_property, status) "
+                "display_property, sync_enabled, source_query, sync_limit, status) "
                 "VALUES (:domain_id, :object_key, :name, :description, :primary_property, "
-                ":display_property, :status)",
+                ":display_property, :sync_enabled, :source_query, :sync_limit, :status)",
                 params,
             )
         statements: list[tuple[str, dict[str, Any]]] = [
@@ -569,6 +602,26 @@ class OntologyService:
                 errors.append({"asset": item["object_key"], "message": "主属性不存在"})
             if item.get("display_property") and item["display_property"] not in props:
                 errors.append({"asset": item["object_key"], "message": "显示属性不存在"})
+            if item.get("sync_enabled"):
+                source_query = str(item.get("source_query") or "").strip()
+                if not source_query:
+                    errors.append(
+                        {
+                            "asset": item["object_key"],
+                            "message": "已启用同步但未配置只读 SELECT",
+                        }
+                    )
+                else:
+                    validation = normalize_sql_for_execution(
+                        source_query, max_limit=int(item.get("sync_limit") or 200)
+                    )
+                    if not validation.ok:
+                        errors.append(
+                            {
+                                "asset": item["object_key"],
+                                "message": f"同步 SQL 无效: {validation.reason}",
+                            }
+                        )
             if not item.get("description"):
                 warnings.append({"asset": item["object_key"], "message": "建议补充业务定义"})
 
@@ -716,7 +769,12 @@ class OntologyService:
         return [_normalize_row(row) for row in rows]
 
     async def list_objects(
-        self, domain_id: int, object_type_id: int | None = None
+        self,
+        domain_id: int,
+        object_type_id: int | None = None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         await self._require_domain(domain_id)
         sql = (
@@ -729,7 +787,407 @@ class OntologyService:
             sql += " AND o.object_type_id = :object_type_id"
             params["object_type_id"] = object_type_id
         sql += " ORDER BY o.updated_at DESC, o.id DESC"
+        if limit is not None:
+            sql += " LIMIT :limit OFFSET :offset"
+            params["limit"] = min(max(int(limit), 1), 1000)
+            params["offset"] = max(int(offset), 0)
         rows = await get_management_db().execute_query(sql, params)
+        return [_normalize_row(row) for row in rows]
+
+    async def sync_objects_from_datasource(
+        self,
+        domain_id: int,
+        *,
+        object_type_id: int | None = None,
+        page: int = 1,
+        page_size: int | None = None,
+        sync_links: bool = True,
+    ) -> dict[str, Any]:
+        """Synchronize one source page while preserving local action overlays."""
+        domain = await self._require_domain(domain_id)
+        datasource_id = int(domain.get("datasource_id") or 0)
+        if not datasource_id:
+            raise ValueError("当前领域没有绑定默认数据源，无法同步对象实例")
+        object_types = await self.list_object_types(domain_id)
+        if object_type_id is not None:
+            object_types = [item for item in object_types if int(item["id"]) == object_type_id]
+            if not object_types:
+                raise ValueError("对象类型不存在或不属于当前领域")
+        sync_types = [item for item in object_types if item.get("sync_enabled")]
+        if not sync_types:
+            raise ValueError("当前对象类型没有启用业务库同步")
+
+        source_db = await get_datasource_db(datasource_id)
+        permission_service = get_permission_service()
+        action_types = await self.list_action_types(domain_id)
+        page_number = max(int(page), 1)
+        results: list[dict[str, Any]] = []
+        synced_objects: list[dict[str, Any]] = []
+        total_rows = 0
+
+        for object_type in sync_types:
+            configured_limit = min(max(int(object_type.get("sync_limit") or 200), 1), 1000)
+            effective_page_size = min(max(int(page_size or configured_limit), 1), 1000)
+            source_query = str(object_type.get("source_query") or "").strip().rstrip(";")
+            result: dict[str, Any] = {
+                "object_type_id": int(object_type["id"]),
+                "object_key": object_type["object_key"],
+                "name": object_type["name"],
+                "page": page_number,
+                "page_size": effective_page_size,
+                "total": 0,
+                "read": 0,
+                "created": 0,
+                "updated": 0,
+                "unchanged": 0,
+                "skipped": 0,
+                "errors": [],
+                "objects": [],
+            }
+            try:
+                base_query = self._validated_source_query(source_query)
+                allowed, reason = await permission_service.validate_sql_access(
+                    int(domain.get("agent_id") or 0), datasource_id, base_query
+                )
+                if not allowed:
+                    raise ValueError(reason)
+                count_rows = await source_db.execute_query(
+                    f"SELECT COUNT(*) AS count FROM ({base_query}) AS ontology_source"
+                )
+                total = int(count_rows[0].get("count") or 0) if count_rows else 0
+                offset = (page_number - 1) * effective_page_size
+                rows = await source_db.execute_query(
+                    f"{base_query}\nLIMIT :sync_limit OFFSET :sync_offset",
+                    {"sync_limit": effective_page_size, "sync_offset": offset},
+                )
+                rows, _ = await permission_service.mask_rows(
+                    int(domain.get("agent_id") or 0), datasource_id, rows
+                )
+                effect_keys = {
+                    str(effect.get("property"))
+                    for action in action_types
+                    if action.get("target_object_key") == object_type["object_key"]
+                    for effect in (action.get("effects") or [])
+                    if isinstance(effect, dict) and effect.get("property")
+                }
+                for row_index, row in enumerate(rows, start=offset + 1):
+                    try:
+                        synced, outcome = await self._upsert_synced_object(
+                            domain_id,
+                            datasource_id,
+                            object_type,
+                            row,
+                            effect_keys,
+                        )
+                        result[outcome] += 1
+                        result["objects"].append(synced)
+                        synced_objects.append(synced)
+                    except (TypeError, ValueError) as exc:
+                        result["skipped"] += 1
+                        result["errors"].append(f"第 {row_index} 行: {exc}")
+                result["total"] = total
+                result["read"] = len(rows)
+                total_rows += total
+                await self._record_sync_status(
+                    int(object_type["id"]),
+                    "succeeded" if not result["errors"] else "partial",
+                    len(rows), total, "；".join(result["errors"][:5]),
+                )
+            except Exception as exc:
+                result["errors"].append(str(exc))
+                await self._record_sync_status(
+                    int(object_type["id"]), "failed", 0, 0, str(exc)
+                )
+            results.append(result)
+
+        link_count = 0
+        if sync_links and synced_objects:
+            link_count = await self._sync_links_for_objects(domain_id, synced_objects)
+        return {
+            "domain_id": domain_id,
+            "datasource_id": datasource_id,
+            "page": page_number,
+            "types": results,
+            "objects": [item for result in results for item in result["objects"]],
+            "total": total_rows,
+            "links_synced": link_count,
+            "has_errors": any(result["errors"] for result in results),
+        }
+
+    def _validated_source_query(self, source_query: str) -> str:
+        if not source_query:
+            raise ValueError("对象类型未配置同步 SQL")
+        validation = normalize_sql_for_execution(source_query, max_limit=1000)
+        if not validation.ok:
+            raise ValueError(f"对象同步 SQL 无效: {validation.reason}")
+        tokens = tokenize_sql(validation.sql)
+        if find_top_level_keyword(tokens, "ORDER") is None:
+            raise ValueError("对象同步 SQL 必须包含稳定的 ORDER BY，保证分页结果一致")
+        limit_index = find_top_level_keyword(tokens, "LIMIT")
+        if limit_index is None:
+            return validation.sql.rstrip()
+        return validation.sql[: tokens[limit_index].start].rstrip()
+
+    async def _upsert_synced_object(
+        self,
+        domain_id: int,
+        datasource_id: int,
+        object_type: dict[str, Any],
+        row: dict[str, Any],
+        effect_keys: set[str],
+    ) -> tuple[dict[str, Any], str]:
+        definitions = object_type.get("properties") or []
+        source_values = validate_synced_property_values(definitions, row)
+        primary_key = str(object_type["primary_property"])
+        primary_definition = property_definition(definitions, primary_key)
+        primary_value = coerce_primary_value(primary_definition, source_values.get(primary_key))
+        source_values[primary_key] = primary_value
+        db = get_management_db()
+        rows = await db.execute_query(
+            "SELECT * FROM ontology_object WHERE domain_id = :domain_id "
+            "AND object_type_id = :object_type_id AND primary_value = :primary_value",
+            {
+                "domain_id": domain_id,
+                "object_type_id": int(object_type["id"]),
+                "primary_value": str(primary_value),
+            },
+        )
+        existing = _normalize_row(rows[0]) if rows else None
+        overlay: dict[str, Any] = {}
+        if existing:
+            if existing.get("source_kind") == "database":
+                overlay = dict(existing.get("overlay_properties") or {})
+            elif effect_keys:
+                audit_rows = await db.execute_query(
+                    "SELECT after_state FROM ontology_action_run WHERE domain_id = :domain_id "
+                    "AND target_object_id = :target_object_id AND status = 'succeeded' "
+                    "ORDER BY id DESC LIMIT 1",
+                    {"domain_id": domain_id, "target_object_id": int(existing["id"])},
+                )
+                if audit_rows:
+                    after_state = _loads(audit_rows[0].get("after_state"), {})
+                    audit_properties = after_state.get("properties") or {}
+                    overlay = {
+                        key: audit_properties[key]
+                        for key in effect_keys
+                        if key in audit_properties
+                    }
+        overlay = {
+            key: value for key, value in overlay.items() if source_values.get(key) != value
+        }
+        merged = validate_property_values(definitions, {**source_values, **overlay})
+        merged[primary_key] = primary_value
+        display_key = object_type.get("display_property")
+        display_name = (
+            str(merged.get(display_key))
+            if display_key and merged.get(display_key) is not None
+            else str(primary_value)
+        )
+        source_json = _json(source_values)
+        overlay_json = _json(overlay)
+        merged_json = _json(merged)
+        if existing:
+            content_changed = (
+                existing.get("properties") != merged
+                or existing.get("display_name") != display_name
+                or existing.get("status") != "active"
+            )
+            await db.execute_query(
+                "UPDATE ontology_object SET display_name = :display_name, "
+                "properties = :properties, source_properties = :source_properties, "
+                "overlay_properties = :overlay_properties, "
+                "source_kind = 'database', source_datasource_id = :datasource_id, "
+                "last_synced_at = CURRENT_TIMESTAMP, status = 'active', "
+                "version = version + :version_increment, "
+                "updated_at = IF(:version_increment = 1, CURRENT_TIMESTAMP, updated_at) "
+                "WHERE id = :id AND domain_id = :domain_id",
+                {
+                    "id": int(existing["id"]),
+                    "domain_id": domain_id,
+                    "display_name": display_name,
+                    "properties": merged_json,
+                    "source_properties": source_json,
+                    "overlay_properties": overlay_json,
+                    "datasource_id": datasource_id,
+                    "version_increment": int(content_changed),
+                },
+            )
+            version = int(existing.get("version") or 1) + int(content_changed)
+            object_id = int(existing["id"])
+            outcome = "updated" if content_changed else "unchanged"
+        else:
+            object_id = await db.execute_insert(
+                "INSERT INTO ontology_object "
+                "(domain_id, object_type_id, primary_value, display_name, properties, version, "
+                "status, source_kind, source_datasource_id, source_properties, overlay_properties, "
+                "last_synced_at) VALUES "
+                "(:domain_id, :object_type_id, :primary_value, :display_name, :properties, 1, "
+                "'active', 'database', :datasource_id, :source_properties, :overlay_properties, "
+                "CURRENT_TIMESTAMP)",
+                {
+                    "domain_id": domain_id,
+                    "object_type_id": int(object_type["id"]),
+                    "primary_value": str(primary_value),
+                    "display_name": display_name,
+                    "properties": merged_json,
+                    "datasource_id": datasource_id,
+                    "source_properties": source_json,
+                    "overlay_properties": overlay_json,
+                },
+            )
+            version = 1
+            outcome = "created"
+        return (
+            {
+                "id": object_id,
+                "domain_id": domain_id,
+                "object_type_id": int(object_type["id"]),
+                "object_type_key": object_type["object_key"],
+                "object_type_name": object_type["name"],
+                "primary_value": str(primary_value),
+                "display_name": display_name,
+                "properties": merged,
+                "source_properties": source_values,
+                "overlay_properties": overlay,
+                "source_kind": "database",
+                "source_datasource_id": datasource_id,
+                "version": version,
+                "status": "active",
+                "last_synced_at": datetime.now(timezone.utc).isoformat(),
+            },
+            outcome,
+        )
+
+    async def _record_sync_status(
+        self, object_type_id: int, status: str, count: int, total: int, error: str = ""
+    ) -> None:
+        await get_management_db().execute_query(
+            "UPDATE ontology_object_type SET last_sync_status = :status, "
+            "last_sync_count = :count, last_sync_total = :total, last_sync_error = :error, "
+            "last_synced_at = CURRENT_TIMESTAMP WHERE id = :id",
+            {
+                "id": object_type_id,
+                "status": status,
+                "count": count,
+                "total": total,
+                "error": error[:2000],
+            },
+        )
+
+    async def _sync_links_for_objects(
+        self, domain_id: int, synced_objects: list[dict[str, Any]]
+    ) -> int:
+        synced_ids = {int(item["id"]) for item in synced_objects}
+        link_types = [
+            item for item in await self.list_link_types(domain_id) if item.get("status") == "active"
+        ]
+        if not link_types:
+            return 0
+        synced_by_type: dict[str, list[dict[str, Any]]] = {}
+        for item in synced_objects:
+            synced_by_type.setdefault(str(item.get("object_type_key") or ""), []).append(item)
+        statements: list[tuple[str, dict[str, Any]]] = []
+        statement_keys: set[tuple[int, int, int]] = set()
+        for link_type in link_types:
+            source_property = str(link_type.get("source_property") or "")
+            target_property = str(link_type.get("target_property") or "")
+            source_type_key = str(link_type["source_object_key"])
+            target_type_key = str(link_type["target_object_key"])
+            source_objects = list(synced_by_type.get(source_type_key, []))
+            target_objects = list(synced_by_type.get(target_type_key, []))
+            if source_objects:
+                source_values = {
+                    relation_lookup_key((item.get("properties") or {}).get(source_property))
+                    for item in source_objects
+                    if (item.get("properties") or {}).get(source_property) is not None
+                }
+                target_objects.extend(
+                    await self._load_objects_by_property_values(
+                        domain_id, target_type_key, target_property, source_values
+                    )
+                )
+            if target_objects:
+                target_values = {
+                    relation_lookup_key((item.get("properties") or {}).get(target_property))
+                    for item in target_objects
+                    if (item.get("properties") or {}).get(target_property) is not None
+                }
+                source_objects.extend(
+                    await self._load_objects_by_property_values(
+                        domain_id, source_type_key, source_property, target_values
+                    )
+                )
+            targets: dict[str, list[dict[str, Any]]] = {}
+            for target in unique_objects(target_objects):
+                value = (target.get("properties") or {}).get(target_property)
+                if value is not None:
+                    targets.setdefault(relation_lookup_key(value), []).append(target)
+            for source in unique_objects(source_objects):
+                value = (source.get("properties") or {}).get(source_property)
+                if value is None:
+                    continue
+                for target in targets.get(relation_lookup_key(value), []):
+                    source_id = int(source["id"])
+                    target_id = int(target["id"])
+                    if source_id not in synced_ids and target_id not in synced_ids:
+                        continue
+                    statement_key = (int(link_type["id"]), source_id, target_id)
+                    if statement_key in statement_keys:
+                        continue
+                    statement_keys.add(statement_key)
+                    statements.append(
+                        (
+                            "INSERT INTO ontology_link "
+                            "(domain_id, link_type_id, source_object_id, target_object_id, "
+                            "properties) "
+                            "VALUES (:domain_id, :link_type_id, :source_object_id, "
+                            ":target_object_id, :properties) "
+                            "ON DUPLICATE KEY UPDATE properties = VALUES(properties), "
+                            "updated_at = CURRENT_TIMESTAMP",
+                            {
+                                "domain_id": domain_id,
+                                "link_type_id": int(link_type["id"]),
+                                "source_object_id": source_id,
+                                "target_object_id": target_id,
+                                "properties": _json({"source": "database_sync"}),
+                            },
+                        )
+                    )
+        if statements:
+            await get_management_db().execute_transaction(statements)
+        return len(statements)
+
+    async def _load_objects_by_property_values(
+        self,
+        domain_id: int,
+        object_type_key: str,
+        property_key: str,
+        values: set[str],
+    ) -> list[dict[str, Any]]:
+        if not values:
+            return []
+        rows: list[dict[str, Any]] = []
+        ordered_values = sorted(values)
+        for start in range(0, len(ordered_values), 300):
+            chunk = ordered_values[start : start + 300]
+            placeholders = ", ".join(f":value_{index}" for index in range(len(chunk)))
+            params: dict[str, Any] = {
+                "domain_id": domain_id,
+                "object_type_key": object_type_key,
+                "json_path": f'$."{property_key}"',
+            }
+            params.update({f"value_{index}": value for index, value in enumerate(chunk)})
+            rows.extend(
+                await get_management_db().execute_query(
+                    "SELECT o.*, t.object_key AS object_type_key, "
+                    "t.name AS object_type_name FROM ontology_object o "
+                    "JOIN ontology_object_type t ON t.id = o.object_type_id "
+                    "WHERE o.domain_id = :domain_id AND t.object_key = :object_type_key "
+                    "AND JSON_UNQUOTE(JSON_EXTRACT(o.properties, :json_path)) "
+                    f"IN ({placeholders})",
+                    params,
+                )
+            )
         return [_normalize_row(row) for row in rows]
 
     async def query_objects(
@@ -813,13 +1271,15 @@ class OntologyService:
             else str(primary_value)
         )
         db = get_management_db()
-        params = {
+        params: dict[str, Any] = {
             "domain_id": payload.domain_id,
             "object_type_id": payload.object_type_id,
             "primary_value": str(primary_value),
             "display_name": display_name,
             "properties": _json(values),
             "status": payload.status,
+            "source_properties": _json({}),
+            "overlay_properties": _json({}),
         }
         if payload.id:
             existing = await self.get_object(payload.domain_id, payload.id)
@@ -838,9 +1298,25 @@ class OntologyService:
             )
             if duplicate:
                 raise ValueError(f"对象主标识已存在: {primary_value}")
+            if existing.get("source_kind") == "database":
+                source_properties = dict(existing.get("source_properties") or {})
+                overlay_properties = {
+                    key: value
+                    for key, value in values.items()
+                    if source_properties.get(key) != value
+                }
+                values = validate_property_values(
+                    object_type["properties"], {**source_properties, **overlay_properties}
+                )
+                values[object_type["primary_property"]] = primary_value
+                params["properties"] = _json(values)
+                params["source_properties"] = _json(source_properties)
+                params["overlay_properties"] = _json(overlay_properties)
             await db.execute_query(
                 "UPDATE ontology_object SET primary_value = :primary_value, "
-                "display_name = :display_name, properties = :properties, status = :status, "
+                "display_name = :display_name, properties = :properties, "
+                "source_properties = :source_properties, overlay_properties = :overlay_properties, "
+                "status = :status, "
                 "version = version + 1 WHERE id = :id AND domain_id = :domain_id",
                 {**params, "id": payload.id},
             )
@@ -856,17 +1332,36 @@ class OntologyService:
         )
         if existing:
             object_id = int(existing[0]["id"])
+            current = await self.get_object(payload.domain_id, object_id)
+            if current and current.get("source_kind") == "database":
+                source_properties = dict(current.get("source_properties") or {})
+                overlay_properties = {
+                    key: value
+                    for key, value in values.items()
+                    if source_properties.get(key) != value
+                }
+                values = validate_property_values(
+                    object_type["properties"], {**source_properties, **overlay_properties}
+                )
+                values[object_type["primary_property"]] = primary_value
+                params["properties"] = _json(values)
+                params["source_properties"] = _json(source_properties)
+                params["overlay_properties"] = _json(overlay_properties)
             await db.execute_query(
                 "UPDATE ontology_object SET display_name = :display_name, "
-                "properties = :properties, status = :status, version = version + 1 "
+                "properties = :properties, source_properties = :source_properties, "
+                "overlay_properties = :overlay_properties, status = :status, "
+                "version = version + 1 "
                 "WHERE id = :id AND domain_id = :domain_id",
                 {**params, "id": object_id},
             )
             return object_id
         return await db.execute_insert(
             "INSERT INTO ontology_object "
-            "(domain_id, object_type_id, primary_value, display_name, properties, status) VALUES "
-            "(:domain_id, :object_type_id, :primary_value, :display_name, :properties, :status)",
+            "(domain_id, object_type_id, primary_value, display_name, properties, status, "
+            "source_kind, source_properties, overlay_properties) VALUES "
+            "(:domain_id, :object_type_id, :primary_value, :display_name, :properties, :status, "
+            "'manual', :source_properties, :overlay_properties)",
             params,
         )
 
@@ -1010,10 +1505,13 @@ class OntologyService:
             parameters = validate_action_parameters(action["parameters"], payload.parameters)
             check_preconditions(action["preconditions"], target["properties"], parameters)
             updated_properties = dict(target["properties"])
+            updated_overlay = dict(target.get("overlay_properties") or {})
             for effect in action["effects"]:
-                updated_properties[effect["property"]] = resolve_action_value(
+                effect_value = resolve_action_value(
                     effect.get("value"), parameters, target["properties"], user
                 )
+                updated_properties[effect["property"]] = effect_value
+                updated_overlay[effect["property"]] = effect_value
             object_type = await self.get_object_type(
                 domain_id, object_type_id=int(target["object_type_id"])
             )
@@ -1035,11 +1533,13 @@ class OntologyService:
             )
             update_sql = (
                 "UPDATE ontology_object SET properties = :properties, "
-                "display_name = :display_name, version = version + 1 "
+                "overlay_properties = :overlay_properties, display_name = :display_name, "
+                "version = version + 1 "
                 "WHERE id = :id AND domain_id = :domain_id"
             )
             update_params = {
                 "properties": _json(updated_properties),
+                "overlay_properties": _json(updated_overlay),
                 "display_name": display_name,
                 "id": payload.target_object_id,
                 "domain_id": domain_id,
@@ -1474,6 +1974,69 @@ def validate_property_values(
         if value is not None:
             result[key] = coerce_value(definition, value)
     return result
+
+
+def validate_synced_property_values(
+    definitions: list[dict[str, Any]], values: dict[str, Any]
+) -> dict[str, Any]:
+    """Coerce database row values into the stricter Ontology property contract."""
+    result: dict[str, Any] = {}
+    for definition in definitions:
+        key = definition["property_key"]
+        value = values.get(key, definition.get("default_value"))
+        if value is None:
+            if definition.get("required"):
+                raise ValueError(f"同步结果缺少必填字段: {key}")
+            continue
+        result[key] = coerce_synced_value(definition, value)
+    return result
+
+
+def coerce_synced_value(definition: dict[str, Any], value: Any) -> Any:
+    data_type = definition.get("data_type") or "string"
+    label = definition.get("name") or definition.get("property_key")
+    if data_type in {"string", "text"} and not isinstance(value, str):
+        value = str(value)
+    elif data_type == "integer" and not isinstance(value, bool):
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} 必须是整数") from exc
+        if not numeric.is_integer():
+            raise ValueError(f"{label} 必须是整数")
+        value = int(numeric)
+    elif data_type == "number" and not isinstance(value, bool):
+        try:
+            value = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} 必须是数字") from exc
+        if not math.isfinite(value):
+            raise ValueError(f"{label} 必须是有限数字")
+    elif data_type == "boolean" and not isinstance(value, bool):
+        if value in (0, "0", "false", "False", "no", "No"):
+            value = False
+        elif value in (1, "1", "true", "True", "yes", "Yes"):
+            value = True
+        else:
+            raise ValueError(f"{label} 必须是布尔值")
+    elif data_type in {"date", "datetime"} and isinstance(value, date | datetime):
+        value = value.isoformat()
+    return coerce_value(definition, value)
+
+
+def relation_lookup_key(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def unique_objects(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_id: dict[int, dict[str, Any]] = {}
+    for item in values:
+        by_id[int(item["id"])] = item
+    return list(by_id.values())
 
 
 def validate_action_parameters(

@@ -26,7 +26,9 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="last_login_at" label="最近登录" min-width="180" />
+      <el-table-column label="最近登录" min-width="180">
+        <template #default="{ row }">{{ formatDateTime(row.last_login_at) }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="420" fixed="right">
         <template #default="{ row }">
           <div class="action-row">
@@ -109,6 +111,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { formatDateTime } from '../utils/datetime'
 import {
   createUser,
   disableUser,

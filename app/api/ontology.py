@@ -16,6 +16,7 @@ from app.models.ontology import (
     OntologyObjectPayload,
     OntologyObjectTypePayload,
     OntologyPublishPayload,
+    OntologySyncPayload,
 )
 from app.models.user import PublicUser
 from app.services.ontology_service import get_ontology_service
@@ -282,14 +283,40 @@ async def import_bundle(
         raise bad_request(exc) from exc
 
 
+@router.post("/domains/{domain_id}/sync")
+async def sync_objects_from_datasource(
+    domain_id: int,
+    payload: OntologySyncPayload,
+    current_user: PublicUser = Depends(get_current_user),
+):
+    """Read one source page and merge it with local Ontology action overlays."""
+    await require_domain_access(domain_id, current_user)
+    try:
+        return await get_ontology_service().sync_objects_from_datasource(
+            domain_id,
+            object_type_id=payload.object_type_id,
+            page=payload.page,
+            page_size=payload.page_size,
+            sync_links=payload.sync_links,
+        )
+    except ValueError as exc:
+        raise bad_request(exc) from exc
+
+
 @router.get("/domains/{domain_id}/objects")
 async def list_objects(
     domain_id: int,
     object_type_id: int | None = None,
+    limit: int = Query(default=1000, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
     current_user: PublicUser = Depends(get_current_user),
 ):
     await require_domain_access(domain_id, current_user)
-    return {"objects": await get_ontology_service().list_objects(domain_id, object_type_id)}
+    return {
+        "objects": await get_ontology_service().list_objects(
+            domain_id, object_type_id, limit=limit, offset=offset
+        )
+    }
 
 
 @router.post("/domains/{domain_id}/objects")

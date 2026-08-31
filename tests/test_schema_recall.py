@@ -1,12 +1,12 @@
-import pytest
-from pathlib import Path
 import json
+from pathlib import Path
+
+import pytest
 
 from app.agent.nodes import schema_recall
 from app.agent.nodes.nl2sql_fallback import build_schema_context
 from app.agent.nodes.schema_recall import select_tables_by_score
 from app.models.system_parameter import SchemaRecallSettings
-
 
 EXAMPLE_SEMANTIC_PATH = Path("examples/loan/semantic-domain.json")
 
@@ -225,7 +225,95 @@ async def test_schema_recall_matches_customer_age_from_column_comment(monkeypatc
         (item["table_name"], item["column_name"]): item for item in result["relevant_columns"]
     }
     assert ("loan_application_indicator", "customer_age") in columns
-    assert "问题要求客户年龄字段" in columns[("loan_application_indicator", "customer_age")]["reason"]
+    age_column = columns[("loan_application_indicator", "customer_age")]
+    assert "问题要求客户年龄字段" in age_column["reason"]
+
+
+@pytest.mark.asyncio
+async def test_schema_recall_uses_matched_ontology_to_ground_related_table(monkeypatch):
+    monkeypatch.setattr(schema_recall, "get_metadata_service", lambda: FakeMetadataService())
+
+    result = await schema_recall.schema_recall_node(
+        {
+            "datasource_id": 42,
+            "question": "查看审批进度",
+            "semantic_runtime": {"metrics": [], "mappings": [], "rules": []},
+            "runtime_evidence": [],
+            "ontology_context": {
+                "object_types": [
+                    {
+                        "object_key": "LoanApplication",
+                        "name": "贷款申请",
+                        "description": "客户提交的贷款申请",
+                        "properties": [],
+                    }
+                ],
+                "link_types": [],
+                "actions": [
+                    {
+                        "action_key": "approve_loan_application",
+                        "name": "审批贷款申请",
+                        "target_object_key": "LoanApplication",
+                        "description": "完成贷款申请审批",
+                        "parameters": [],
+                    }
+                ],
+            },
+        }
+    )
+
+    assert result["relevant_tables"][0]["table_name"] == "loan_application_indicator"
+    assert "企业本体对象命中: 贷款申请" in result["relevant_tables"][0]["reason"]
+    assert result["ontology_evidence"]["actions"][0]["action_key"] == "approve_loan_application"
+
+
+@pytest.mark.asyncio
+async def test_schema_recall_scopes_explicit_application_channel_query(monkeypatch):
+    monkeypatch.setattr(schema_recall, "get_metadata_service", lambda: FakeMetadataService())
+
+    result = await schema_recall.schema_recall_node(
+        {
+            "datasource_id": 42,
+            "question": "查询贷款申请按申请渠道分组的申请笔数",
+            "semantic_runtime": {
+                "metrics": [
+                    {
+                        "metric_key": "application_count",
+                        "name": "申请笔数",
+                        "base_table": "loan_application_indicator",
+                        "dimensions": ["application_channel"],
+                    },
+                    {
+                        "metric_key": "outstanding_balance",
+                        "name": "余额",
+                        "base_table": "loan_account_indicator",
+                        "dimensions": ["channel"],
+                    },
+                ],
+                "mappings": [
+                    {
+                        "asset_key": "application_channel",
+                        "name": "申请渠道",
+                        "table_name": "loan_application_indicator",
+                        "column_name": "channel",
+                    },
+                    {
+                        "asset_key": "channel",
+                        "name": "渠道",
+                        "table_name": "loan_account_indicator",
+                        "column_name": "channel",
+                    },
+                ],
+                "rules": [],
+            },
+            "runtime_evidence": [],
+        }
+    )
+
+    assert [item["table_name"] for item in result["relevant_tables"]] == [
+        "loan_application_indicator"
+    ]
+    assert result["schema_scope"]["subject_scope_only"] is True
 
 
 def test_nl2sql_schema_context_uses_recalled_tables_first():

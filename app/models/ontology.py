@@ -45,6 +45,9 @@ class OntologyObjectTypePayload(BaseModel):
     description: str = ""
     primary_property: Key = Field(pattern=KEY_PATTERN, max_length=128)
     display_property: Key | None = Field(default=None, pattern=KEY_PATTERN, max_length=128)
+    sync_enabled: bool = False
+    source_query: str = Field(default="", max_length=20_000)
+    sync_limit: int = Field(default=200, ge=1, le=1000)
     status: Literal["draft", "active", "deprecated"] = "draft"
     properties: list[OntologyProperty] = Field(default_factory=list)
 
@@ -148,6 +151,13 @@ class OntologyPublishPayload(BaseModel):
 class OntologyImportPayload(BaseModel):
     bundle: dict[str, Any] = Field(min_length=1)
     replace: bool = False
+
+
+class OntologySyncPayload(BaseModel):
+    object_type_id: int | None = Field(default=None, gt=0)
+    page: int = Field(default=1, ge=1)
+    page_size: int | None = Field(default=None, ge=1, le=1000)
+    sync_links: bool = True
 
 
 class OntologyAgentToolPayload(BaseModel):

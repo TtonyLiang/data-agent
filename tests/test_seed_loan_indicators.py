@@ -90,3 +90,96 @@ def test_seed_script_defaults_to_dry_run(monkeypatch):
     args = seed.parse_args()
 
     assert args.dry_run is True
+
+
+def test_append_fixture_is_small_current_and_namespace_safe():
+    data = seed.generate_append_dataset(application_count=12)
+
+    assert {
+        name: len(rows) for name, rows in data.items()
+    } == seed.append_row_counts(12)
+    assert seed.validate_append_dataset(data) == []
+
+    application_ids = {row["application_id"] for row in data["loan_application_indicator"]}
+    loan_ids = {row["loan_id"] for row in data["loan_account_indicator"]}
+    customer_ids = {row["customer_id"] for row in data["loan_application_indicator"]}
+
+    assert min(application_ids) > seed.APPEND_ID_BASES["application"]
+    assert min(loan_ids) > seed.APPEND_ID_BASES["loan"]
+    assert min(customer_ids) > seed.APPEND_ID_BASES["customer"]
+    assert {
+        row["application_id"] for row in data["loan_account_indicator"]
+    } <= application_ids
+    assert {row["loan_id"] for row in data["loan_repayment_period_indicator"]} <= loan_ids
+    assert {row["loan_id"] for row in data["collection_case_indicator"]} <= loan_ids
+    assert all(
+        row["application_no"].startswith("DEMO-")
+        for row in data["loan_application_indicator"]
+    )
+
+
+def test_append_fixture_is_deterministic_and_uses_august_snapshot():
+    first = seed.generate_append_dataset(application_count=8)
+    second = seed.generate_append_dataset(application_count=8)
+
+    assert first == second
+    assert {
+        row["snapshot_date"] for row in first["loan_account_indicator"]
+    } == {date(2026, 8, 31)}
+    assert {
+        row["snapshot_date"] for row in first["collection_case_indicator"]
+    } == {date(2026, 8, 31)}
+
+
+def test_append_cli_defaults_to_safe_dry_run_and_current_date(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["seed_loan_indicators.py", "--append"])
+
+    args = seed.parse_args()
+
+    assert args.append is True
+    assert args.dry_run is True
+    assert args.append_count == seed.DEFAULT_APPEND_APPLICATIONS
+    assert args.append_snapshot_date == date(2026, 8, 31)
+
+
+def test_append_database_uses_create_if_missing_and_upsert_only():
+    class FakeCursor:
+        def __init__(self):
+            self.executed = []
+            self.batch_sql = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, sql, *args):
+            self.executed.append(sql)
+
+        def executemany(self, sql, values):
+            self.batch_sql.append((sql, list(values)))
+
+    class FakeConnection:
+        def __init__(self):
+            self.cursor_instance = FakeCursor()
+            self.commits = 0
+
+        def cursor(self):
+            return self.cursor_instance
+
+        def commit(self):
+            self.commits += 1
+
+    connection = FakeConnection()
+    data = seed.generate_append_dataset(application_count=2)
+
+    seed.append_database(connection, data, batch_size=10)
+
+    assert len(connection.cursor_instance.executed) == len(TABLE_NAMES)
+    assert len(connection.cursor_instance.batch_sql) == len(TABLE_NAMES)
+    assert all(
+        "ON DUPLICATE KEY UPDATE" in sql
+        for sql, _ in connection.cursor_instance.batch_sql
+    )
+    assert connection.commits == 1

@@ -1,4 +1,4 @@
-"""WenQu 问数后端入口 —— FastAPI 应用、SSE 流式接口与会话管理。
+"""问渠 WenQu 后端入口 —— FastAPI 应用、SSE 流式接口与会话管理。
 
 本模块是整个后端的启动入口,提供:
 1. FastAPI 应用初始化(lifespan hook 运行迁移)。
@@ -100,7 +100,11 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="WenQu DataQuery Agent", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="问渠 WenQu · 企业本体智能平台",
+    version="0.1.0",
+    lifespan=lifespan,
+)
 
 
 def new_trace_id() -> str:
@@ -1185,7 +1189,10 @@ def summarize_trace_step(node: str, output: dict) -> str:
     if node == "semantic_runtime_recall":
         domain = output.get("domain") or ""
         count = output.get("count", 0)
-        return f"{domain} · 召回 {count} 条语义资产" if domain else f"召回 {count} 条语义资产"
+        ontology = output.get("ontology_matches") or {}
+        ontology_count = int(ontology.get("count") or 0) if isinstance(ontology, dict) else 0
+        summary = f"{domain} · 召回 {count} 条语义资产" if domain else f"召回 {count} 条语义资产"
+        return f"{summary} · 本体命中 {ontology_count} 项" if ontology_count else summary
     if node == "schema_recall":
         scope = output.get("schema_scope") or {}
         tables = len(output.get("matched_tables") or output.get("relevant_tables") or [])
@@ -1425,6 +1432,7 @@ def _extract_node_output(node: str, output: dict) -> dict:
         }
     elif node == "semantic_runtime_recall":
         evidence = output.get("runtime_evidence", [])
+        ontology_evidence = output.get("ontology_evidence") or {}
         runtime = output.get("semantic_runtime") or {}
         domain = runtime.get("domain", {}) if isinstance(runtime, dict) else {}
         metrics = runtime.get("metrics", []) if isinstance(runtime, dict) else []
@@ -1461,6 +1469,32 @@ def _extract_node_output(node: str, output: dict) -> dict:
                 }
                 for item in metrics[:12]
             ],
+            "ontology_matches": {
+                "count": int(ontology_evidence.get("count") or 0)
+                if isinstance(ontology_evidence, dict)
+                else 0,
+                "object_types": [
+                    {"key": item.get("object_key"), "name": item.get("name")}
+                    for item in (ontology_evidence.get("object_types") or [])[:4]
+                    if isinstance(item, dict)
+                ]
+                if isinstance(ontology_evidence, dict)
+                else [],
+                "link_types": [
+                    {"key": item.get("link_key"), "name": item.get("name")}
+                    for item in (ontology_evidence.get("link_types") or [])[:4]
+                    if isinstance(item, dict)
+                ]
+                if isinstance(ontology_evidence, dict)
+                else [],
+                "actions": [
+                    {"key": item.get("action_key"), "name": item.get("name")}
+                    for item in (ontology_evidence.get("actions") or [])[:4]
+                    if isinstance(item, dict)
+                ]
+                if isinstance(ontology_evidence, dict)
+                else [],
+            },
             "items": [
                 e.get("metadata", {}).get("asset_key", e.get("source_type", ""))
                 for e in evidence[:5]
@@ -2012,7 +2046,7 @@ app.include_router(agent_router, prefix="/api/agent", tags=["智能体"])
 app.include_router(ds_router, prefix="/api/datasource", tags=["数据源"])
 app.include_router(feedback_router, prefix="/api/feedback", tags=["反馈"])
 app.include_router(model_config_router, prefix="/api/model-config", tags=["模型配置"])
-app.include_router(ontology_router, prefix="/api/ontology", tags=["业务本体"])
+app.include_router(ontology_router, prefix="/api/ontology", tags=["企业本体"])
 app.include_router(prompt_router, prefix="/api/prompt", tags=["Prompt配置"])
 app.include_router(semantic_router, prefix="/api/semantic", tags=["知识召回"])
 app.include_router(system_parameter_router, prefix="/api/system", tags=["系统参数"])

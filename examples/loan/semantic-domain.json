@@ -4,7 +4,7 @@
     "datasource_id": null,
     "domain_key": "loan_risk",
     "name": "贷款风控",
-    "description": "面向贷款申请、放款、还款、风险快照和催收处置的 Data Agent 语义运行时。"
+    "description": "面向贷款申请、放款、还款、风险快照和催收处置的问渠企业本体与查询语义运行时。"
   },
   "concepts": [
     {
@@ -263,9 +263,9 @@
       "base_table": "loan_application_indicator",
       "time_field": "loan_application_indicator.apply_date",
       "dimensions": [
-        "channel",
-        "region",
-        "risk_grade"
+        "application_channel",
+        "application_region",
+        "application_risk_grade"
       ]
     },
     {
@@ -279,7 +279,13 @@
         "进件量",
         "进件笔数",
         "贷款申请笔数",
-        "贷款申请数"
+        "贷款申请数",
+        "贷款总数",
+        "贷款总量",
+        "贷款数量",
+        "贷款笔数",
+        "总数",
+        "总量"
       ],
       "metric_type": "count",
       "formula_sql": "COUNT(*)",
@@ -287,9 +293,10 @@
       "time_field": "loan_application_indicator.apply_date",
       "dimensions": [
         "application_region",
-        "channel",
+        "application_channel",
         "application_product_type",
-        "application_risk_grade"
+        "application_risk_grade",
+        "application_approval_status"
       ]
     },
     {
@@ -606,7 +613,14 @@
             "进件量",
             "进件笔数",
             "贷款申请数",
-            "贷款申请笔数"
+            "贷款申请笔数",
+            "贷款总数",
+            "贷款总量",
+            "贷款数量",
+            "贷款笔数",
+            "总数",
+            "总量",
+            "统计"
           ],
           "product_terms": [
             "产品类型",
@@ -627,7 +641,7 @@
           "dimensions": {
             "mode": "replace",
             "infer_from_terms": {
-              "application_product_type": [
+            "application_product_type": [
                 "产品类型",
                 "贷款产品",
                 "各个贷款",
@@ -637,6 +651,21 @@
                 "各贷款",
                 "各项贷款",
                 "product"
+              ],
+              "application_channel": [
+                "申请渠道",
+                "按申请渠道",
+                "根据申请渠道",
+                "渠道",
+                "channel"
+              ],
+              "application_approval_status": [
+                "申请状态",
+                "审批状态",
+                "审批进度",
+                "审批结果",
+                "状态",
+                "approval_status"
               ],
               "application_region": [
                 "申请区域",
@@ -655,8 +684,15 @@
           "field_aliases": {
             "region": "application_region",
             "product_type": "application_product_type",
-            "risk_grade": "application_risk_grade"
+            "risk_grade": "application_risk_grade",
+            "channel": "application_channel",
+            "approval_status": "application_approval_status",
+            "status": "application_approval_status"
           },
+          "remove_filters": [
+            "current_status",
+            "loan_status"
+          ],
           "sort_field": "application_count",
           "sort_direction": "desc",
           "default_limit": 10
@@ -666,7 +702,9 @@
         "application_count",
         "application_region",
         "application_product_type",
-        "application_risk_grade"
+        "application_risk_grade",
+        "application_channel",
+        "application_approval_status"
       ]
     },
     {
@@ -689,7 +727,14 @@
             "进件量",
             "进件笔数",
             "贷款申请数",
-            "贷款申请笔数"
+            "贷款申请笔数",
+            "贷款总数",
+            "贷款总量",
+            "贷款数量",
+            "贷款笔数",
+            "总数",
+            "总量",
+            "统计"
           ],
           "product_terms": [
             "产品类型",
@@ -710,7 +755,7 @@
           "dimensions": {
             "mode": "replace",
             "infer_from_terms": {
-              "application_product_type": [
+            "application_product_type": [
                 "产品类型",
                 "贷款产品",
                 "各个贷款",
@@ -720,6 +765,21 @@
                 "各贷款",
                 "各项贷款",
                 "product"
+              ],
+              "application_channel": [
+                "申请渠道",
+                "按申请渠道",
+                "根据申请渠道",
+                "渠道",
+                "channel"
+              ],
+              "application_approval_status": [
+                "申请状态",
+                "审批状态",
+                "审批进度",
+                "审批结果",
+                "状态",
+                "approval_status"
               ],
               "application_region": [
                 "申请区域",
@@ -732,8 +792,15 @@
           },
           "field_aliases": {
             "region": "application_region",
-            "product_type": "application_product_type"
+            "product_type": "application_product_type",
+            "channel": "application_channel",
+            "approval_status": "application_approval_status",
+            "status": "application_approval_status"
           },
+          "remove_filters": [
+            "current_status",
+            "loan_status"
+          ],
           "grain": "month",
           "time_range": {
             "type": "relative",
@@ -746,7 +813,9 @@
       "applies_to": [
         "application_count",
         "application_product_type",
-        "application_region"
+        "application_region",
+        "application_channel",
+        "application_approval_status"
       ]
     },
     {
@@ -1208,6 +1277,35 @@
               "all": [
                 "申请"
               ],
+              "any": [
+                "申请状态",
+                "审批状态",
+                "审批进度",
+                "审批结果"
+              ],
+              "intents": [
+                "count"
+              ]
+            },
+            "template": "查询当前已采集的贷款申请数据，按申请状态分组统计申请笔数。"
+          },
+          {
+            "match": {
+              "all": [
+                "申请",
+                "渠道"
+              ],
+              "intents": [
+                "count"
+              ]
+            },
+            "template": "查询当前已采集的贷款申请数据，按申请渠道分组统计申请笔数。"
+          },
+          {
+            "match": {
+              "all": [
+                "申请"
+              ],
               "intents": [
                 "count",
                 "trend",
@@ -1258,7 +1356,8 @@
       "applies_to": [
         "application_count",
         "application_region",
-        "application_product_type"
+        "application_product_type",
+        "application_channel"
       ]
     },
     {
@@ -1348,6 +1447,14 @@
     },
     {
       "asset_type": "dimension",
+      "asset_key": "application_approval_status",
+      "table_name": "loan_application_indicator",
+      "column_name": "approval_status",
+      "data_type": "varchar",
+      "role": "dimension"
+    },
+    {
+      "asset_type": "dimension",
       "asset_key": "vintage",
       "table_name": "loan_account_indicator",
       "column_name": "disburse_month",
@@ -1374,6 +1481,14 @@
       "asset_type": "dimension",
       "asset_key": "channel",
       "table_name": "loan_account_indicator",
+      "column_name": "channel",
+      "data_type": "varchar",
+      "role": "dimension"
+    },
+    {
+      "asset_type": "dimension",
+      "asset_key": "application_channel",
+      "table_name": "loan_application_indicator",
       "column_name": "channel",
       "data_type": "varchar",
       "role": "dimension"

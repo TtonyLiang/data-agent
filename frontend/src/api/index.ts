@@ -763,6 +763,14 @@ export interface OntologyObjectType {
   description?: string
   primary_property: string
   display_property?: string | null
+  sync_enabled: boolean
+  source_query?: string | null
+  sync_limit: number
+  last_sync_status?: 'succeeded' | 'partial' | 'failed' | null
+  last_sync_count?: number
+  last_sync_total?: number
+  last_sync_error?: string | null
+  last_synced_at?: string | null
   status: 'draft' | 'active' | 'deprecated'
   properties: OntologyProperty[]
 }
@@ -828,6 +836,11 @@ export interface OntologyObject {
   properties: Record<string, unknown>
   version: number
   status: 'active' | 'archived'
+  source_kind?: 'manual' | 'bundle' | 'database' | string
+  source_datasource_id?: number | null
+  source_properties?: Record<string, unknown>
+  overlay_properties?: Record<string, unknown>
+  last_synced_at?: string | null
   created_at?: string
   updated_at?: string
 }
@@ -873,6 +886,7 @@ export interface OntologySummary {
     link_types: number
     action_types: number
     objects: number
+    source_objects?: number
     links: number
     action_runs: number
   }
@@ -1012,12 +1026,60 @@ export async function importOntologyBundle(
   return data
 }
 
+export interface OntologySyncTypeResult {
+  object_type_id: number
+  object_key: string
+  name: string
+  page: number
+  page_size: number
+  total: number
+  read: number
+  created: number
+  updated: number
+  unchanged: number
+  skipped: number
+  errors: string[]
+  objects: OntologyObject[]
+}
+
+export interface OntologySyncResult {
+  domain_id: number
+  datasource_id: number
+  page: number
+  types: OntologySyncTypeResult[]
+  objects: OntologyObject[]
+  total: number
+  links_synced: number
+  has_errors: boolean
+}
+
+export interface OntologySyncRequest {
+  object_type_id: number
+  page: number
+  page_size: number
+  sync_links: boolean
+}
+
+export async function syncOntologyObjects(
+  domainId: number,
+  payload: OntologySyncRequest,
+): Promise<OntologySyncResult> {
+  const { data } = await api.post(`/ontology/domains/${domainId}/sync`, payload)
+  return data
+}
+
 export async function fetchOntologyObjects(
   domainId: number,
   objectTypeId?: number,
+  limit = 1000,
+  offset = 0,
 ): Promise<OntologyObject[]> {
   const { data } = await api.get(`/ontology/domains/${domainId}/objects`, {
-    params: objectTypeId ? { object_type_id: objectTypeId } : undefined,
+    params: {
+      ...(objectTypeId ? { object_type_id: objectTypeId } : {}),
+      limit,
+      offset,
+    },
   })
   return data.objects || []
 }

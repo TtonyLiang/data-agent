@@ -600,7 +600,7 @@
           </div>
           <div class="snapshot-meta">
             <span>{{ formatSnapshotCounts(item.asset_counts) }}</span>
-            <small>{{ item.created_at }}</small>
+            <small>{{ formatDateTime(item.created_at) }}</small>
           </div>
           <div class="snapshot-actions">
             <el-button size="small" @click="handleDiffSnapshot(item)">差异</el-button>
@@ -681,6 +681,7 @@ import {
   type SemanticDomain,
   type SemanticDomainRequest,
 } from '../api'
+import { formatDateTime } from '../utils/datetime'
 
 type AssetDraft = Record<string, any>
 type AssetGuideField = {

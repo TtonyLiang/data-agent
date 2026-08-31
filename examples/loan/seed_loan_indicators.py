@@ -21,6 +21,27 @@ RATIO4 = Decimal("0.0001")
 RATIO6 = Decimal("0.000001")
 DEFAULT_START_DATE = date(2024, 1, 1)
 DEFAULT_SNAPSHOT_DATE = date(2026, 6, 14)
+# ``--append`` is deliberately separate from the historical full rebuild.  The
+# append fixture uses a reserved ID range and a recent, fixed snapshot so that
+# it can be run repeatedly during a local demo without colliding with the
+# original 2024-01-01 .. 2026-06-14 dataset.
+DEFAULT_APPEND_START_DATE = date(2026, 7, 1)
+DEFAULT_APPEND_SNAPSHOT_DATE = date(2026, 8, 31)
+DEFAULT_APPEND_APPLICATIONS = 240
+MAX_APPEND_APPLICATIONS = 10_000
+
+# IDs in the original generator start at 1_000_001/2_000_001/... .  Keep the
+# new fixture far away from those ranges, and keep all foreign-key references
+# inside the same namespace.  The values are intentionally stable: an UPSERT
+# on a second run updates the same demo rows instead of creating duplicates.
+APPEND_ID_BASES = {
+    "customer": 90_000_000,
+    "application": 9_000_000,
+    "loan": 19_000_000,
+    "repayment": 29_000_000,
+    "risk_snapshot": 39_000_000,
+    "collection": 49_000_000,
+}
 
 
 @dataclass(frozen=True)
@@ -389,6 +410,31 @@ def build_drop_table_sqls(specs: dict[str, TableSpec]) -> list[str]:
 def default_row_counts(specs: dict[str, TableSpec] | None = None) -> dict[str, int]:
     table_specs = specs or build_table_specs()
     return {name: spec.target_rows for name, spec in table_specs.items()}
+
+
+def append_row_counts(application_count: int = DEFAULT_APPEND_APPLICATIONS) -> dict[str, int]:
+    """Return a small, relationally consistent append fixture.
+
+    The full seed intentionally creates a large analytical corpus.  A local
+    demo normally only needs enough recent rows to exercise the current-month
+    and risk/collection questions.  Derived table sizes are deterministic and
+    preserve the foreign-key ordering constraints used by ``generate_dataset``.
+    """
+    count = int(application_count)
+    if count < 1 or count > MAX_APPEND_APPLICATIONS:
+        raise ValueError(
+            f"append application count must be between 1 and {MAX_APPEND_APPLICATIONS}"
+        )
+    account_count = max(1, round(count * 2 / 3))
+    return {
+        "loan_application_indicator": count,
+        "loan_account_indicator": account_count,
+        # Six periods per account gives useful repayment status/bucket variety
+        # without creating the 120k-row corpus used by the full rebuild.
+        "loan_repayment_period_indicator": account_count * 6,
+        "customer_risk_monthly_indicator": count * 2,
+        "collection_case_indicator": max(1, round(account_count * 0.75)),
+    }
 
 
 def risk_grade_from_pd(pd: Decimal) -> str:
@@ -1034,6 +1080,167 @@ def generate_dataset(
     }
 
 
+def namespace_append_dataset(
+    data: dict[str, list[dict[str, Any]]],
+    id_bases: dict[str, int] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Move a generated dataset into the reserved append ID namespace.
+
+    ``generate_dataset`` uses compact IDs for the destructive full rebuild.
+    Reusing those IDs for an append would overwrite existing rows, and merely
+    adding an offset to each table would leave customer/foreign-key references
+    inconsistent.  This helper remaps every primary/foreign key together and
+    returns copied rows, leaving the generated input untouched.
+    """
+    bases = {**APPEND_ID_BASES, **(id_bases or {})}
+    result = {
+        table_name: [dict(row) for row in rows]
+        for table_name, rows in data.items()
+    }
+
+    applications = result.get("loan_application_indicator", [])
+    accounts = result.get("loan_account_indicator", [])
+    repayments = result.get("loan_repayment_period_indicator", [])
+    customer_risk = result.get("customer_risk_monthly_indicator", [])
+    collections = result.get("collection_case_indicator", [])
+
+    def stable_map(values: list[Any], base: int) -> dict[Any, int]:
+        unique_values = sorted({value for value in values})
+        return {value: base + index for index, value in enumerate(unique_values, start=1)}
+
+    customer_map = stable_map(
+        [row["customer_id"] for row in applications if row.get("customer_id") is not None],
+        bases["customer"],
+    )
+    application_map = stable_map(
+        [row["application_id"] for row in applications if row.get("application_id") is not None],
+        bases["application"],
+    )
+    loan_map = stable_map(
+        [row["loan_id"] for row in accounts if row.get("loan_id") is not None],
+        bases["loan"],
+    )
+    repayment_map = stable_map(
+        [row["repay_period_id"] for row in repayments if row.get("repay_period_id") is not None],
+        bases["repayment"],
+    )
+    risk_map = stable_map(
+        [row["snapshot_id"] for row in customer_risk if row.get("snapshot_id") is not None],
+        bases["risk_snapshot"],
+    )
+    collection_map = stable_map(
+        [row["case_id"] for row in collections if row.get("case_id") is not None],
+        bases["collection"],
+    )
+
+    for row in applications:
+        old_id = row["application_id"]
+        row["application_id"] = application_map[old_id]
+        row["customer_id"] = customer_map[row["customer_id"]]
+        # A visible prefix makes it clear in the UI/query result that these
+        # are synthetic append rows, while retaining the source row's index.
+        row["application_no"] = f"DEMO-{row['application_no']}"
+
+    for row in accounts:
+        old_loan_id = row["loan_id"]
+        row["loan_id"] = loan_map[old_loan_id]
+        row["application_id"] = application_map[row["application_id"]]
+        row["customer_id"] = customer_map[row["customer_id"]]
+        row["loan_no"] = f"DEMO-{row['loan_no']}"
+
+    for row in repayments:
+        old_period_id = row["repay_period_id"]
+        row["repay_period_id"] = repayment_map[old_period_id]
+        row["loan_id"] = loan_map[row["loan_id"]]
+        row["customer_id"] = customer_map[row["customer_id"]]
+
+    for row in customer_risk:
+        old_snapshot_id = row["snapshot_id"]
+        row["snapshot_id"] = risk_map[old_snapshot_id]
+        row["customer_id"] = customer_map[row["customer_id"]]
+
+    for row in collections:
+        old_case_id = row["case_id"]
+        row["case_id"] = collection_map[old_case_id]
+        row["loan_id"] = loan_map[row["loan_id"]]
+        row["customer_id"] = customer_map[row["customer_id"]]
+        row["case_no"] = f"DEMO-{row['case_no']}"
+
+    return result
+
+
+def generate_append_dataset(
+    application_count: int = DEFAULT_APPEND_APPLICATIONS,
+    start_date: date = DEFAULT_APPEND_START_DATE,
+    snapshot_date: date = DEFAULT_APPEND_SNAPSHOT_DATE,
+    random_seed: int = 20260831,
+) -> dict[str, list[dict[str, Any]]]:
+    """Generate a current, non-colliding demo fixture for ``--append``."""
+    data = generate_dataset(
+        row_counts=append_row_counts(application_count),
+        start_date=start_date,
+        snapshot_date=snapshot_date,
+        random_seed=random_seed,
+    )
+    return namespace_append_dataset(data)
+
+
+def validate_append_dataset(
+    data: dict[str, list[dict[str, Any]]],
+    start_date: date = DEFAULT_APPEND_START_DATE,
+    snapshot_date: date = DEFAULT_APPEND_SNAPSHOT_DATE,
+) -> list[str]:
+    """Validate the extra invariants required by the non-destructive fixture."""
+    errors = validate_dataset(
+        data,
+        build_table_specs(),
+        start_date=start_date,
+        snapshot_date=snapshot_date,
+    )
+    ranges = {
+        "loan_application_indicator": ("application_id", "application"),
+        "loan_account_indicator": ("loan_id", "loan"),
+        "loan_repayment_period_indicator": ("repay_period_id", "repayment"),
+        "customer_risk_monthly_indicator": ("snapshot_id", "risk_snapshot"),
+        "collection_case_indicator": ("case_id", "collection"),
+    }
+    for table_name, (key, base_key) in ranges.items():
+        base = int(APPEND_ID_BASES[base_key])
+        for row in data.get(table_name, []):
+            value = int(row[key])
+            if value <= base or value > base + MAX_APPEND_APPLICATIONS * 10:
+                errors.append(f"{table_name} {key} is outside append namespace")
+                break
+
+    customer_base = int(APPEND_ID_BASES["customer"])
+    customer_ids = {
+        int(row["customer_id"])
+        for table_name in (
+            "loan_application_indicator",
+            "loan_account_indicator",
+            "loan_repayment_period_indicator",
+            "customer_risk_monthly_indicator",
+            "collection_case_indicator",
+        )
+        for row in data.get(table_name, [])
+        if row.get("customer_id") is not None
+    }
+    customer_upper_bound = customer_base + MAX_APPEND_APPLICATIONS * 10
+    if any(value <= customer_base or value > customer_upper_bound for value in customer_ids):
+        errors.append("customer_id is outside append namespace")
+
+    for table_name in (
+        "loan_account_indicator",
+        "loan_repayment_period_indicator",
+        "collection_case_indicator",
+    ):
+        for row in data.get(table_name, []):
+            if row.get("snapshot_date") != snapshot_date:
+                errors.append(f"{table_name} snapshot_date mismatch")
+                break
+    return errors
+
+
 def validate_dataset(
     data: dict[str, list[dict[str, Any]]],
     specs: dict[str, TableSpec] | None = None,
@@ -1119,11 +1326,23 @@ def insert_rows(
     spec: TableSpec,
     rows: list[dict[str, Any]],
     batch_size: int,
+    *,
+    upsert: bool = False,
 ) -> None:
     column_names = [column.name for column in spec.columns]
     placeholders = ", ".join(["%s"] * len(column_names))
     columns_sql = ", ".join(f"`{name}`" for name in column_names)
     sql = f"INSERT INTO `{spec.name}` ({columns_sql}) VALUES ({placeholders})"
+    if upsert:
+        update_columns = [name for name in column_names if name != spec.primary_key]
+        if update_columns:
+            # ``VALUES(col)`` is supported by the MySQL versions used by the
+            # local app (8.0/8.4).  Keeping this expression explicit also
+            # avoids interpolating any caller-provided column names.
+            updates = ", ".join(
+                f"`{name}` = VALUES(`{name}`)" for name in update_columns
+            )
+            sql += f" ON DUPLICATE KEY UPDATE {updates}"
     for start in range(0, len(rows), batch_size):
         batch = rows[start : start + batch_size]
         values = [tuple(row[name] for name in column_names) for row in batch]
@@ -1149,6 +1368,27 @@ def seed_database(
     connection.commit()
 
 
+def append_database(
+    connection: Any,
+    data: dict[str, list[dict[str, Any]]],
+    specs: dict[str, TableSpec] | None = None,
+    batch_size: int = 2_000,
+) -> None:
+    """Create missing tables and append demo rows without dropping anything.
+
+    Parent/child tables are processed in declaration order.  Every row uses a
+    deterministic reserved ID namespace and ``ON DUPLICATE KEY UPDATE`` so a
+    rerun is idempotent.  Existing rows outside that namespace are untouched.
+    """
+    table_specs = specs or build_table_specs()
+    with connection.cursor() as cursor:
+        for spec in table_specs.values():
+            cursor.execute(build_create_table_sql(spec))
+        for name, spec in table_specs.items():
+            insert_rows(cursor, spec, data[name], batch_size, upsert=True)
+    connection.commit()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Create and seed synthetic loan indicator tables in MySQL."
@@ -1162,6 +1402,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-date", type=date.fromisoformat, default=DEFAULT_START_DATE)
     parser.add_argument("--snapshot-date", type=date.fromisoformat, default=DEFAULT_SNAPSHOT_DATE)
     parser.add_argument("--batch-size", type=int, default=2_000)
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help=(
+            "append a small current-date fixture with reserved IDs; "
+            "never drops existing loan tables"
+        ),
+    )
+    parser.add_argument(
+        "--append-count",
+        type=int,
+        default=DEFAULT_APPEND_APPLICATIONS,
+        help=f"number of synthetic applications for --append (1-{MAX_APPEND_APPLICATIONS})",
+    )
+    parser.add_argument(
+        "--append-start-date",
+        type=date.fromisoformat,
+        default=DEFAULT_APPEND_START_DATE,
+        help="start date for --append (default: 2026-07-01)",
+    )
+    parser.add_argument(
+        "--append-snapshot-date",
+        type=date.fromisoformat,
+        default=DEFAULT_APPEND_SNAPSHOT_DATE,
+        help="snapshot date for --append (default: 2026-08-31)",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -1178,6 +1444,11 @@ def parse_args() -> argparse.Namespace:
         "--yes-drop-existing",
         action="store_true",
         help="confirm destructive table rebuild when used with --write",
+    )
+    parser.add_argument(
+        "--yes-append",
+        action="store_true",
+        help="confirm non-destructive UPSERT when used with --append --write",
     )
     return parser.parse_args()
 
@@ -1207,13 +1478,30 @@ def main() -> int:
         load_dotenv()
     args = parse_args()
     specs = build_table_specs()
-    data = generate_dataset(
-        row_counts=default_row_counts(specs),
-        start_date=args.start_date,
-        snapshot_date=args.snapshot_date,
-        random_seed=args.seed,
-    )
-    validation_errors = validate_dataset(data, specs, args.start_date, args.snapshot_date)
+    if args.append and args.yes_drop_existing:
+        print("refusing conflicting flags: --append cannot be combined with --yes-drop-existing")
+        return 2
+
+    if args.append:
+        data = generate_append_dataset(
+            application_count=args.append_count,
+            start_date=args.append_start_date,
+            snapshot_date=args.append_snapshot_date,
+            random_seed=args.seed,
+        )
+        validation_errors = validate_append_dataset(
+            data,
+            start_date=args.append_start_date,
+            snapshot_date=args.append_snapshot_date,
+        )
+    else:
+        data = generate_dataset(
+            row_counts=default_row_counts(specs),
+            start_date=args.start_date,
+            snapshot_date=args.snapshot_date,
+            random_seed=args.seed,
+        )
+        validation_errors = validate_dataset(data, specs, args.start_date, args.snapshot_date)
     if validation_errors:
         for error in validation_errors:
             print(f"validation error: {error}")
@@ -1221,7 +1509,22 @@ def main() -> int:
 
     counts = {name: len(rows) for name, rows in data.items()}
     if args.dry_run:
-        print("dry run ok")
+        mode = "append fixture" if args.append else "full rebuild fixture"
+        print(f"dry run ok ({mode})")
+        for name, count in counts.items():
+            print(f"{name}: {count}")
+        return 0
+
+    if args.append:
+        if not args.yes_append:
+            print("refusing to write append fixture without --yes-append")
+            return 2
+        connection = connect_mysql(args)
+        try:
+            append_database(connection, data, specs, args.batch_size)
+        finally:
+            connection.close()
+        print(f"appended demo fixture to database `{args.database}`")
         for name, count in counts.items():
             print(f"{name}: {count}")
         return 0

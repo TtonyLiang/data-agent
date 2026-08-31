@@ -21,6 +21,7 @@ from app.models.knowledge import (
     SemanticRuntime,
 )
 from app.services.semantic_runtime import SemanticRuntimeService
+from app.services.task_checkpoint_service import classify_turn_mode
 from scripts import import_semantic_bundle as semantic_bundle
 
 EXAMPLE_SEMANTIC_PATH = Path("examples/loan/semantic-domain.json")
@@ -149,11 +150,33 @@ def test_semantic_runtime_recall_prefers_agent_bound_domain(monkeypatch):
         def search(self, agent_id, query_vector):
             return []
 
+    class FakeOntologyService:
+        async def build_agent_context(self, domain_id, role):
+            assert domain_id == 77
+            assert role == "user"
+            return {
+                "object_types": [
+                    {"object_key": "LoanApplication", "name": "贷款申请", "properties": []}
+                ],
+                "link_types": [],
+                "actions": [
+                    {
+                        "action_key": "approve_loan_application",
+                        "name": "审批贷款申请",
+                        "target_object_key": "LoanApplication",
+                        "parameters": [],
+                    }
+                ],
+            }
+
     monkeypatch.setattr(
         semantic_runtime_recall, "get_semantic_runtime_service", lambda: FakeService()
     )
     monkeypatch.setattr(semantic_runtime_recall, "get_embedding_service", lambda: FakeEmbedding())
     monkeypatch.setattr(semantic_runtime_recall, "get_vector_store", lambda: FakeVectorStore())
+    monkeypatch.setattr(
+        semantic_runtime_recall, "get_ontology_service", lambda: FakeOntologyService()
+    )
 
     import asyncio
 
@@ -162,7 +185,7 @@ def test_semantic_runtime_recall_prefers_agent_bound_domain(monkeypatch):
             {
                 "agent_id": 7,
                 "datasource_id": 42,
-                "question": "贷款排名前三的申请区域是什么，分别申请了多少笔",
+                "question": "审批贷款申请进度",
             }
         )
     )
@@ -170,6 +193,7 @@ def test_semantic_runtime_recall_prefers_agent_bound_domain(monkeypatch):
     assert calls[0]["domain_id"] == 77
     assert result["semantic_error"] is None
     assert result["semantic_runtime"]["domain"]["name"] == "贷款风控"
+    assert result["ontology_evidence"]["actions"][0]["action_key"] == "approve_loan_application"
 
 
 def test_m1_plus_cash_loan_logic_form_compiles_to_joined_sql():
@@ -328,6 +352,78 @@ def test_application_count_by_region_top3_logic_form_compiles_to_count():
     assert "loan_amount" not in compiled.sql
 
 
+def test_application_count_by_application_channel_uses_application_table():
+    runtime = build_runtime()
+    svc = SemanticRuntimeService()
+    question = "根据申请渠道，分类统计当前的贷款总数"
+    logic_form = fallback_logic_form(question, runtime.model_dump())
+
+    validation = svc.validate_logic_form(logic_form, runtime)
+    compiled = svc.compile_logic_form(logic_form, runtime)
+
+    assert validation.valid
+    assert logic_form.metrics == ["application_count"]
+    assert logic_form.dimensions == ["application_channel"]
+    assert "FROM `loan_application_indicator` t0" in compiled.sql
+    assert "t0.`channel` AS `application_channel`" in compiled.sql
+    assert "JOIN `loan_account_indicator`" not in compiled.sql
+
+
+def test_application_channel_alias_is_normalized_from_llm_dimension():
+    runtime = build_runtime().model_dump()
+    logic_form = LogicForm(
+        metrics=["loan_count"],
+        dimensions=["channel"],
+        filters=[{"field": "current_status", "operator": "=", "value": "current"}],
+    )
+
+    normalized = normalize_logic_form(
+        "根据申请渠道，分类统计当前的贷款总数",
+        logic_form,
+        runtime=runtime,
+    )
+
+    assert normalized.metrics == ["application_count"]
+    assert normalized.dimensions == ["application_channel"]
+    assert normalized.filters == []
+
+
+def test_application_count_by_application_status_uses_application_table():
+    runtime = build_runtime()
+    svc = SemanticRuntimeService()
+    question = "查看审批进度，按申请状态统计当前贷款申请数量。"
+    logic_form = fallback_logic_form(question, runtime.model_dump())
+
+    validation = svc.validate_logic_form(logic_form, runtime)
+    compiled = svc.compile_logic_form(logic_form, runtime)
+
+    assert validation.valid
+    assert logic_form.metrics == ["application_count"]
+    assert logic_form.dimensions == ["application_approval_status"]
+    assert "FROM `loan_application_indicator` t0" in compiled.sql
+    assert "t0.`approval_status` AS `application_approval_status`" in compiled.sql
+    assert "JOIN `loan_account_indicator`" not in compiled.sql
+
+
+def test_application_status_alias_is_normalized_from_llm_dimension():
+    runtime = build_runtime().model_dump()
+    logic_form = LogicForm(
+        metrics=["loan_count"],
+        dimensions=["approval_status"],
+        filters=[{"field": "current_status", "operator": "=", "value": "current"}],
+    )
+
+    normalized = normalize_logic_form(
+        "查看审批进度，按申请状态统计当前贷款申请数量。",
+        logic_form,
+        runtime=runtime,
+    )
+
+    assert normalized.metrics == ["application_count"]
+    assert normalized.dimensions == ["application_approval_status"]
+    assert normalized.filters == []
+
+
 def test_application_count_followup_corrects_amount_metric_with_history():
     logic_form = LogicForm(
         metrics=["disbursement_amount"],
@@ -411,6 +507,62 @@ def test_semantic_enhancement_clarifies_application_count_region_question():
     assert "申请笔数" in result["enhanced_question"]
     assert "申请区域" in result["enhanced_question"]
     assert "金额" not in result["enhanced_question"]
+
+
+def test_semantic_enhancement_clarifies_application_channel_count_question():
+    result = deterministic_enhancement(
+        "根据申请渠道，分类统计当前的贷款总数",
+        [],
+        build_domain_rewrites(),
+        build_runtime().model_dump(),
+    )
+
+    assert result is not None
+    assert result["enhanced_question"] == (
+        "查询当前已采集的贷款申请数据，按申请渠道分组统计申请笔数。"
+    )
+
+
+def test_semantic_enhancement_clarifies_application_status_count_question():
+    result = deterministic_enhancement(
+        "查看审批进度，按申请状态统计当前贷款申请数量。",
+        [],
+        build_domain_rewrites(),
+        build_runtime().model_dump(),
+    )
+
+    assert result is not None
+    assert result["enhanced_question"] == (
+        "查询当前已采集的贷款申请数据，按申请状态分组统计申请笔数。"
+    )
+
+
+def test_application_channel_followup_reuses_previous_count_metric():
+    runtime = build_runtime().model_dump()
+    previous = {
+        "task_id": "task-application-status",
+        "question": "查看审批进度，按申请状态统计当前贷款申请数量。",
+        "enhanced_question": "查询当前已采集的贷款申请数据，按申请状态分组统计申请笔数。",
+        "task_status": "completed",
+        "sql_executed": True,
+    }
+    question = "按申请渠道统计"
+    history = [{"role": "user", "content": previous["question"]}]
+    rewrites = build_domain_rewrites()
+
+    assert classify_turn_mode(question, previous) == "refine"
+    enhanced = deterministic_enhancement(question, history, rewrites, runtime)
+    assert enhanced is not None
+    assert "按申请渠道分组" in enhanced["enhanced_question"]
+
+    normalized = normalize_logic_form(
+        question,
+        LogicForm(metrics=[], dimensions=[]),
+        history,
+        runtime,
+    )
+    assert normalized.metrics == ["application_count"]
+    assert normalized.dimensions == ["application_channel"]
 
 
 def test_semantic_enhancement_clarifies_application_count_trend_question():

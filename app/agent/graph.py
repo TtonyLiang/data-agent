@@ -43,6 +43,7 @@ class AgentState(TypedDict, total=False):
     runtime_evidence: list[dict[str, Any]]
     semantic_runtime: dict[str, Any]
     ontology_context: dict[str, Any]
+    ontology_evidence: dict[str, Any]
     semantic_error: str | None
     schema_scope: dict[str, Any]
     logic_form: dict[str, Any]

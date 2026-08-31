@@ -55,9 +55,11 @@ _DIMENSION_REFINEMENT = re.compile(r"(?:再)?按.{1,20}(?:拆分|分组|统计|�
 _SEMANTIC_FIELDS = {
     "semantic_runtime",
     "runtime_evidence",
+    "ontology_context",
     "semantic_error",
 }
 _SCHEMA_FIELDS = {
+    "ontology_evidence",
     "relevant_tables",
     "relevant_columns",
     "likely_joins",

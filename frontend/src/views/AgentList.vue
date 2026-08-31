@@ -29,7 +29,9 @@
             <span v-else class="muted">未绑定</span>
           </template>
         </el-table-column>
-        <el-table-column prop="created_at" label="创建时间" width="190" />
+        <el-table-column label="创建时间" width="190">
+          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="210" fixed="right">
           <template #default="{ row }">
             <el-button size="small" @click="openDetail(row)">详情</el-button>
@@ -134,7 +136,7 @@
             <dt>描述</dt>
             <dd>{{ detailAgent.description || '未填写' }}</dd>
             <dt>创建时间</dt>
-            <dd>{{ detailAgent.created_at || '-' }}</dd>
+            <dd>{{ formatDateTime(detailAgent.created_at) }}</dd>
           </dl>
         </section>
 
@@ -196,6 +198,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { formatDateTime } from '../utils/datetime'
 import {
   createAgent,
   deleteAgent,

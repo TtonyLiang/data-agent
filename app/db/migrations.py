@@ -311,6 +311,84 @@ async def run_management_migrations() -> None:
         "ALTER TABLE chat_history ADD COLUMN task_metadata JSON DEFAULT NULL "
         "COMMENT '任务复用与失效摘要' AFTER task_status",
     )
+    await add_column_if_missing(
+        "ontology_object_type",
+        "sync_enabled",
+        "ALTER TABLE ontology_object_type ADD COLUMN sync_enabled TINYINT(1) DEFAULT 0 "
+        "COMMENT '是否启用业务库同步' AFTER display_property",
+    )
+    await add_column_if_missing(
+        "ontology_object_type",
+        "source_query",
+        "ALTER TABLE ontology_object_type ADD COLUMN source_query LONGTEXT DEFAULT NULL "
+        "COMMENT '对象实例只读同步SQL' AFTER sync_enabled",
+    )
+    await add_column_if_missing(
+        "ontology_object_type",
+        "sync_limit",
+        "ALTER TABLE ontology_object_type ADD COLUMN sync_limit INT DEFAULT 200 "
+        "COMMENT '单次分页同步行数' AFTER source_query",
+    )
+    await add_column_if_missing(
+        "ontology_object_type",
+        "last_sync_status",
+        "ALTER TABLE ontology_object_type ADD COLUMN last_sync_status VARCHAR(32) DEFAULT NULL "
+        "COMMENT '最近同步状态' AFTER sync_limit",
+    )
+    await add_column_if_missing(
+        "ontology_object_type",
+        "last_sync_count",
+        "ALTER TABLE ontology_object_type ADD COLUMN last_sync_count INT DEFAULT 0 "
+        "COMMENT '最近同步读取行数' AFTER last_sync_status",
+    )
+    await add_column_if_missing(
+        "ontology_object_type",
+        "last_sync_total",
+        "ALTER TABLE ontology_object_type ADD COLUMN last_sync_total INT DEFAULT 0 "
+        "COMMENT '业务库对象总数' AFTER last_sync_count",
+    )
+    await add_column_if_missing(
+        "ontology_object_type",
+        "last_sync_error",
+        "ALTER TABLE ontology_object_type ADD COLUMN last_sync_error TEXT DEFAULT NULL "
+        "COMMENT '最近同步错误' AFTER last_sync_total",
+    )
+    await add_column_if_missing(
+        "ontology_object_type",
+        "last_synced_at",
+        "ALTER TABLE ontology_object_type ADD COLUMN last_synced_at TIMESTAMP NULL DEFAULT NULL "
+        "COMMENT '最近同步时间' AFTER last_sync_error",
+    )
+    await add_column_if_missing(
+        "ontology_object",
+        "source_kind",
+        "ALTER TABLE ontology_object ADD COLUMN source_kind VARCHAR(32) DEFAULT 'manual' "
+        "COMMENT 'manual/bundle/database' AFTER status",
+    )
+    await add_column_if_missing(
+        "ontology_object",
+        "source_datasource_id",
+        "ALTER TABLE ontology_object ADD COLUMN source_datasource_id BIGINT DEFAULT NULL "
+        "COMMENT '来源数据源ID' AFTER source_kind",
+    )
+    await add_column_if_missing(
+        "ontology_object",
+        "source_properties",
+        "ALTER TABLE ontology_object ADD COLUMN source_properties JSON DEFAULT NULL "
+        "COMMENT '业务库同步属性快照' AFTER source_datasource_id",
+    )
+    await add_column_if_missing(
+        "ontology_object",
+        "overlay_properties",
+        "ALTER TABLE ontology_object ADD COLUMN overlay_properties JSON DEFAULT NULL "
+        "COMMENT '本体动作本地覆盖属性' AFTER source_properties",
+    )
+    await add_column_if_missing(
+        "ontology_object",
+        "last_synced_at",
+        "ALTER TABLE ontology_object ADD COLUMN last_synced_at TIMESTAMP NULL DEFAULT NULL "
+        "COMMENT '最近业务库同步时间' AFTER overlay_properties",
+    )
     # 改列类型:sql_result 从 VARCHAR 升级为 LONGTEXT(支持大结果集)
     await ensure_column_type(
         "chat_history",

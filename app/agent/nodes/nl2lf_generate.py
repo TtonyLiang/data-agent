@@ -26,6 +26,7 @@ from app.agent.domain_rules import (
 from app.agent.domain_rules import (
     extract_top_limit as extract_configured_top_limit,
 )
+from app.agent.ontology_evidence import select_ontology_context
 from app.agent.prompts import load_prompt
 from app.models.knowledge import LogicFilter, LogicForm, LogicSort
 from app.services.llm_service import get_llm_service
@@ -66,6 +67,7 @@ async def nl2lf_generate_node(state: dict) -> dict:
     runtime_context = build_runtime_context(
         runtime,
         ontology_context=state.get("ontology_context"),
+        ontology_evidence=state.get("ontology_evidence"),
         relevant_tables=relevant_tables,
         relevant_columns=relevant_columns,
         likely_joins=likely_joins,
@@ -192,12 +194,17 @@ def normalize_logic_form(
                 if actions.get("merge_metrics")
                 else configured_metrics
             )
-        # 3c:维度动作(增删)
-        dimensions = apply_dimension_actions(
-            context_text,
-            dimensions,
-            actions.get("dimensions"),
+        # 3c:维度动作(增删);当前轮明确维度优先于历史上下文
+        dimension_action = actions.get("dimensions")
+        dimension_question = question
+        infer_terms = (
+            dimension_action.get("infer_from_terms")
+            if isinstance(dimension_action, dict)
+            else None
         )
+        if isinstance(infer_terms, dict) and not infer_configured_dimension(question, infer_terms):
+            dimension_question = context_text
+        dimensions = apply_dimension_actions(dimension_question, dimensions, dimension_action)
         # 3d:过滤条件动作(追加固定过滤 + 正则匹配过滤)
         filters = apply_filter_actions(filters, actions.get("filters"))
         filters = apply_regex_filter_actions(context_text, filters, actions.get("regex_filters"))
@@ -213,6 +220,9 @@ def normalize_logic_form(
                 item.model_copy(update={"field": canonicalize_field(item.field, action_aliases)})
                 for item in sort
             ]
+        if actions.get("remove_filters"):
+            remove_filters = {str(item) for item in actions.get("remove_filters") or []}
+            filters = [item for item in filters if item.field not in remove_filters]
         # 3f:时间粒度动作
         if actions.get("grain"):
             grain = str(actions.get("grain"))
@@ -503,6 +513,7 @@ def build_runtime_context(
     runtime: dict,
     *,
     ontology_context: dict | None = None,
+    ontology_evidence: dict | None = None,
     relevant_tables: list[dict] | None = None,
     relevant_columns: list[dict] | None = None,
     likely_joins: list[dict] | None = None,
@@ -568,14 +579,7 @@ def build_runtime_context(
             for item in (likely_joins or [])
         ],
     }
-    ontology = ontology_context if isinstance(ontology_context, dict) else {}
-    ontology_payload = {
-        "domain": ontology.get("domain") or {},
-        "release": ontology.get("release"),
-        "object_types": ontology.get("object_types") or [],
-        "link_types": ontology.get("link_types") or [],
-        "actions": ontology.get("actions") or [],
-    }
+    ontology_payload = select_ontology_context(ontology_context, ontology_evidence)
     return json.dumps(
         {
             "metrics": metrics,
@@ -695,6 +699,13 @@ def fallback_logic_form(question: str, runtime: dict[str, Any] | None = None) ->
             filters = [
                 {**item, "field": canonicalize_field(str(item.get("field") or ""), action_aliases)}
                 for item in filters
+            ]
+        if actions.get("remove_filters"):
+            remove_filters = {str(item) for item in actions.get("remove_filters") or []}
+            filters = [
+                item
+                for item in filters
+                if str(item.get("field") or "") not in remove_filters
             ]
         if actions.get("grain"):
             grain = str(actions.get("grain"))

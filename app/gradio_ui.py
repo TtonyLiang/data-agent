@@ -38,9 +38,9 @@ async def chat_fn(question: str, datasource_id: int, history: list):
 
 
 def build_ui():
-    with gr.Blocks(title="WenQu 智能问数") as demo:
-        gr.Markdown("# WenQu 智能问数智能体")
-        gr.Markdown("输入自然语言问题，自动转换为 SQL 查询并返回结果。")
+    with gr.Blocks(title="问渠 WenQu · 企业本体智能平台") as demo:
+        gr.Markdown("# 问渠 WenQu 智能问数")
+        gr.Markdown("输入自然语言问题，基于企业本体与查询语义自动返回结果。")
 
         with gr.Row():
             datasource_id = gr.Number(label="数据源ID", value=1, precision=0)

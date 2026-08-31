@@ -13,6 +13,9 @@
       "description": "申请贷款并承担还款义务的客户主体。",
       "primary_property": "customer_id",
       "display_property": "name",
+      "sync_enabled": true,
+      "sync_limit": 200,
+      "source_query": "SELECT r.customer_id AS customer_id, CONCAT('客户-', r.customer_id) AS name, r.region AS region, r.customer_segment AS customer_segment, r.monthly_income_estimate AS monthly_income, r.dti AS debt_income_ratio, r.risk_grade AS risk_grade, r.is_blacklist_hit AS is_blacklist_hit FROM customer_risk_monthly_indicator AS r LEFT JOIN customer_risk_monthly_indicator AS newer ON newer.customer_id = r.customer_id AND (newer.stat_month > r.stat_month OR (newer.stat_month = r.stat_month AND newer.snapshot_id > r.snapshot_id)) WHERE newer.snapshot_id IS NULL ORDER BY r.customer_id ASC, r.snapshot_id ASC",
       "status": "active",
       "properties": [
         {"property_key": "customer_id", "name": "客户ID", "data_type": "integer", "required": true, "unique": true, "sort_order": 0},
@@ -31,6 +34,9 @@
       "description": "客户提交的贷款申请及其审批状态。",
       "primary_property": "application_id",
       "display_property": "application_no",
+      "sync_enabled": true,
+      "sync_limit": 200,
+      "source_query": "SELECT a.application_id AS application_id, a.application_no AS application_no, a.customer_id AS customer_id, a.product_type AS product_type, a.requested_amount AS requested_amount, a.requested_term_months AS requested_term_months, a.risk_grade AS risk_grade, a.model_pd AS model_pd, a.approval_status AS approval_status, a.approval_amount AS approved_amount, COALESCE(r.is_blacklist_hit, 0) AS is_blacklist_hit, a.reject_reason AS decision_note, DATE_ADD(a.created_at, INTERVAL a.decision_time_minutes MINUTE) AS decided_at FROM loan_application_indicator AS a LEFT JOIN customer_risk_monthly_indicator AS r ON r.customer_id = a.customer_id LEFT JOIN customer_risk_monthly_indicator AS newer ON newer.customer_id = r.customer_id AND (newer.stat_month > r.stat_month OR (newer.stat_month = r.stat_month AND newer.snapshot_id > r.snapshot_id)) WHERE newer.snapshot_id IS NULL ORDER BY a.application_id ASC",
       "status": "active",
       "properties": [
         {"property_key": "application_id", "name": "申请ID", "data_type": "integer", "required": true, "unique": true, "sort_order": 0},
@@ -54,6 +60,9 @@
       "description": "放款后持续跟踪余额、逾期和催收状态的贷款借据。",
       "primary_property": "loan_id",
       "display_property": "loan_no",
+      "sync_enabled": true,
+      "sync_limit": 200,
+      "source_query": "SELECT l.loan_id AS loan_id, l.loan_no AS loan_no, l.application_id AS application_id, l.customer_id AS customer_id, l.product_type AS product_type, l.loan_amount AS loan_amount, l.current_status AS current_status, l.remaining_principal AS remaining_principal, l.current_overdue_days AS current_overdue_days, l.max_overdue_days AS max_overdue_days, CASE WHEN l.current_overdue_days <= 0 THEN 'C' WHEN l.current_overdue_days <= 30 THEN 'M1' WHEN l.current_overdue_days <= 60 THEN 'M2' WHEN l.current_overdue_days <= 90 THEN 'M3' ELSE 'M4+' END AS overdue_bucket, l.is_written_off AS is_written_off, 'not_started' AS collection_status, NULL AS collection_strategy, NULL AS collection_note, CAST(l.snapshot_date AS DATETIME) AS updated_at FROM loan_account_indicator AS l ORDER BY l.loan_id ASC",
       "status": "active",
       "properties": [
         {"property_key": "loan_id", "name": "贷款ID", "data_type": "integer", "required": true, "unique": true, "sort_order": 0},
@@ -80,6 +89,9 @@
       "description": "贷款账户下的分期应还、实还和逾期表现。",
       "primary_property": "repay_period_id",
       "display_property": "period_label",
+      "sync_enabled": true,
+      "sync_limit": 200,
+      "source_query": "SELECT p.repay_period_id AS repay_period_id, CONCAT(l.loan_no, '-第', p.period_no, '期') AS period_label, p.loan_id AS loan_id, p.period_no AS period_no, p.due_date AS due_date, p.scheduled_total AS scheduled_total, p.paid_total AS paid_total, p.repay_status AS repay_status, p.overdue_days AS overdue_days, p.overdue_bucket AS overdue_bucket FROM loan_repayment_period_indicator AS p JOIN loan_account_indicator AS l ON l.loan_id = p.loan_id ORDER BY p.repay_period_id ASC",
       "status": "active",
       "properties": [
         {"property_key": "repay_period_id", "name": "期次ID", "data_type": "integer", "required": true, "unique": true, "sort_order": 0},
@@ -100,6 +112,9 @@
       "description": "客户某个月的风险评分、负债压力和行为表现。",
       "primary_property": "snapshot_id",
       "display_property": "snapshot_label",
+      "sync_enabled": true,
+      "sync_limit": 200,
+      "source_query": "SELECT r.snapshot_id AS snapshot_id, CONCAT(r.customer_id, '-', DATE_FORMAT(r.stat_month, '%Y年%m月'), '风险快照') AS snapshot_label, r.customer_id AS customer_id, r.stat_month AS stat_month, r.outstanding_principal AS outstanding_principal, r.dti AS dti, r.max_dpd_12m AS max_dpd_12m, r.risk_grade AS risk_grade, r.model_pd AS model_pd, r.fraud_risk_level AS fraud_risk_level, r.is_blacklist_hit AS is_blacklist_hit FROM customer_risk_monthly_indicator AS r ORDER BY r.snapshot_id ASC",
       "status": "active",
       "properties": [
         {"property_key": "snapshot_id", "name": "快照ID", "data_type": "integer", "required": true, "unique": true, "sort_order": 0},
@@ -121,6 +136,9 @@
       "description": "逾期贷款进入催收后的分配、触达和回收案件。",
       "primary_property": "case_id",
       "display_property": "case_no",
+      "sync_enabled": true,
+      "sync_limit": 200,
+      "source_query": "SELECT c.case_id AS case_id, c.case_no AS case_no, c.loan_id AS loan_id, c.customer_id AS customer_id, c.case_status AS case_status, c.overdue_bucket_at_entry AS overdue_bucket_at_entry, c.entry_overdue_days AS entry_overdue_days, c.entry_overdue_principal AS entry_overdue_principal, c.assigned_team AS assigned_team, c.collection_strategy AS collection_strategy, c.recovered_principal AS recovered_principal, c.recovery_rate AS recovery_rate, c.close_reason AS close_reason, CAST(c.case_end_date AS DATETIME) AS closed_at FROM collection_case_indicator AS c ORDER BY c.case_id ASC",
       "status": "active",
       "properties": [
         {"property_key": "case_id", "name": "案件ID", "data_type": "integer", "required": true, "unique": true, "sort_order": 0},

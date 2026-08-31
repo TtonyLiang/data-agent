@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="WenQu 智能问数：用自然语言提问，生成可追踪的 SQL、数据结果和分析报告。">
-  <title>WenQu 智能问数</title>
+  <meta name="description" content="问渠 WenQu 企业本体智能平台：建模对象、关系、状态与动作，连接数据、问数与决策。">
+  <title>问渠 WenQu · 企业本体智能平台</title>
   <style>
     :root {
       --bg: #f5f8fb;
@@ -210,12 +210,12 @@
     <nav class="wrap" aria-label="主导航">
       <a class="brand" href="#top">
         <span class="mark">WQ</span>
-        <span>WenQu 智能问数<small>AI Data Analyst</small></span>
+        <span>问渠 WenQu<small>Enterprise Ontology Platform</small></span>
       </a>
       <div class="nav-links">
-        <a href="#workflow">工作流</a>
-        <a href="#semantic">语义层</a>
-        <a href="#trust">可信执行</a>
+        <a href="#semantic">本体建模</a>
+        <a href="#workflow">运行闭环</a>
+        <a href="#trust">治理边界</a>
         <a href="#start">开始使用</a>
       </div>
     </nav>
@@ -224,71 +224,71 @@
   <main id="top">
     <section class="wrap hero">
       <div>
-        <div class="eyebrow">WENQU / DATA INTELLIGENCE</div>
-        <h1>让业务问题，直接变成数据答案</h1>
-        <p>用自然语言提问，自动完成语义理解、SQL 查询、统计分析和报告生成。</p>
+        <div class="eyebrow">WENQU / ENTERPRISE ONTOLOGY</div>
+        <h1>企业本体智能平台</h1>
+        <p>建模对象、关系、状态与业务动作，形成可发布、可执行、可审计的企业业务模型，并驱动智能问数与决策执行。</p>
         <div class="actions">
-          <a class="button primary" href="#workflow">了解工作流</a>
+          <a class="button primary" href="#semantic">了解本体建模</a>
           <a class="button" href="README_CN.md">阅读文档</a>
         </div>
       </div>
       <figure class="image-box">
-        <img src="docs/images/architecture.png" alt="WenQu 总体设计架构图" fetchpriority="high">
+        <img src="docs/images/architecture.png" alt="问渠 WenQu 总体设计架构图" fetchpriority="high">
         <figcaption>前端、API、LangGraph、语义服务与数据依赖协同工作。</figcaption>
       </figure>
     </section>
 
     <section class="wrap" id="capabilities">
       <div class="section-title">
-        <h2>核心价值</h2>
-        <p>把智能问数从一次性的模型输出，变成可配置、可检查、可复用的业务能力。</p>
+        <h2>以企业本体为核心</h2>
+        <p>把分散的业务概念、数据口径和决策动作，沉淀为可发布、可执行、可审计的企业本体。</p>
       </div>
       <div class="value-grid">
         <article class="value">
-          <h3>语义层驱动</h3>
-          <p>用指标、映射、关系和规则沉淀统一业务口径。大模型负责理解，编译器负责落地。</p>
+          <h3>企业本体建模</h3>
+          <p>用对象、属性、关系、状态和动作统一描述企业业务世界，建立跨系统共享的业务模型。</p>
         </article>
         <article class="value">
-          <h3>多智能体</h3>
-          <p>不同团队可绑定各自的数据源、模型和语义领域，权限彼此隔离。</p>
+          <h3>本体驱动问数</h3>
+          <p>让问题先匹配企业对象与业务口径，再生成受控查询、分析结论和业务报告。</p>
         </article>
         <article class="value">
-          <h3>深度分析</h3>
-          <p>查询结果继续进行趋势、排名、分布和异常分析，输出结构化报告。</p>
+          <h3>决策执行与审计</h3>
+          <p>将业务动作、前置条件、权限和状态效果纳入模型，形成可追溯的决策闭环。</p>
         </article>
       </div>
     </section>
 
     <section class="wrap" id="workflow">
       <div class="section-title">
-        <h2>从提问到报告</h2>
-        <p>每一步都有明确职责，用户可以查看语义资产、候选表、SQL 和分析结果。</p>
+        <h2>从本体建模到业务执行</h2>
+        <p>企业本体先统一业务结构，再驱动数据连接、智能问数和受控决策。</p>
       </div>
       <div class="flow">
-        <article class="flow-item"><b>01</b><h3>理解问题</h3><p>识别问数意图，结合历史上下文补全问题。</p></article>
-        <article class="flow-item"><b>02</b><h3>定位数据</h3><p>根据语义资产和授权 Schema 找到候选表字段。</p></article>
-        <article class="flow-item"><b>03</b><h3>生成意图</h3><p>把问题转换成指标、维度、过滤和排序。</p></article>
-        <article class="flow-item"><b>04</b><h3>受控执行</h3><p>校验并编译只读 SQL，安全访问业务数据。</p></article>
-        <article class="flow-item"><b>05</b><h3>分析输出</h3><p>生成统计结论、图表和可读的业务报告。</p></article>
+        <article class="flow-item"><b>01</b><h3>定义对象</h3><p>建模客户、订单、贷款、案件等核心业务对象及属性。</p></article>
+        <article class="flow-item"><b>02</b><h3>建立关系</h3><p>表达对象之间的业务关联、身份链路和数据连接路径。</p></article>
+        <article class="flow-item"><b>03</b><h3>编排动作</h3><p>定义参数、前置条件、权限约束和状态变化效果。</p></article>
+        <article class="flow-item"><b>04</b><h3>校验发布</h3><p>检查模型完整性并发布版本，形成稳定的运行时契约。</p></article>
+        <article class="flow-item"><b>05</b><h3>问数与执行</h3><p>以本体驱动查询、分析、业务动作和全链路审计。</p></article>
       </div>
     </section>
 
     <section class="wrap" id="semantic">
       <div class="section-title">
-        <h2>语义层的六类资产</h2>
-        <p>语义层是项目的核心配置中心，负责把业务语言和真实数据库连接起来。</p>
+        <h2>构建可运行的企业本体</h2>
+        <p>从对象结构到业务动作，建立能够连接数据、AI Agent 与业务应用的统一企业模型。</p>
       </div>
       <div class="semantic-grid">
-        <article class="semantic-item"><h3>对象 / 事件 / 状态</h3><p>定义客户、订单、放款、逾期等业务概念和边界。</p></article>
-        <article class="semantic-item"><h3>关系</h3><p>定义概念之间的关系和跨表 JOIN 路径。</p></article>
-        <article class="semantic-item"><h3>指标</h3><p>定义指标公式、基础表、时间字段和可用维度。</p></article>
-        <article class="semantic-item"><h3>规则</h3><p>处理口径定义、过滤条件、时间规则和归一化。</p></article>
-        <article class="semantic-item"><h3>映射</h3><p>把语义 key 映射到真实表字段或受控表达式。</p></article>
-        <article class="semantic-item"><h3>LogicForm 模板</h3><p>为指标查询、趋势分析等常见问法提供结构骨架。</p></article>
+        <article class="semantic-item"><h3>对象类型</h3><p>定义客户、订单、贷款、案件等企业核心实体及其业务身份。</p></article>
+        <article class="semantic-item"><h3>属性与状态</h3><p>描述对象字段、数据类型、业务状态和完整性约束。</p></article>
+        <article class="semantic-item"><h3>关系类型</h3><p>表达对象之间的一对一、一对多和多对多业务关联。</p></article>
+        <article class="semantic-item"><h3>业务动作</h3><p>定义动作参数、前置条件、授权角色和状态效果。</p></article>
+        <article class="semantic-item"><h3>对象实例</h3><p>承载真实或演示业务对象，并建立可浏览的关系网络。</p></article>
+        <article class="semantic-item"><h3>发布与审计</h3><p>校验并发布本体版本，记录动作上下文和状态变化。</p></article>
       </div>
       <figure class="image-box semantic-image">
-        <img src="docs/images/er-diagram.png" alt="语义层六类资产关系图" loading="lazy">
-        <figcaption>六类资产统一进入 SemanticRuntime，参与召回、校验和 SQL 编译。</figcaption>
+        <img src="docs/images/er-diagram.png" alt="企业本体与查询语义协同关系图" loading="lazy">
+        <figcaption>查询语义层补充指标、规则、映射和 LogicForm，使企业本体能够驱动受控问数。</figcaption>
       </figure>
     </section>
 
@@ -296,26 +296,26 @@
       <div class="wrap trust-grid">
         <div>
           <div class="section-title">
-            <h2>智能，也有边界</h2>
-            <p>项目把理解、执行和分析分开，关键结果可以验证，问题出现时可以定位。</p>
+            <h2>企业模型，也有治理边界</h2>
+            <p>本体定义、发布、执行和审计各自受控，关键决策可以验证和追溯。</p>
           </div>
           <ul class="trust-list">
-            <li><strong>表权限边界</strong>每个智能体只在绑定的数据源内工作；配置白名单后，未授权表不会进入候选 Schema。</li>
-            <li><strong>SQL 安全</strong>只允许受控的只读查询，执行前拦截危险语句。</li>
-            <li><strong>Python 隔离</strong>分析器只处理 SQL 结果集，脚本经过安全检查。</li>
-            <li><strong>全链路留痕</strong>保存问题、SQL、结果、分析过程和报告。</li>
+            <li><strong>本体发布边界</strong>对象、关系和动作通过校验后发布，运行时使用明确版本。</li>
+            <li><strong>动作权限边界</strong>动作按角色、审批要求和前置条件执行，禁止绕过模型约束。</li>
+            <li><strong>数据访问边界</strong>智能体只访问授权数据源、表和字段，查询执行前再次校验。</li>
+            <li><strong>全链路留痕</strong>保存问题、SQL、决策上下文、对象快照、状态变化和分析报告。</li>
           </ul>
         </div>
-        <pre aria-label="智能体可调用表的权限边界">智能体可调用表的权限边界
+        <pre aria-label="企业本体动作执行边界">企业本体动作执行边界
 
-用户获得智能体访问权
-  -> 绑定指定数据源
-  -> 表级白名单过滤
-  -> 字段隐藏或结果脱敏
-  -> 执行前复核 FROM / JOIN
-  -> 返回授权范围内的数据
+发布已校验的本体版本
+  -> 校验执行角色与审批要求
+  -> 检查业务前置条件
+  -> 执行动作并更新对象状态
+  -> 校验对象版本，避免并发覆盖
+  -> 记录决策上下文与前后快照
 
-白名单外的表：不参与召回，SQL 执行时再次拦截</pre>
+未授权或不满足条件的动作：拒绝执行并保留审计信息</pre>
       </div>
     </section>
 
@@ -324,7 +324,7 @@
         <div>
           <div class="section-title">
             <h2>开始使用</h2>
-            <p>启动依赖服务，配置数据源和模型，采集核心表，再为智能体绑定语义层。</p>
+            <p>选择业务领域，定义对象、关系和动作，校验发布后再连接数据源、智能问数与业务执行。</p>
           </div>
           <a class="button primary" href="README_CN.md">查看完整安装说明</a>
         </div>
@@ -341,7 +341,7 @@ npm run dev</pre>
 
   <footer>
     <div class="wrap footer-inner">
-      <span>WenQu 智能问数</span>
+      <span>问渠 WenQu · 企业本体智能平台</span>
       <div class="footer-links"><a href="README_CN.md">文档</a><a href="docs/project-design.md">架构设计</a><a href="#top">回到顶部</a></div>
     </div>
   </footer>

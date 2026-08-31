@@ -1,8 +1,8 @@
-# WenQu DataQuery Agent
+# WenQu Enterprise Ontology Platform
 
 English | [中文](./README_CN.md)
 
-> An intelligent data query system built on LangGraph — ask questions in natural language, automatically generate SQL, execute queries, perform statistical analysis, and produce structured reports.
+> An enterprise ontology platform built on LangGraph — model objects, relationships, states, and actions, then connect them to governed data querying, decision execution, and auditability.
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)
@@ -21,7 +21,7 @@ English | [中文](./README_CN.md)
 - [Quick Start](#quick-start)
 - [Detailed Documentation](#detailed-documentation)
   - [Core Workflow](#1-core-workflow)
-  - [Semantic Layer](#2-semantic-layer)
+  - [Enterprise Ontology and Query Semantics](#2-enterprise-ontology-and-query-semantics)
   - [Deep Analysis (Phase 3)](#3-deep-analysis-phase-3)
   - [Security](#4-security)
   - [Streaming & Frontend](#5-streaming--frontend)
@@ -39,13 +39,17 @@ English | [中文](./README_CN.md)
 
 ## Features
 
-### Natural Language Querying
+### Enterprise Ontology Modeling
 
-Ask questions in natural language. The system automatically completes the full pipeline: intent recognition, semantic enhancement, knowledge recall, schema recall, SQL generation, query execution, statistical analysis, and report generation. Supports multi-turn conversation with contextual follow-ups and corrections.
+Model the enterprise through object types, properties, relationships, states, and governed business actions. Validate and publish model versions, manage instances and permissions, and retain runtime audit records for shared use by data, AI agents, and applications.
 
-### Semantic Layer Driven
+### Ontology-Driven Data Querying
 
-Business logic is expressed through six types of semantic assets (concepts, relations, metrics, rules, mappings, templates). When the semantic layer is matched, SQL is deterministically compiled from a structured LogicForm — controllable metric definitions, traceable field mappings, and locatable errors. Falls back to constrained NL2SQL when unmatched.
+Natural-language questions are grounded in enterprise objects, relationships, and governed business definitions before schema recall, SQL generation, query execution, statistical analysis, and reporting. Multi-turn context, follow-ups, and corrections remain supported.
+
+### Governed Actions and Audit
+
+Actions are part of the ontology model, with explicit parameters, preconditions, roles, approval requirements, and state effects. Every execution records decision context and before/after object snapshots for a traceable operational loop.
 
 ### Deep Analysis & Reporting
 
@@ -79,7 +83,7 @@ Prompt templates can be overridden per agent, model, and semantic domain. System
 
 ![System Architecture](docs/images/architecture-en.png)
 
-The system consists of a frontend management console, FastAPI backend, LangGraph query workflow, and external dependencies (LLM, MySQL, Milvus). The frontend communicates with the backend via REST API and SSE, while the backend orchestrates 16 processing nodes through LangGraph.
+The system combines an enterprise ontology modeling workbench, an intelligent querying interface, a FastAPI backend, LangGraph workflows, ontology/query-semantic runtimes, and external dependencies (LLM, MySQL, Milvus). The backend governs ontology releases, analytical queries, and controlled action execution.
 
 ### Query Execution Flow
 
@@ -87,11 +91,11 @@ The system consists of a frontend management console, FastAPI backend, LangGraph
 
 Full pipeline: User question → Intent Recognition → Semantic Enhancement → Knowledge Recall → Schema Recall → LogicForm Generation → Semantic Validation → SQL Compilation → Semantic Consistency Check → SQL Execution → Analysis Plan → Python Generation → Python Analysis → Report Generation.
 
-### Semantic Layer Configuration
+### Enterprise Ontology and Query Semantics
 
-![Semantic Layer ER Diagram](docs/images/er-diagram-en.png)
+![Enterprise Ontology and Query Semantics](docs/images/er-diagram-en.png)
 
-An agent is the runtime entry point, binding datasources, models, and a semantic domain. Each semantic domain contains six asset types: concepts, relations, metrics, rules, mappings, and templates.
+Enterprise ontology provides the object, relationship, state, and action model. Query semantics add concepts, metrics, rules, mappings, and templates that connect the ontology to physical data and compilable queries.
 
 ---
 
@@ -244,11 +248,18 @@ flowchart TD
     Q --> END
 ```
 
-### 2. Semantic Layer
+### 2. Enterprise Ontology and Query Semantics
 
-The semantic layer is the core design of WenQu, expressing business logic through structured assets to prevent unconstrained SQL generation by LLMs.
+Enterprise ontology is the core model of WenQu: objects, properties, relationships, states, and actions describe the business world. Query semantics connect that model to metrics, physical fields, and compilable queries so data answers can lead to governed, auditable actions.
 
-#### Six Semantic Asset Types
+#### Enterprise Ontology Runtime Model
+
+- **Object types and properties** define core entities, business identities, fields, and states.
+- **Relationship types** express business associations, cardinality, and connection paths.
+- **Business actions** define parameters, preconditions, authorized roles, approval requirements, and state effects.
+- **Instances, releases, and audit** manage runtime objects, publish validated versions, and retain action and state-change history.
+
+#### Six Query Semantic Asset Types
 
 | Asset Type | Description | Example |
 |------------|-------------|---------|

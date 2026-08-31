@@ -7,8 +7,8 @@
         <div class="brand">
           <div class="brand-mark">WQ</div>
           <div>
-            <h1>WenQu 智能问数</h1>
-            <span>AI Data Analyst</span>
+            <h1>问渠 WenQu</h1>
+            <span>企业本体智能平台</span>
           </div>
         </div>
         <el-menu
@@ -40,7 +40,7 @@
           </el-menu-item>
           <el-menu-item v-if="isAuthenticatedUser" index="/ontology" :disabled="isNavigationDisabled('/ontology')">
             <el-icon><Share /></el-icon>
-            <span>业务本体</span>
+            <span>本体建模</span>
           </el-menu-item>
           <el-menu-item v-if="isAdminUser" index="/system-parameter" :disabled="isNavigationDisabled('/system-parameter')">
             <el-icon><Setting /></el-icon>

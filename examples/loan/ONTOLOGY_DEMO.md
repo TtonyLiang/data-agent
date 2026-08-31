@@ -16,6 +16,7 @@
 导入文件：`examples/loan/ontology-bundle.json`
 
 - 6 个对象类型：`Customer`、`LoanApplication`、`LoanAccount`、`RepaymentPeriod`、`CustomerRiskSnapshot`、`CollectionCase`
+- 6 个业务库只读同步查询：每个对象类型均启用 `sync_enabled=true`，默认分页大小为 `200`
 - 6 个关系类型：客户-申请、客户-贷款、申请-贷款、贷款-还款期次、贷款-风险快照、贷款-催收案件
 - 3 个动作类型：`approve_application`、`start_collection`、`close_collection_case`
 - 1 个演示客户：`200001`
@@ -28,11 +29,15 @@
 如果项目里已经有 `loan_risk` 领域，可直接从第 4 步开始。若要让对话页也能查询信贷指标，先导入现有语义问数资产：
 
 ```bash
-# 只做预览，不写库
+# 只做预览，不写库（推荐先执行）
 uv run python examples/loan/seed_loan_indicators.py
 
 # 只有确认允许重建本地演示表时才执行；会 DROP/重建信贷演示表
 uv run python examples/loan/seed_loan_indicators.py --write --yes-drop-existing
+
+# 非破坏性补充 2026-08-31 的当前演示数据（不会 DROP 既有表，可重复执行）
+uv run python examples/loan/seed_loan_indicators.py --append
+uv run python examples/loan/seed_loan_indicators.py --append --write --yes-append
 
 # 将现有审批率、M1+、Vintage 等问数语义导入同一个信贷智能体
 uv run python scripts/import_semantic_bundle.py \
@@ -40,15 +45,30 @@ uv run python scripts/import_semantic_bundle.py \
   --agent-id <信贷智能体ID>
 ```
 
-在“智能体管理”中把这个 `loan_risk` 语义域绑定到信贷智能体。若只演示 Ontology 对象和动作，不需要先创建物理信贷表，但仍需有一个可访问的语义领域作为 Ontology 所属工作区。
+在“智能体管理”中把这个 `loan_risk` 语义域绑定到信贷智能体，并确认领域已绑定包含上述信贷表的默认数据源。对象同步沿用该智能体的数据权限，因此还要允许访问 `loan_application_indicator`、`loan_account_indicator`、`loan_repayment_period_indicator`、`customer_risk_monthly_indicator` 和 `collection_case_indicator`。
 
-## 4. 工作台操作顺序
+## 4. 业务库同步映射
+
+`ontology-bundle.json` 中的 `source_query` 都是单条只读 `SELECT`，按对象主键稳定排序且不包含顶层 `LIMIT`。同步服务按 `sync_limit=200` 自动追加 `LIMIT/OFFSET`，逐页读取全部数据。
+
+| 对象类型 | 主要来源 | 关键映射 |
+|---|---|---|
+| `Customer` | `customer_risk_monthly_indicator` | 每个客户只取最新月份、同月最大 `snapshot_id` 的一行；`monthly_income_estimate -> monthly_income`、`dti -> debt_income_ratio` |
+| `LoanApplication` | `loan_application_indicator` | `approval_amount -> approved_amount`；审批时间由 `created_at + decision_time_minutes` 计算；黑名单状态取客户最新风险快照 |
+| `LoanAccount` | `loan_account_indicator` | 按逾期天数派生 `C/M1/M2/M3/M4+`；催收动作字段提供未执行时的基础值 |
+| `RepaymentPeriod` | `loan_repayment_period_indicator` | 关联贷款账户，用借据号和期数生成 `period_label` |
+| `CustomerRiskSnapshot` | `customer_risk_monthly_indicator` | 用客户、统计月份生成 `snapshot_label` |
+| `CollectionCase` | `collection_case_indicator` | `case_end_date -> closed_at` |
+
+这里的“实时同步”是页面触发模式：进入“对象实例”页或点击刷新时同步当前页，切换对象类型或翻页时继续读取对应的服务端数据页；它不是数据库 CDC 或后台定时任务。业务数据库始终只读，查询结果写入对象的 `source_properties`。审批、催收和结案动作只写本体对象的 `overlay_properties`，展示和动作校验使用 `source_properties + overlay_properties`，同名字段以本地 overlay 为准，后续刷新不会覆盖已经执行的本体动作结果。
+
+## 5. 工作台操作顺序
 
 1. 用管理员账号打开 `/ontology`，在顶部选择 `贷款风控` 或 `贷款风控运营本体` 所属领域。
 2. 点击“导入”，选择 `examples/loan/ontology-bundle.json`。这里必须导入 `format=wenqu-ontology` 文件；旧的 `semantic-domain.json` 是问数语义格式，不能直接导入本体工作台。
 3. 点击“校验”。预期结果是 `6` 个对象类型、`6` 个关系类型、`3` 个动作类型，且 `valid=true`。
 4. 点击“发布”。动作执行前必须至少存在一个发布快照，例如 `V1`。
-5. 在“对象实例”中按类型浏览客户、申请、贷款、风险快照和催收案件；点击“建立关系”可创建关系实例。图谱视图展示对象类型和动作定义，当前工作台不单独列出关系实例表，可通过导出或 REST `GET /api/ontology/domains/{domain_id}/links` 核对。
+5. 切换到“对象实例”。页面默认选择一个已启用同步的对象类型并读取当前页，刷新按钮重新同步当前页；切换类型或翻页会继续读取对应业务数据。点击“建立关系”可创建关系实例。图谱视图展示对象类型和动作定义，当前工作台不单独列出关系实例表，可通过导出或 REST `GET /api/ontology/domains/{domain_id}/links` 核对。
 6. 在“动作类型”中执行 `审批贷款申请`：
    - 目标对象：`APP-20260830-0001`
    - 审批金额：`50000`
@@ -67,7 +87,7 @@ uv run python scripts/import_semantic_bundle.py \
    - 结果：`case_status` 变为 `closed`，并记录回收本金和结案时间。
 9. 切换到“决策活动”，查看每次动作的执行人、参数、决策上下文、执行前状态和执行后状态。
 
-## 5. 业务问题示例
+## 6. 业务问题示例
 
 ### 纯问数问题
 
@@ -87,7 +107,7 @@ uv run python scripts/import_semantic_bundle.py \
 
 当前 MVP 的实际操作是：先在对象实例中查 `Customer=200001`、`CustomerRiskSnapshot=200001-2026年08月风险快照` 和 `LoanAccount=LN-20250001`，核对 `risk_grade=C`、`dti=0.62`、`remaining_principal=42000`、`current_overdue_days=45`，再由有权限的操作员在动作弹窗中确认并执行 `start_collection`。
 
-## 6. 受控 REST 演示（可选）
+## 7. 受控 REST 演示（可选）
 
 登录后把 `<token>`、`<domain_id>`、`<action_type_id>` 和 `<object_id>` 替换成实际值。先查询对象，再使用对象返回的 `version` 作为乐观锁版本：
 
@@ -120,9 +140,10 @@ curl -X POST \
 
 这两个工具仍然会重复执行领域权限、角色、发布状态、参数、前置条件和乐观锁校验；它们不允许 Agent 直接提交任意 SQL。
 
-## 7. 这个 MVP 有意没有做什么
+## 8. 这个 MVP 有意没有做什么
 
 - 不自动创建外部催收工单或调用 ERP/短信系统。
+- 不做数据库 CDC、消息队列订阅或后台定时同步；对象实例由进入页面和刷新操作触发分页同步。
 - 不实现动态 ABAC、正式审批流、失败补偿和分布式图事务。
 - 复杂聚合和“最新快照”排序仍由语义问数 SQL 处理；Ontology 查询 API 当前适合对象主键/名称检索。
 - `start_collection` 只更新 `LoanAccount` 的催收状态，不自动新建 `CollectionCase`；Demo 预先放入一个催收案件，后续再扩展事务型动作编排。

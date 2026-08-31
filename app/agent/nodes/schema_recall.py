@@ -22,9 +22,20 @@ from app.agent.domain_rules import (
     recall_profiles_from_runtime,
     schema_hints_from_runtime,
 )
+from app.agent.ontology_evidence import (
+    build_ontology_evidence,
+    ontology_schema_terms,
+    score_ontology_schema_text,
+)
+from app.agent.schema_scope import (
+    explicit_metric,
+    primary_channel_scope,
+    primary_scope_tables,
+    subject_focus,
+)
+from app.config import get_settings
 from app.services.metadata_service import get_metadata_service
 from app.services.system_parameter_service import get_system_parameter_service
-from app.config import get_settings
 from app.utils.logging_helpers import json_for_log, log_node_end, log_node_start, truncate_text
 
 # token 切分正则:英文/数字/下划线为一个 token,连续中文字符为一个 token
@@ -80,21 +91,28 @@ async def schema_recall_node(state: dict) -> dict:
     runtime = state.get("semantic_runtime") or {}
     evidence = state.get("runtime_evidence") or []
     question = state.get("enhanced_question") or state.get("question", "")
+    ontology_context = state.get("ontology_context") or {}
+    ontology_evidence = build_ontology_evidence(question, ontology_context)
+    ontology_terms = ontology_schema_terms(ontology_context, ontology_evidence)
     recall_profiles = recall_profiles_from_runtime(runtime, question)
     tokens = _tokens(question, recall_profiles)
     semantic_terms = _semantic_terms(runtime, evidence)
     business_priority = _business_priority(runtime, evidence, question, recall_profiles)
     business_groups = business_groups_from_runtime(runtime, question)
     schema_hints = schema_hints_from_runtime(runtime, question)
+    question_profile = _question_profile(question, recall_profiles)
+    scope_tables = primary_scope_tables(runtime)
     recall_settings = await get_system_parameter_service().get_schema_recall_settings()
     settings = get_settings()
     logger.info(
         "schema recall signals question=%s tokens=%s semantic_terms_count=%s "
-        "evidence_count=%s business_groups=%s schema_hints=%s recall_profiles=%s",
+        "evidence_count=%s ontology_match_count=%s business_groups=%s "
+        "schema_hints=%s recall_profiles=%s",
         truncate_text(question, 600),
         json_for_log(sorted(tokens)),
         len(semantic_terms),
         len(evidence),
+        ontology_evidence.get("count", 0),
         json_for_log(business_groups),
         json_for_log(schema_hints),
         json_for_log(recall_profiles),
@@ -114,6 +132,11 @@ async def schema_recall_node(state: dict) -> dict:
             tokens,
             semantic_terms,
         )
+        ontology_score, ontology_reasons = score_ontology_schema_text(
+            [table_name, table_comment], ontology_terms
+        )
+        table_score += ontology_score
+        table_reasons = [*ontology_reasons, *table_reasons]
         # 信号2:语义资产(指标/映射/关系)命中的业务优先级加分
         table_business = business_priority["tables"].get(table_name, {"score": 0.0, "reasons": []})
         table_score += float(table_business.get("score") or 0)
@@ -144,6 +167,11 @@ async def schema_recall_node(state: dict) -> dict:
                 tokens,
                 semantic_terms,
             )
+            ontology_score, ontology_reasons = score_ontology_schema_text(
+                [table_name, table_comment, column_name, column_comment], ontology_terms
+            )
+            score += ontology_score
+            reasons = [*ontology_reasons, *reasons]
             # 信号2:recall 规则中的 schema_hints 和 recall_profiles 加分
             profile_score, profile_reasons = _score_column_profile(
                 table_name,
@@ -199,6 +227,15 @@ async def schema_recall_node(state: dict) -> dict:
         key=lambda item: (-float(item.get("score") or 0), item.get("table_name") or ""),
     )
     positive_tables = [item for item in matched_tables if float(item.get("score") or 0) > 0]
+    subject_scope_only = primary_channel_scope(question_profile, runtime, scope_tables)
+    if subject_scope_only:
+        scoped_tables = [
+            item
+            for item in positive_tables
+            if str(item.get("table_name") or "") in scope_tables
+        ]
+        if scoped_tables:
+            positive_tables = scoped_tables
     selected_tables, threshold_scope = select_tables_by_score(
         positive_tables,
         matched_tables,
@@ -222,6 +259,7 @@ async def schema_recall_node(state: dict) -> dict:
     ][: max(1, settings.schema_recall_max_columns)]
 
     result = {
+        "ontology_evidence": ontology_evidence,
         "relevant_tables": selected_tables,
         "relevant_columns": matched_columns,
         "likely_joins": [
@@ -251,6 +289,8 @@ async def schema_recall_node(state: dict) -> dict:
                 }
                 for item in schema_hints
             ],
+            "ontology_evidence": ontology_evidence,
+            "subject_scope_only": subject_scope_only,
         },
     }
     logger.info(
@@ -385,12 +425,21 @@ def _business_priority(
         if isinstance(item, dict)
     }
     question_profile = _question_profile(question, recall_profiles)
+    subject_focus_match = subject_focus(question_profile)
+    scope_tables = primary_scope_tables(runtime)
 
     for metric in runtime.get("metrics", []) or []:
         if not isinstance(metric, dict):
             continue
         metric_key = str(metric.get("metric_key") or "")
         base_table = str(metric.get("base_table") or "")
+        if (
+            subject_focus_match
+            and scope_tables
+            and base_table not in scope_tables
+            and not explicit_metric(metric, question_profile)
+        ):
+            continue
         score, reasons = _metric_match(metric, evidence_keys, question_profile)
         if score <= 0 or not base_table:
             continue
@@ -492,10 +541,19 @@ def _mapping_match(
     )
     mapping_text = " ".join(
         str(mapping.get(key) or "")
-        for key in ("asset_key", "name", "description", "table_name", "column_name", "column_comment")
+        for key in (
+            "asset_key",
+            "name",
+            "description",
+            "table_name",
+            "column_name",
+            "column_comment",
+        )
     ).lower()
     for profile in question_profile["profiles"]:
-        score_delta, profile_reasons = _score_profile_against_text(profile, mapping_text, "字段映射")
+        score_delta, profile_reasons = _score_profile_against_text(
+            profile, mapping_text, "字段映射"
+        )
         score += score_delta
         reasons.extend(profile_reasons)
     return max(score, 0), _unique_reasons(reasons)
@@ -617,7 +675,9 @@ def _score_column_profile(
         if not terms or not contains_any(text, terms):
             continue
         score += float(hint.get("weight") or 42)
-        reasons.append(str(hint.get("reason") or f"命中字段提示: {hint.get('label') or hint.get('key')}"))
+        reasons.append(
+            str(hint.get("reason") or f"命中字段提示: {hint.get('label') or hint.get('key')}")
+        )
     for profile in question_profile["profiles"]:
         score_delta, profile_reasons = _score_profile_against_text(profile, text, "字段")
         score += score_delta
@@ -637,10 +697,17 @@ def _score_profile_against_text(
     reasons: list[str] = []
     if positive_terms and contains_any(text, positive_terms):
         score += float(profile.get("weight") or 0)
-        reasons.append(str(profile.get("reason") or f"{target_label}命中召回画像: {profile.get('label') or profile.get('key')}"))
+        reasons.append(
+            str(
+                profile.get("reason")
+                or f"{target_label}命中召回画像: {profile.get('label') or profile.get('key')}"
+            )
+        )
     if negative_terms and contains_any(text, negative_terms):
         score -= float(profile.get("negative_weight") or profile.get("weight") or 0)
-        negative_reason = profile.get("negative_reason") or f"{target_label}命中召回排除项: {profile.get('label') or profile.get('key')}"
+        negative_reason = profile.get("negative_reason") or (
+            f"{target_label}命中召回排除项: {profile.get('label') or profile.get('key')}"
+        )
         reasons.append(str(negative_reason))
     return score, reasons
 

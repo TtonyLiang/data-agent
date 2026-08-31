@@ -55,7 +55,7 @@
         <dt>Base URL</dt><dd>{{ detailConfig.base_url }}</dd>
         <dt>模型</dt><dd>{{ detailConfig.model_name }}</dd>
         <dt>API Key</dt><dd>{{ apiKeyTagText(detailConfig) }}</dd>
-        <dt>Key 过期时间</dt><dd>{{ detailConfig.api_key_expires_at || '-' }}</dd>
+        <dt>Key 过期时间</dt><dd>{{ formatDateTime(detailConfig.api_key_expires_at) }}</dd>
         <dt>向量维度</dt><dd>{{ detailConfig.embedding_dimension || '-' }}</dd>
         <dt>状态</dt><dd>{{ detailConfig.status }}</dd>
       </dl>
@@ -100,6 +100,7 @@
           <el-date-picker
             v-model="form.api_key_expires_at"
             type="datetime"
+            format="YYYY-MM-DD HH:mm:ss"
             value-format="YYYY-MM-DDTHH:mm:ss"
             placeholder="可选，用于过期提醒"
             clearable
@@ -124,6 +125,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { formatDateTime } from '../utils/datetime'
 import {
   createModelConfig,
   deleteModelConfig,

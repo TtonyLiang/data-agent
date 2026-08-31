@@ -11,6 +11,7 @@ SemanticRuntime 贯穿后续所有语义节点(校验、编译、修复、NL2LF 
 
 import logging
 
+from app.agent.ontology_evidence import build_ontology_evidence
 from app.services.embedding_service import get_embedding_service
 from app.services.ontology_service import get_ontology_service
 from app.services.semantic_runtime import get_semantic_runtime_service
@@ -112,6 +113,7 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
         )
         ontology_context = None
     result["ontology_context"] = ontology_context
+    result["ontology_evidence"] = build_ontology_evidence(question, ontology_context)
     runtime_payload = runtime.model_dump()
     logger.info(
         "semantic runtime recalled counts=%s evidence=%s",
@@ -137,6 +139,7 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
                 "metrics": len(runtime_payload.get("metrics", [])),
                 "mappings": len(runtime_payload.get("mappings", [])),
             },
+            "ontology_match_count": result["ontology_evidence"].get("count", 0),
         },
     )
     return result

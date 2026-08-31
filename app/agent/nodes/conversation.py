@@ -408,7 +408,7 @@ def _build_chat_messages(question: str, history: list[dict[str, Any]]) -> list[d
         {
             "role": "system",
             "content": (
-                "你是 WenQu 智能问数助手。只回答一般闲聊，不要生成 SQL，"
+                "你是问渠 WenQu 的智能问数助手。只回答一般闲聊，不要生成 SQL，"
                 "不要声称访问了未提供的数据；请用简洁自然的中文回答。"
             ),
         }

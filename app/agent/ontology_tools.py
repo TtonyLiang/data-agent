@@ -23,7 +23,7 @@ def build_ontology_tool_definitions() -> list[dict[str, Any]]:
     return [
         {
             "name": QUERY_TOOL,
-            "description": "查询当前业务本体中的对象实例，只返回可访问的 active 对象。",
+            "description": "查询当前企业本体中的对象实例，只返回可访问的 active 对象。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -43,7 +43,7 @@ def build_ontology_tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": ACTION_TOOL,
-            "description": "执行当前业务本体中已发布且当前角色获授权的动作。",
+            "description": "执行当前企业本体中已发布且当前角色获授权的动作。",
             "parameters": {
                 "type": "object",
                 "required": ["action_key", "target_object_id"],

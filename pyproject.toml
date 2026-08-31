@@ -1,7 +1,7 @@
 [project]
 name = "wenqu-dataquery-agent"
 version = "0.1.0"
-description = "智能问数智能体 - 基于 LangGraph 的 Text-to-SQL Agent"
+description = "企业本体智能平台 - 建模对象、关系、状态与动作，连接问数和决策执行"
 requires-python = ">=3.11"
 dependencies = [
     "langgraph>=0.4",

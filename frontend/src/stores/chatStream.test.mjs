@@ -118,6 +118,30 @@ function assistantMessage(state) {
 
 {
   let state = createChatStreamState()
+  state = startChatRun(state, { runId: 71, question: '查看审批进度' })
+  state = reduceChatStreamEvent(state, {
+    runId: 71,
+    event: 'node_start',
+    data: { node: 'semantic_runtime_recall', label: '知识召回' },
+  })
+  state = reduceChatStreamEvent(state, {
+    runId: 71,
+    event: 'node_complete',
+    data: {
+      node: 'semantic_runtime_recall',
+      output: {
+        domain: '贷款风控',
+        count: 4,
+        ontology_matches: { count: 2 },
+      },
+    },
+  })
+
+  assert.match(assistantMessage(state).steps[0].summary, /本体命中 2 项/)
+}
+
+{
+  let state = createChatStreamState()
   state = startChatRun(state, { runId: 10, question: '前五呢' })
   state = reduceChatStreamEvent(state, {
     runId: 10,

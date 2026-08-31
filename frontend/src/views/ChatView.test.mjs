@@ -3,6 +3,11 @@ import { readFileSync } from 'node:fs'
 
 const source = readFileSync(new URL('./ChatView.vue', import.meta.url), 'utf8')
 
+assert.ok(
+  source.includes('max-width: var(--wq-page-max-width)') && source.includes('margin-inline: auto'),
+  'ChatView should use the same centered workbench width as other functional pages',
+)
+
 assert.ok(!source.includes('v-html'), 'ChatView should not render chat content with v-html')
 
 assert.match(
@@ -77,6 +82,11 @@ assert.ok(
 )
 
 assert.ok(
+  source.includes('命中的企业本体') && source.includes('ontologyMatchLines'),
+  'ChatView should expose matched enterprise ontology definitions in the reasoning trace',
+)
+
+assert.ok(
   source.includes('展开分析过程') && !source.includes('展开技术细节'),
   'ChatView should collapse completed reasoning as analysis process, not as a separate technical-detail panel',
 )
@@ -109,9 +119,16 @@ assert.ok(
 )
 
 assert.ok(
-  source.includes('<InlineMarkdown :text="String(cell ?? \'\')" />') &&
-    source.includes('<InlineMarkdown :text="formatReportValue(row[column])" />'),
-  'ChatView should render report table cells through inline markdown parsing',
+  source.includes('<InlineMarkdown :text="formatReportValue(cell, String(block.columns[cellIndex] || \'\'))" />') &&
+    source.includes('<InlineMarkdown :text="formatReportValue(row[column], column)" />'),
+  'ChatView should format report table cells before safe inline markdown rendering',
+)
+
+assert.ok(
+  source.includes("import { formatDateTime, isDateTimeField, isDateTimeValue } from '../utils/datetime'") &&
+    source.includes('return formatDateTime(report.generated_at)') &&
+    source.includes('isDateTimeField(key) || isDateTimeValue(value)'),
+  'ChatView should format session, report, and query-result timestamps consistently to seconds',
 )
 
 assert.ok(

@@ -390,7 +390,10 @@ function summarizeStep(step: ChatReasoningStep): string {
   }
   if (step.node === 'semantic_runtime_recall') {
     const domain = String(output.domain || '')
-    return domain ? `${domain} · 召回 ${String(output.count || 0)} 条语义资产` : `召回 ${String(output.count || 0)} 条语义资产`
+    const ontology = output.ontology_matches as Record<string, unknown> | undefined
+    const ontologyCount = Number(ontology?.count || 0)
+    const summary = domain ? `${domain} · 召回 ${String(output.count || 0)} 条语义资产` : `召回 ${String(output.count || 0)} 条语义资产`
+    return ontologyCount > 0 ? `${summary} · 本体命中 ${ontologyCount} 项` : summary
   }
   if (step.node === 'schema_recall') {
     const tables = Array.isArray(output.matched_tables) ? output.matched_tables.length : 0

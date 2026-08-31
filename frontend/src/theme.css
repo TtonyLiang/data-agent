@@ -1,4 +1,6 @@
 :root {
+  --wq-page-max-width: 1600px;
+  --wq-page-gutter: clamp(16px, 2vw, 32px);
   --el-card-bg-color: var(--wq-surface);
   --el-dialog-bg-color: var(--wq-surface);
   --el-drawer-bg-color: var(--wq-surface);
@@ -12,7 +14,26 @@
 .system-page,
 .management-page {
   background: var(--wq-bg) !important;
-  padding: 24px clamp(18px, 2.4vw, 32px) !important;
+  padding: 24px var(--wq-page-gutter) !important;
+}
+
+/* Keep standalone functional pages aligned to one centered content width. */
+.page-shell:not(.embedded),
+.system-page,
+.management-page:not(.embedded) {
+  width: 100%;
+  max-width: var(--wq-page-max-width);
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+
+.page-shell.embedded,
+.management-page.embedded {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  padding: 0 !important;
+  background: transparent !important;
 }
 
 .page-header,

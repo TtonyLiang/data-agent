@@ -21,7 +21,7 @@
         >
           <div class="session-title">{{ s.last_question || '新对话' }}</div>
           <div class="session-meta">
-            <span>{{ formatTime(s.created_at) }}</span>
+            <span>{{ formatDateTime(s.created_at, '') }}</span>
             <span>{{ s.turn_count }}轮</span>
           </div>
           <el-icon class="session-delete" @click.stop="handleDeleteSession(s.session_id)"><Delete /></el-icon>
@@ -132,6 +132,13 @@
                       <h4>命中的语义资产</h4>
                       <ul>
                         <li v-for="item in semanticAssetLines(step)" :key="item">{{ item }}</li>
+                      </ul>
+                    </div>
+
+                    <div v-if="step.node === 'semantic_runtime_recall' && ontologyMatchLines(step).length" class="analysis-block">
+                      <h4>命中的企业本体</h4>
+                      <ul>
+                        <li v-for="item in ontologyMatchLines(step)" :key="item">{{ item }}</li>
                       </ul>
                     </div>
 
@@ -375,7 +382,7 @@
                             <tbody>
                               <tr v-for="(row, rowIndex) in block.rows" :key="rowIndex">
                                 <td v-for="(cell, cellIndex) in row" :key="cellIndex">
-                                  <InlineMarkdown :text="String(cell ?? '')" />
+                                  <InlineMarkdown :text="formatReportValue(cell, String(block.columns[cellIndex] || ''))" />
                                 </td>
                               </tr>
                             </tbody>
@@ -444,7 +451,7 @@
                     </template>
                     <template #default="{ row }">
                       <button
-                        v-if="isLongCellValue(row[col])"
+                        v-if="isLongCellValue(row[col], col)"
                         class="result-cell-button"
                         type="button"
                         @click="previewCellValue(col, row[col])"
@@ -588,7 +595,7 @@
                 </template>
                 <template #default="{ row }">
                   <button
-                    v-if="isLongCellValue(row[col])"
+                    v-if="isLongCellValue(row[col], col)"
                     class="result-cell-button"
                     type="button"
                     @click="previewCellValue(col, row[col])"
@@ -743,7 +750,7 @@
                   <tbody>
                     <tr v-for="(row, rowIndex) in block.rows" :key="rowIndex">
                       <td v-for="(cell, cellIndex) in row" :key="cellIndex">
-                        <InlineMarkdown :text="String(cell ?? '')" />
+                        <InlineMarkdown :text="formatReportValue(cell, String(block.columns[cellIndex] || ''))" />
                       </td>
                     </tr>
                   </tbody>
@@ -785,7 +792,7 @@
               <tbody>
                 <tr v-for="(row, rowIndex) in table.rows" :key="rowIndex">
                   <td v-for="column in table.columns" :key="column">
-                    <InlineMarkdown :text="formatReportValue(row[column])" />
+                    <InlineMarkdown :text="formatReportValue(row[column], column)" />
                   </td>
                 </tr>
               </tbody>
@@ -821,6 +828,7 @@ import {
 } from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { setChatBusy } from '../stores/chatRun'
+import { formatDateTime, isDateTimeField, isDateTimeValue } from '../utils/datetime'
 import {
   createChatStreamState,
   reduceChatStreamEvent,
@@ -1101,12 +1109,6 @@ async function loadSemanticLabels() {
     semanticExampleQueries.value = []
     semanticHint.value = ''
   }
-}
-
-function formatTime(t: string) {
-  if (!t) return ''
-  const d = new Date(t)
-  return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 async function loadSessions() {
@@ -1473,6 +1475,22 @@ function semanticAssetLines(step: ChatReasoningStep) {
     .slice(0, 8)
 }
 
+function ontologyMatchLines(step: ChatReasoningStep) {
+  const ontology = getOutputObject(step.output || {}, 'ontology_matches')
+  if (!ontology) return []
+  const groups = [
+    ['业务对象', 'object_types'],
+    ['业务关系', 'link_types'],
+    ['可用动作', 'actions'],
+  ] as const
+  return groups.flatMap(([label, key]) => getOutputArray(ontology, key)
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map(item => String(item.name || item.key || '').trim())
+    .filter(Boolean)
+    .map(name => `${label}：${name}`))
+    .slice(0, 8)
+}
+
 function semanticEnhanceLines(step: ChatReasoningStep) {
   const output = step.output || {}
   const lines: string[] = []
@@ -1723,6 +1741,7 @@ function resultHighlights(message: ChatMessage) {
 
 function formatDisplayValue(key: string, value: unknown) {
   if (value === null || value === undefined || value === '') return '-'
+  if (isDateTimeField(key) || isDateTimeValue(value)) return formatDateTime(value)
   if (isNumericValue(value)) {
     const numeric = Number(value)
     if (shouldFormatPercent(key, numeric)) return `${(numeric * 100).toFixed(2)}%`
@@ -1731,19 +1750,20 @@ function formatDisplayValue(key: string, value: unknown) {
   return String(value)
 }
 
-function formatCellValue(value: unknown) {
+function formatCellValue(value: unknown, key = '') {
   if (value === null || value === undefined || value === '') return '-'
+  if (isDateTimeField(key) || isDateTimeValue(value)) return formatDateTime(value)
   if (typeof value === 'object') return JSON.stringify(value, null, 2)
   return String(value)
 }
 
-function isLongCellValue(value: unknown) {
-  return formatCellValue(value).length > 48
+function isLongCellValue(value: unknown, key = '') {
+  return formatCellValue(value, key).length > 48
 }
 
 function previewCellValue(column: string, value: unknown) {
   cellDetailTitle.value = columnTitle(column)
-  cellDetailValue.value = formatCellValue(value)
+  cellDetailValue.value = formatCellValue(value, column)
   showCellDetail.value = true
 }
 
@@ -1869,11 +1889,7 @@ function reportGenerationText(report: Record<string, unknown>) {
 }
 
 function reportGeneratedAt(report: Record<string, unknown>) {
-  const raw = String(report.generated_at || '')
-  if (!raw) return '-'
-  const date = new Date(raw)
-  if (Number.isNaN(date.getTime())) return raw
-  return date.toLocaleString('zh-CN', { hour12: false })
+  return formatDateTime(report.generated_at)
 }
 
 function reportHighlights(report: Record<string, unknown>) {
@@ -2567,15 +2583,16 @@ function analysisModeText(mode: string) {
   return labels[mode] || mode
 }
 
-function formatReportValue(value: unknown) {
+function formatReportValue(value: unknown, key = '') {
   if (value === null || value === undefined || value === '') return '-'
+  if (isDateTimeField(key) || isDateTimeValue(value)) return formatDateTime(value)
   if (isNumericValue(value)) return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 }).format(Number(value))
   return String(value)
 }
 
 function renderCellText(column: string, value: unknown) {
   if (isNumericValue(value)) return formatDisplayValue(column, value)
-  const text = formatCellValue(value)
+  const text = formatCellValue(value, column)
   return text.length > 64 ? `${text.slice(0, 64)}...` : text
 }
 
@@ -2733,7 +2750,8 @@ onUnmounted(() => {
   grid-template-columns: 280px minmax(460px, 1fr) 430px;
   height: calc(100dvh - var(--wq-header-height));
   width: 100%;
-  max-width: 100%;
+  max-width: var(--wq-page-max-width);
+  margin-inline: auto;
   min-width: 0;
   min-height: 0;
   background: var(--wq-surface);
