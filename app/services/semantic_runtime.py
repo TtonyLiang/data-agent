@@ -204,6 +204,13 @@ class SemanticRuntimeService:
         if not existing:
             return False
         for table in (
+            "decision_audit_head",
+            "decision_audit_event",
+            "risk_evidence",
+            "risk_issue_review",
+            "risk_report_version",
+            "risk_report",
+            "risk_issue",
             "ontology_action_run",
             "ontology_link",
             "ontology_object",

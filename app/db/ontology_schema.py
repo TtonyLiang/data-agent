@@ -123,6 +123,7 @@ ONTOLOGY_TABLE_STATEMENTS = [
     CREATE TABLE IF NOT EXISTS ontology_action_run (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
         domain_id BIGINT NOT NULL,
+        ontology_release_id BIGINT DEFAULT NULL,
         action_type_id BIGINT NOT NULL,
         target_object_id BIGINT DEFAULT NULL,
         user_id BIGINT DEFAULT NULL,
@@ -135,6 +136,7 @@ ONTOLOGY_TABLE_STATEMENTS = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         completed_at TIMESTAMP NULL DEFAULT NULL,
         INDEX idx_ontology_run_domain (domain_id, created_at),
+        INDEX idx_ontology_run_release (ontology_release_id, created_at),
         INDEX idx_ontology_run_user (user_id, created_at),
         INDEX idx_ontology_run_action (action_type_id, status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Ontology动作与决策审计'
@@ -148,6 +150,7 @@ ONTOLOGY_TABLE_STATEMENTS = [
         description TEXT,
         validation_json JSON NOT NULL,
         definition_json JSON NOT NULL,
+        definition_hash CHAR(64) DEFAULT NULL,
         published_by BIGINT DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uk_ontology_release (domain_id, version),

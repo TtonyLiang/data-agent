@@ -428,6 +428,19 @@
                     <strong>在大视图中查看完整深度分析报告</strong>
                   </button>
                 </div>
+                <div v-if="canCreateRiskIssue(msg)" class="answer-risk-actions">
+                  <el-button
+                    type="primary"
+                    plain
+                    size="small"
+                    :icon="WarningFilled"
+                    :disabled="!messageTraceId(msg)"
+                    :title="messageTraceId(msg) ? '将本次问数结果及其证据固化为风险事项' : '该历史结果缺少 trace，无法安全创建风险事项'"
+                    @click="openRiskIssueDialog(msg, idx)"
+                  >
+                    创建风险事项
+                  </el-button>
+                </div>
               </div>
               <div v-else class="text">{{ msg.content }}</div>
               <div v-if="msg.role === 'assistant' && msg.sql_result && msg.sql_result.length > 0 && !msg.report_payload" class="result-table compact-result">
@@ -677,6 +690,98 @@
     </el-dialog>
 
     <el-dialog
+      v-model="showRiskIssueDialog"
+      class="risk-issue-dialog"
+      title="从问数结果创建风险事项"
+      width="min(680px, 92vw)"
+      append-to-body
+      destroy-on-close
+      :close-on-click-modal="!riskSubmitting"
+      :close-on-press-escape="!riskSubmitting"
+      :show-close="!riskSubmitting"
+      @closed="resetRiskIssueDialog"
+    >
+      <el-alert
+        class="risk-dialog-intro"
+        title="系统会自动固化本次问题、SQL、查询结果和分析报告，作为可追溯证据。"
+        type="info"
+        show-icon
+        :closable="false"
+      />
+      <el-form
+        ref="riskFormRef"
+        :model="riskForm"
+        :rules="riskFormRules"
+        label-position="top"
+        @submit.prevent="submitRiskIssue"
+      >
+        <div class="risk-form-grid">
+          <el-form-item label="风险事项标题" prop="title" class="risk-form-wide">
+            <el-input v-model="riskForm.title" maxlength="256" show-word-limit />
+          </el-form-item>
+          <el-form-item label="事项标识" prop="issue_key">
+            <el-input v-model="riskForm.issue_key" maxlength="128" />
+          </el-form-item>
+          <el-form-item label="严重度" prop="severity">
+            <el-select v-model="riskForm.severity" style="width: 100%">
+              <el-option label="低" value="low" />
+              <el-option label="中" value="medium" />
+              <el-option label="高" value="high" />
+              <el-option label="严重" value="critical" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="风险分类" prop="category">
+            <el-input v-model="riskForm.category" readonly />
+          </el-form-item>
+          <el-form-item label="关联 Ontology 对象" prop="subject_object_id">
+            <el-select
+              v-model="riskForm.subject_object_id"
+              style="width: 100%"
+              placeholder="可选，不关联具体对象"
+              clearable
+              filterable
+              :loading="riskObjectLoading"
+              :disabled="riskObjectLoading"
+            >
+              <el-option
+                v-for="item in riskObjects"
+                :key="item.id"
+                :label="riskObjectLabel(item)"
+                :value="item.id"
+              >
+                <div class="risk-object-option">
+                  <span>{{ item.display_name || item.primary_value }}</span>
+                  <small>{{ item.object_type_name || item.object_type_key }}</small>
+                </div>
+              </el-option>
+            </el-select>
+          </el-form-item>
+          <el-form-item label="规则标识" prop="rule_key">
+            <el-input v-model="riskForm.rule_key" maxlength="128" placeholder="可选，如 overdue_ratio_rule" />
+          </el-form-item>
+          <el-form-item label="指派复核人" prop="assignee">
+            <el-input v-model="riskForm.assignee" maxlength="128" placeholder="可选，填写用户名或显示名" />
+          </el-form-item>
+          <el-form-item label="风险描述" prop="description" class="risk-form-wide">
+            <el-input
+              v-model="riskForm.description"
+              type="textarea"
+              :rows="5"
+              maxlength="20000"
+              show-word-limit
+            />
+          </el-form-item>
+        </div>
+      </el-form>
+      <template #footer>
+        <el-button :disabled="riskSubmitting" @click="showRiskIssueDialog = false">取消</el-button>
+        <el-button type="primary" :icon="WarningFilled" :loading="riskSubmitting" @click="submitRiskIssue">
+          创建风险事项
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-model="showReportDialog"
       class="report-dialog"
       modal-class="report-dialog-overlay"
@@ -816,17 +921,19 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted, nextTick, onUnmounted, watch, defineComponent, h, type PropType } from 'vue'
+import { useRouter } from 'vue-router'
 import * as echarts from 'echarts/core'
 import { BarChart, LineChart, PieChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { GridComponent, LegendComponent, TitleComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { Promotion, Loading, ChatDotRound, Plus, Delete, CircleCheck, Clock, Search, Refresh, Download, DocumentCopy, WarningFilled, ArrowDown, ArrowRight, InfoFilled, FullScreen } from '@element-plus/icons-vue'
 import {
   sendMessageStream, fetchAgents, fetchSessions, fetchHistory, deleteSession,
-  fetchSemanticAssets, fetchSemanticDomains,
+  fetchSemanticAssets, fetchSemanticDomains, fetchOntologyObjects, createRiskIssueFromChat,
   type AgentItem, type SessionItem, type HistoryItem, type ChatTurnMode,
+  type ChatRiskIssueCreateRequest, type OntologyObject, type RiskSeverity,
 } from '../api'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { setChatBusy } from '../stores/chatRun'
 import { formatDateTime, isDateTimeField, isDateTimeValue } from '../utils/datetime'
 import {
@@ -840,8 +947,31 @@ import {
   type ChatStreamState,
 } from '../stores/chatStream'
 
-echarts.use([BarChart, LineChart, PieChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
+echarts.use([
+  BarChart,
+  LineChart,
+  PieChart,
+  GridComponent,
+  LegendComponent,
+  TitleComponent,
+  TooltipComponent,
+  CanvasRenderer,
+])
 
+type TraceableChatMessage = ChatMessage & { trace_id?: string }
+
+type RiskIssueFormModel = {
+  subject_object_id: number | null
+  issue_key: string
+  category: string
+  severity: RiskSeverity
+  title: string
+  description: string
+  rule_key: string
+  assignee: string
+}
+
+const router = useRouter()
 const streamState = ref<ChatStreamState>(createChatStreamState())
 const messages = computed(() => streamState.value.messages)
 const inputText = ref('')
@@ -862,6 +992,17 @@ const visibleResultColumns = ref<string[]>([])
 const showCellDetail = ref(false)
 const cellDetailTitle = ref('')
 const cellDetailValue = ref('')
+const showRiskIssueDialog = ref(false)
+const riskFormRef = ref<FormInstance>()
+const riskSubmitting = ref(false)
+const riskObjectLoading = ref(false)
+const riskObjects = ref<OntologyObject[]>([])
+const riskSourceMessage = ref<TraceableChatMessage | null>(null)
+const riskSourceMessageIndex = ref(-1)
+const riskSourceSessionId = ref('')
+const riskSourceAgentId = ref(0)
+const riskSourceDomainId = ref(0)
+const riskForm = ref<RiskIssueFormModel>(emptyRiskIssueForm())
 const showReportDialog = ref(false)
 const expandedReport = ref<Record<string, unknown> | null>(null)
 const shouldAutoScroll = ref(true)
@@ -884,6 +1025,26 @@ const artifactLabels: Record<string, string> = {
   compiled_sql: 'SQL',
   sql_result: '查询结果',
   analysis: '分析结果',
+}
+const riskKeyPattern = /^[A-Za-z][A-Za-z0-9_.-]*$/
+const riskFormRules: FormRules = {
+  title: [
+    { required: true, message: '请输入风险事项标题', trigger: 'blur' },
+    { max: 256, message: '标题不能超过 256 个字符', trigger: 'blur' },
+  ],
+  issue_key: [
+    { required: true, message: '请输入事项标识', trigger: 'blur' },
+    { pattern: riskKeyPattern, message: '标识需以字母开头，仅包含字母、数字、点、横线或下划线', trigger: 'blur' },
+    { max: 128, message: '事项标识不能超过 128 个字符', trigger: 'blur' },
+  ],
+  category: [{ required: true, message: '请输入风险分类', trigger: 'blur' }],
+  severity: [{ required: true, message: '请选择严重度', trigger: 'change' }],
+  description: [{ max: 20000, message: '风险描述不能超过 20000 个字符', trigger: 'blur' }],
+  rule_key: [
+    { pattern: riskKeyPattern, message: '规则标识需以字母开头，仅包含字母、数字、点、横线或下划线', trigger: 'blur' },
+    { max: 128, message: '规则标识不能超过 128 个字符', trigger: 'blur' },
+  ],
+  assignee: [{ max: 128, message: '复核人不能超过 128 个字符', trigger: 'blur' }],
 }
 
 const ReportEChart = defineComponent({
@@ -1268,8 +1429,12 @@ function jumpToLatest() {
   scrollToBottom()
 }
 
-function historyToMessage(item: HistoryItem, sid: string, index: number): ChatMessage {
+function historyToMessage(item: HistoryItem, sid: string, index: number): TraceableChatMessage {
   if (item.role === 'assistant') {
+    const traceableItem = item as HistoryItem & {
+      trace_id?: string
+      execution_trace?: Record<string, unknown>
+    }
     return {
       id: `history-${sid}-${index}`,
       role: 'assistant',
@@ -1284,6 +1449,8 @@ function historyToMessage(item: HistoryItem, sid: string, index: number): ChatMe
       semantic_check: item.semantic_check,
       python_result: item.python_result,
       report_payload: item.report_payload,
+      trace_id: traceableItem.trace_id,
+      execution_trace: traceableItem.execution_trace,
       task_id: item.task_id,
       turn_id: item.turn_id,
       turn_mode: item.turn_mode,
@@ -1327,6 +1494,221 @@ function isAssistantStreaming(message: ChatMessage) {
 
 function shouldShowAnswerCard(message: ChatMessage) {
   return message.role === 'assistant' && !isAssistantStreaming(message)
+}
+
+function emptyRiskIssueForm(): RiskIssueFormModel {
+  return {
+    subject_object_id: null,
+    issue_key: '',
+    category: 'data_query_risk',
+    severity: 'medium',
+    title: '',
+    description: '',
+    rule_key: '',
+    assignee: '',
+  }
+}
+
+function canCreateRiskIssue(message: ChatMessage) {
+  const domainId = Number(selectedAgent.value?.semantic_domain_id || 0)
+  const hasRiskSource = Boolean(message.sql?.trim()) || Boolean(message.sql_result?.length) || Boolean(message.report_payload)
+  return message.role === 'assistant' && message.status === 'complete' && domainId > 0 && hasRiskSource
+}
+
+function messageTraceId(message: ChatMessage) {
+  const traceableMessage = message as TraceableChatMessage
+  const directTraceId = String(traceableMessage.trace_id || '').trim()
+  if (directTraceId) return directTraceId
+  return String(traceableMessage.execution_trace?.trace_id || '').trim()
+}
+
+function userQuestionForMessage(messageIndex: number) {
+  for (let index = messageIndex - 1; index >= 0; index -= 1) {
+    const message = messages.value[index]
+    if (message.role === 'user' && message.content.trim()) return message.content.trim()
+  }
+  return ''
+}
+
+function buildRiskIssueTitle(message: ChatMessage, messageIndex: number) {
+  const reportTitle = message.report_payload ? reportDisplayTitle(message.report_payload).trim() : ''
+  const question = userQuestionForMessage(messageIndex)
+  const title = reportTitle && reportTitle !== '查询结果分析'
+    ? reportTitle
+    : question || reportTitle || '问数结果风险事项'
+  return title.slice(0, 256)
+}
+
+function buildRiskIssueDescription(message: ChatMessage, messageIndex: number) {
+  if (message.report_payload) {
+    const summary = reportSummary(message.report_payload).trim()
+    if (summary && summary !== '暂无摘要。') return summary.slice(0, 20000)
+  }
+  const answer = answerSummaryLines(message).join('\n').trim()
+  if (answer) return answer.slice(0, 20000)
+  return userQuestionForMessage(messageIndex).slice(0, 20000)
+}
+
+function buildRiskIssueKey(message: ChatMessage) {
+  const tracePart = messageTraceId(message)
+    .replace(/[^A-Za-z0-9]/g, '')
+    .toLowerCase()
+    .slice(0, 12)
+  const timePart = Date.now().toString(36)
+  return `chat_risk_${tracePart ? `${tracePart}_` : ''}${timePart}`.slice(0, 128)
+}
+
+async function openRiskIssueDialog(message: ChatMessage, messageIndex: number) {
+  const domainId = Number(selectedAgent.value?.semantic_domain_id || 0)
+  const traceId = messageTraceId(message)
+  if (!domainId) {
+    ElMessage.warning('当前智能体未绑定语义领域，无法创建风险事项')
+    return
+  }
+  if (!traceId) {
+    ElMessage.warning('当前结果缺少 trace，无法确认对应问数轮次')
+    return
+  }
+  if (!sessionId.value) {
+    ElMessage.warning('当前结果尚未绑定会话，请刷新历史记录后重试')
+    return
+  }
+
+  riskSourceMessage.value = message as TraceableChatMessage
+  riskSourceMessageIndex.value = messageIndex
+  riskSourceSessionId.value = sessionId.value
+  riskSourceAgentId.value = agentId.value
+  riskSourceDomainId.value = domainId
+  riskForm.value = {
+    ...emptyRiskIssueForm(),
+    issue_key: buildRiskIssueKey(message),
+    title: buildRiskIssueTitle(message, messageIndex),
+    description: buildRiskIssueDescription(message, messageIndex),
+  }
+  riskObjects.value = []
+  showRiskIssueDialog.value = true
+  await nextTick()
+  riskFormRef.value?.clearValidate()
+  void loadRiskObjects(domainId)
+}
+
+async function loadRiskObjects(domainId: number) {
+  riskObjectLoading.value = true
+  try {
+    const objects = await fetchOntologyObjects(domainId, undefined, 200, 0)
+    if (showRiskIssueDialog.value && riskSourceDomainId.value === domainId) {
+      riskObjects.value = objects
+    }
+  } catch (error) {
+    if (showRiskIssueDialog.value && riskSourceDomainId.value === domainId) {
+      riskObjects.value = []
+      ElMessage.warning(`Ontology 对象加载失败：${riskIssueErrorMessage(error)}`)
+    }
+  } finally {
+    if (riskSourceDomainId.value === domainId) riskObjectLoading.value = false
+  }
+}
+
+function riskObjectLabel(item: OntologyObject) {
+  const name = item.display_name || item.primary_value || `对象 #${item.id}`
+  const typeName = item.object_type_name || item.object_type_key
+  return typeName ? `${name} · ${typeName}` : name
+}
+
+function resetRiskIssueDialog() {
+  riskForm.value = emptyRiskIssueForm()
+  riskObjects.value = []
+  riskSourceMessage.value = null
+  riskSourceMessageIndex.value = -1
+  riskSourceSessionId.value = ''
+  riskSourceAgentId.value = 0
+  riskSourceDomainId.value = 0
+  riskObjectLoading.value = false
+}
+
+async function submitRiskIssue() {
+  const form = riskFormRef.value
+  const message = riskSourceMessage.value
+  const domainId = riskSourceDomainId.value
+  const traceId = message ? messageTraceId(message) : ''
+  if (!form || !message || !domainId || !riskSourceAgentId.value || !riskSourceSessionId.value) {
+    ElMessage.error('风险事项来源上下文不完整，请关闭弹窗后重试')
+    return
+  }
+  if (!traceId) {
+    ElMessage.error('当前结果缺少 trace，已阻止创建以避免关联到错误问数轮次')
+    return
+  }
+  try {
+    await form.validate()
+  } catch {
+    return
+  }
+
+  const payload: ChatRiskIssueCreateRequest = {
+    domain_id: domainId,
+    agent_id: riskSourceAgentId.value,
+    session_id: riskSourceSessionId.value,
+    trace_id: traceId,
+    subject_object_id: riskForm.value.subject_object_id || null,
+    issue_key: riskForm.value.issue_key.trim(),
+    category: riskForm.value.category.trim(),
+    severity: riskForm.value.severity,
+    title: riskForm.value.title.trim(),
+    description: riskForm.value.description.trim(),
+    rule_key: riskForm.value.rule_key.trim() || null,
+    expected_value: {},
+    assignee: riskForm.value.assignee.trim() || null,
+  }
+
+  riskSubmitting.value = true
+  let result
+  try {
+    result = await createRiskIssueFromChat(domainId, payload)
+  } catch (error) {
+    ElMessage.error(`风险事项创建失败：${riskIssueErrorMessage(error)}`)
+    return
+  } finally {
+    riskSubmitting.value = false
+  }
+
+  const evidenceCount = Array.isArray(result.evidence)
+    ? result.evidence.length
+    : Number(result.issue?.evidence_count || 0)
+  const issueTitle = result.issue?.title || payload.title
+  showRiskIssueDialog.value = false
+  await nextTick()
+  try {
+    await ElMessageBox.confirm(
+      `风险事项“${issueTitle}”已创建，并自动固化 ${evidenceCount} 条证据。`,
+      '创建成功',
+      {
+        type: 'success',
+        confirmButtonText: '前往风险交付',
+        cancelButtonText: '继续问数',
+        distinguishCancelAndClose: true,
+      },
+    )
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(riskIssueErrorMessage(error))
+    return
+  }
+  await router.push('/risk-delivery')
+}
+
+function riskIssueErrorMessage(error: unknown) {
+  if (error && typeof error === 'object') {
+    const response = (error as { response?: { data?: { detail?: unknown } } }).response
+    const detail = response?.data?.detail
+    if (typeof detail === 'string' && detail.trim()) return detail
+    if (detail && typeof detail === 'object') {
+      const message = (detail as { message?: unknown }).message
+      if (typeof message === 'string' && message.trim()) return message
+    }
+  }
+  if (error instanceof Error && error.message) return error.message
+  return '请稍后重试'
 }
 
 function turnModeLabel(message: ChatMessage) {
@@ -3369,6 +3751,13 @@ onUnmounted(() => {
   padding: 0 18px 18px;
 }
 
+.answer-risk-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 18px 18px;
+}
+
 .asset-chip {
   min-width: 0;
   border: 1px solid var(--wq-border);
@@ -3399,6 +3788,45 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.risk-dialog-intro {
+  margin-bottom: 18px;
+}
+
+.risk-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+.risk-form-wide {
+  grid-column: 1 / -1;
+}
+
+.risk-object-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.risk-object-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.risk-object-option small {
+  flex: 0 0 auto;
+  color: var(--wq-muted);
+  font-size: 12px;
+}
+
+:deep(.risk-issue-dialog .el-dialog__body) {
+  padding-top: 12px;
 }
 
 .message.user .message-content .text {
@@ -5584,6 +6012,14 @@ onUnmounted(() => {
 
   .report-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .risk-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .risk-form-wide {
+    grid-column: auto;
   }
 }
 </style>

@@ -6,6 +6,13 @@ const themeSource = readFileSync(new URL('../theme.css', import.meta.url), 'utf8
 const apiSource = readFileSync(new URL('../api/index.ts', import.meta.url), 'utf8')
 const routerSource = readFileSync(new URL('../router/index.ts', import.meta.url), 'utf8')
 const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+const siblingPageSources = [
+  'AgentList.vue',
+  'ModelConfig.vue',
+  'DatasourceConfig.vue',
+  'KnowledgeConfig.vue',
+  'PromptConfig.vue',
+].map((name) => readFileSync(new URL(`./${name}`, import.meta.url), 'utf8'))
 
 for (const tab of ['本体图谱', '对象类型', '关系类型', '动作类型', '对象实例', '决策活动']) {
   assert.ok(source.includes(tab), `Ontology workbench should include ${tab}`)
@@ -13,10 +20,11 @@ for (const tab of ['本体图谱', '对象类型', '关系类型', '动作类型
 
 assert.ok(
   appSource.includes('问渠 WenQu') &&
-    appSource.includes('企业本体智能平台') &&
+    appSource.includes('AI报告交付与风险决策平台') &&
+    appSource.includes('风险交付') &&
     appSource.includes('本体建模') &&
     source.includes('<h2>企业本体建模</h2>'),
-  'product branding should present enterprise ontology modeling as the primary capability',
+  'product branding should present risk delivery as the primary workflow and retain ontology modeling',
 )
 
 assert.ok(
@@ -73,14 +81,18 @@ assert.ok(
 )
 
 assert.ok(
-  source.includes('max-width: var(--wq-page-max-width)') &&
+    source.includes('max-width: var(--wq-page-max-width)') &&
     source.includes('margin: 0 auto') &&
     source.includes('padding-inline: var(--wq-page-gutter)') &&
+    source.includes('padding-bottom: var(--wq-page-bottom-gap)') &&
+    source.includes('height="100%"') &&
     themeSource.includes('--wq-page-max-width: 1600px') &&
     themeSource.includes('--wq-page-gutter: clamp(16px, 2vw, 32px)') &&
+    themeSource.includes('--wq-page-bottom-gap: 32px') &&
+    themeSource.includes('height: 100% !important') &&
     themeSource.includes('.page-shell.embedded') &&
     themeSource.includes('padding: 0 !important'),
-  'ontology workbench should keep a readable centered width on large screens',
+  'functional pages should share centered width, bottom spacing, and height-safe table sizing',
 )
 
 assert.ok(
@@ -149,7 +161,9 @@ assert.ok(
 
 assert.ok(
   source.includes('class="instance-table"') &&
-    source.includes('height="calc(100% - 116px)"') &&
+    source.includes('<section class="table-section instance-table-section">') &&
+    source.includes('height="100%"') &&
+    source.includes('.instance-table-section { grid-template-rows: auto minmax(0, 1fr) auto;') &&
     source.includes('.instance-pagination { position: relative; z-index: 2; min-height: 62px;'),
   'the instance table should reserve visible space for pagination inside the tab viewport',
 )
@@ -172,8 +186,11 @@ assert.ok(
 )
 
 assert.ok(
-  routerSource.includes("path: '/ontology'") && appSource.includes('index="/ontology"'),
-  'ontology workbench should be routable from the primary navigation',
+  routerSource.includes("path: '/ontology'") &&
+    routerSource.includes("path: '/risk-delivery'") &&
+    appSource.includes('index="/ontology"') &&
+    appSource.includes('index="/risk-delivery"'),
+  'risk delivery and ontology workbenches should be routable from primary navigation',
 )
 
 assert.ok(
@@ -190,4 +207,18 @@ assert.ok(
   source.includes('top: 24, right: 24, bottom: 60, left: 24') &&
     source.includes('height: 100%; min-height: 0; overflow: hidden;'),
   'ontology graph should keep the legend and bottom labels inside the visible workspace',
+)
+
+assert.ok(
+  siblingPageSources.every((page) => page.includes('height: 100%;') && page.includes('min-height: 0;')) &&
+    themeSource.includes('--wq-page-bottom-gap: 32px'),
+  'sibling second-level pages should use the available app height and share a bottom gap',
+)
+
+assert.ok(
+  !source.includes('height="calc(100vh - 312px)"') &&
+    source.includes('class="ontology-table"') &&
+    source.includes('.table-section { height: 100%; min-height: 0; display: grid;') &&
+    source.includes('.instance-table-section { grid-template-rows: auto minmax(0, 1fr) auto;'),
+  'ontology tables should stay within the tab viewport instead of overflowing below it',
 )

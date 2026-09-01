@@ -137,6 +137,24 @@ async def test_delete_datasource_removes_metadata_before_datasource(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_delete_datasource_is_blocked_when_decision_history_exists(monkeypatch):
+    class GovernedDatasourceDB(RecordingDB):
+        async def execute_query(self, sql: str, params: dict | None = None):
+            self.queries.append((sql, params))
+            if sql.startswith("SELECT sd.id FROM semantic_domain"):
+                return [{"id": 21}]
+            return []
+
+    db = GovernedDatasourceDB()
+    monkeypatch.setattr("app.services.datasource_service.get_management_db", lambda: db)
+
+    with pytest.raises(ValueError, match="已有发布或决策历史"):
+        await DatasourceService().delete(7)
+
+    assert not any(sql.startswith("DELETE FROM") for sql, _ in db.queries)
+
+
+@pytest.mark.asyncio
 async def test_datasource_access_uses_agent_datasource_join(monkeypatch):
     db = RecordingDB()
 

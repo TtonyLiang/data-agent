@@ -1126,6 +1126,282 @@ export async function fetchOntologyActionRuns(domainId: number): Promise<Ontolog
   return data.runs || []
 }
 
+export type RiskSeverity = 'low' | 'medium' | 'high' | 'critical'
+export type RiskStatus =
+  | 'open'
+  | 'in_review'
+  | 'needs_info'
+  | 'confirmed'
+  | 'dismissed'
+  | 'resolved'
+
+export interface RiskEvidence {
+  id: number
+  issue_id: number
+  evidence_type: 'ontology_object' | 'metric' | 'query' | 'document' | 'manual'
+  title: string
+  description?: string
+  source_ref?: string | null
+  content: Record<string, unknown>
+  trace_id?: string | null
+  checksum: string
+  created_by?: number | null
+  creator_name?: string | null
+  created_at?: string
+}
+
+export interface RiskReview {
+  id: number
+  issue_id: number
+  ontology_release_id?: number | null
+  ontology_release_version?: number | null
+  reviewer_id?: number | null
+  reviewer?: string | null
+  review_action:
+    | 'start_review'
+    | 'confirm'
+    | 'dismiss'
+    | 'request_info'
+    | 'resolve'
+    | 'reopen'
+  comment: string
+  before_status: RiskStatus
+  after_status: RiskStatus
+  created_at?: string
+}
+
+export interface RiskIssue {
+  id: number
+  domain_id: number
+  ontology_release_id: number
+  ontology_release_version?: number | null
+  ontology_release_hash?: string | null
+  subject_object_id?: number | null
+  subject_name?: string | null
+  subject_type?: string | null
+  issue_key: string
+  category: string
+  severity: RiskSeverity
+  status: RiskStatus
+  title: string
+  description?: string
+  rule_key?: string | null
+  detected_value: Record<string, unknown>
+  expected_value: Record<string, unknown>
+  source_context: Record<string, unknown>
+  assignee?: string | null
+  version: number
+  evidence_count?: number
+  review_count?: number
+  created_by?: number | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface RiskIssueDetail extends RiskIssue {
+  evidence: RiskEvidence[]
+  reviews: RiskReview[]
+}
+
+export interface RiskReportVersion {
+  id: number
+  report_id: number
+  version: number
+  ontology_release_id: number
+  ontology_release_version?: number | null
+  ontology_release_hash?: string | null
+  markdown: string
+  snapshot_json: Record<string, unknown>
+  content_hash: string
+  issue_ids?: number[]
+  created_by?: number | null
+  creator_name?: string | null
+  created_at?: string
+}
+
+export interface RiskReport {
+  id: number
+  domain_id: number
+  report_key: string
+  name: string
+  report_type: string
+  period_start?: string | null
+  period_end?: string | null
+  status: 'draft' | 'finalized'
+  current_version_id?: number | null
+  current_version?: number | null
+  version_count?: number
+  current_title?: string | null
+  current_summary?: string | null
+  finalized_at?: string | null
+  created_by?: number | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface DecisionAuditEvent {
+  id: number
+  domain_id: number
+  event_type: string
+  entity_type: string
+  entity_id: string
+  sequence_no: number
+  actor_id?: number | null
+  actor?: string | null
+  ontology_release_id?: number | null
+  ontology_release_version?: number | null
+  recorded_at?: string
+  payload: Record<string, unknown>
+  previous_hash?: string | null
+  event_hash: string
+  created_at?: string
+}
+
+export interface RiskSummary {
+  counts: {
+    issues: number
+    open_issues: number
+    high_risk_issues: number
+    pending_review: number
+    reports: number
+    audit_events: number
+  }
+  status_counts?: Record<string, number>
+  severity_counts?: Record<string, number>
+  latest_release?: Record<string, unknown> | null
+}
+
+export interface ChatRiskIssueCreateRequest {
+  domain_id: number
+  agent_id: number
+  session_id: string
+  trace_id?: string | null
+  subject_object_id?: number | null
+  issue_key: string
+  category: string
+  severity: RiskSeverity
+  title: string
+  description?: string
+  rule_key?: string | null
+  expected_value?: Record<string, unknown>
+  assignee?: string | null
+}
+
+export interface ChatRiskIssueCreateResponse {
+  issue: RiskIssue
+  evidence: RiskEvidence[]
+}
+
+export async function fetchRiskSummary(domainId: number): Promise<RiskSummary> {
+  const { data } = await api.get(`/risk/domains/${domainId}/summary`)
+  return data
+}
+
+export async function fetchRiskIssues(
+  domainId: number,
+  params?: { status?: RiskStatus; severity?: RiskSeverity; limit?: number; offset?: number },
+): Promise<RiskIssue[]> {
+  const { data } = await api.get(`/risk/domains/${domainId}/issues`, { params })
+  return data.issues || []
+}
+
+export async function fetchRiskIssueDetail(domainId: number, issueId: number): Promise<RiskIssueDetail> {
+  const { data } = await api.get(`/risk/domains/${domainId}/issues/${issueId}`)
+  if (data.issue) {
+    return {
+      ...data.issue,
+      evidence: data.evidence || [],
+      reviews: data.reviews || [],
+    }
+  }
+  return data
+}
+
+export async function createRiskIssue(domainId: number, payload: Record<string, unknown>) {
+  const { data } = await api.post(`/risk/domains/${domainId}/issues`, payload)
+  return data
+}
+
+export async function createRiskIssueFromChat(
+  domainId: number,
+  payload: ChatRiskIssueCreateRequest,
+): Promise<ChatRiskIssueCreateResponse> {
+  const { data } = await api.post<ChatRiskIssueCreateResponse>(
+    `/risk/domains/${domainId}/issues/from-chat`,
+    payload,
+  )
+  return data
+}
+
+export async function addRiskEvidence(
+  domainId: number,
+  issueId: number,
+  payload: Record<string, unknown>,
+) {
+  const { data } = await api.post(`/risk/domains/${domainId}/issues/${issueId}/evidence`, payload)
+  return data
+}
+
+export async function submitRiskReview(
+  domainId: number,
+  issueId: number,
+  payload: Record<string, unknown>,
+) {
+  const { data } = await api.post(`/risk/domains/${domainId}/issues/${issueId}/reviews`, payload)
+  return data
+}
+
+export async function fetchRiskReports(domainId: number): Promise<RiskReport[]> {
+  const { data } = await api.get(`/risk/domains/${domainId}/reports`)
+  return data.reports || []
+}
+
+export async function createRiskReport(domainId: number, payload: Record<string, unknown>) {
+  const { data } = await api.post(`/risk/domains/${domainId}/reports`, payload)
+  return data
+}
+
+export async function createRiskReportVersion(
+  domainId: number,
+  reportId: number,
+  payload: Record<string, unknown>,
+) {
+  const { data } = await api.post(`/risk/domains/${domainId}/reports/${reportId}/versions`, payload)
+  return data
+}
+
+export async function fetchRiskReportVersions(
+  domainId: number,
+  reportId: number,
+): Promise<RiskReportVersion[]> {
+  const { data } = await api.get(`/risk/domains/${domainId}/reports/${reportId}/versions`)
+  return data.versions || []
+}
+
+export async function finalizeRiskReport(
+  domainId: number,
+  reportId: number,
+  expectedVersion?: number | null,
+) {
+  const { data } = await api.post(`/risk/domains/${domainId}/reports/${reportId}/finalize`, {
+    expected_version: expectedVersion ?? null,
+  })
+  return data
+}
+
+export async function fetchDecisionAuditEvents(
+  domainId: number,
+  limit = 200,
+): Promise<DecisionAuditEvent[]> {
+  const { data } = await api.get(`/risk/domains/${domainId}/audit`, { params: { limit } })
+  return data.events || []
+}
+
+export async function verifyDecisionAuditChain(domainId: number) {
+  const { data } = await api.get(`/risk/domains/${domainId}/audit/verify`)
+  return data
+}
+
 // 会话历史
 export interface SessionItem {
   session_id: string
@@ -1137,6 +1413,8 @@ export interface SessionItem {
 export interface HistoryItem extends ChatTaskMetadata {
   role: 'user' | 'assistant'
   content: string
+  trace_id?: string
+  execution_trace?: Record<string, unknown>
   sql_text?: string
   compiled_sql?: string
   reasoning_trace?: ReasoningTraceStep[]

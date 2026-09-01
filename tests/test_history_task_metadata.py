@@ -71,6 +71,9 @@ async def test_history_api_restores_task_fields_and_expands_task_metadata(monkey
                 "compiled_sql": "SELECT SUM(balance) FROM loan_balance",
                 "sql_text": None,
                 "sql_result": '[{"balance": 100}]',
+                "execution_trace": json.dumps(
+                    {"trace_id": "trace-history-1", "compile_strategy": "semantic"}
+                ),
                 "plan_payload": None,
                 "semantic_check": None,
                 "python_result": None,
@@ -100,13 +103,22 @@ async def test_history_api_restores_task_fields_and_expands_task_metadata(monkey
     select_sql, _ = db.queries[0]
     assert all(
         column in select_sql
-        for column in ("task_id", "turn_id", "turn_mode", "task_status", "task_metadata")
+        for column in (
+            "execution_trace",
+            "task_id",
+            "turn_id",
+            "turn_mode",
+            "task_status",
+            "task_metadata",
+        )
     )
     restored = response["history"][0]
     assert restored["task_id"] == "task-existing"
     assert restored["turn_id"] == "turn-refine-2"
     assert restored["turn_mode"] == "refine"
     assert restored["task_status"] == "completed"
+    assert restored["trace_id"] == "trace-history-1"
+    assert restored["execution_trace"]["compile_strategy"] == "semantic"
     assert restored["reused_artifacts"] == ["semantic_runtime", "schema"]
     assert restored["invalidated_artifacts"] == [
         "logic_form",

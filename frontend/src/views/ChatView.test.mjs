@@ -151,6 +151,7 @@ assert.ok(
 assert.ok(
   source.includes("import * as echarts from 'echarts/core'") &&
     source.includes('echarts.use([') &&
+    source.includes('TitleComponent') &&
     source.includes('<ReportEChart :chart='),
   'ChatView should use tree-shaken ECharts instead of hand-written report SVG charts',
 )
@@ -199,4 +200,81 @@ assert.ok(
     source.includes('invalidated_artifacts: item.invalidated_artifacts') &&
     source.includes('context_invalidated: item.context_invalidated'),
   'ChatView should preserve all task metadata when rebuilding messages from history',
+)
+
+assert.ok(
+  source.includes('v-if="canCreateRiskIssue(msg)"') &&
+    source.includes('创建风险事项') &&
+    source.includes(':icon="WarningFilled"'),
+  'ChatView should expose an Element Plus risk action on eligible assistant answer cards',
+)
+
+assert.ok(
+  source.includes("message.status === 'complete'") &&
+    source.includes('selectedAgent.value?.semantic_domain_id') &&
+    source.includes('Boolean(message.sql?.trim())') &&
+    source.includes('Boolean(message.sql_result?.length)') &&
+    source.includes('Boolean(message.report_payload)'),
+  'ChatView should only offer risk creation for completed query/report results in an agent semantic domain',
+)
+
+assert.ok(
+  source.includes('trace_id: traceableItem.trace_id') &&
+    source.includes('execution_trace: traceableItem.execution_trace'),
+  'ChatView should preserve direct and nested trace metadata when rebuilding assistant history',
+)
+
+const traceResolver = source.slice(
+  source.indexOf('function messageTraceId'),
+  source.indexOf('function userQuestionForMessage'),
+)
+assert.ok(
+  traceResolver.indexOf('traceableMessage.trace_id') >= 0 &&
+    traceResolver.indexOf('traceableMessage.trace_id') < traceResolver.indexOf('execution_trace?.trace_id'),
+  'ChatView should prefer the message trace_id before execution_trace.trace_id',
+)
+
+assert.ok(
+  source.includes(':disabled="!messageTraceId(msg)"') &&
+    source.includes('当前结果缺少 trace，已阻止创建以避免关联到错误问数轮次'),
+  'ChatView should block legacy results without a trace instead of binding the latest chat turn',
+)
+
+assert.ok(
+  source.includes("category: 'data_query_risk'") &&
+    source.includes("severity: 'medium'") &&
+    source.includes('issue_key: buildRiskIssueKey(message)') &&
+    source.includes('title: buildRiskIssueTitle(message, messageIndex)') &&
+    source.includes('description: buildRiskIssueDescription(message, messageIndex)'),
+  'ChatView should prefill the required risk issue defaults from the selected assistant result',
+)
+
+assert.ok(
+  source.includes('fetchOntologyObjects(domainId, undefined, 200, 0)') &&
+    source.includes('v-model="riskForm.subject_object_id"') &&
+    source.includes('placeholder="可选，不关联具体对象"'),
+  'ChatView should load optional Ontology object choices for the current semantic domain',
+)
+
+assert.match(
+  source,
+  /const payload: ChatRiskIssueCreateRequest = \{[\s\S]*domain_id: domainId,[\s\S]*agent_id: riskSourceAgentId\.value,[\s\S]*session_id: riskSourceSessionId\.value,[\s\S]*trace_id: traceId,[\s\S]*subject_object_id: riskForm\.value\.subject_object_id \|\| null,[\s\S]*issue_key: riskForm\.value\.issue_key\.trim\(\),[\s\S]*category: riskForm\.value\.category\.trim\(\),[\s\S]*severity: riskForm\.value\.severity,[\s\S]*title: riskForm\.value\.title\.trim\(\),[\s\S]*description: riskForm\.value\.description\.trim\(\),[\s\S]*rule_key: riskForm\.value\.rule_key\.trim\(\) \|\| null,[\s\S]*expected_value: \{\},[\s\S]*assignee: riskForm\.value\.assignee\.trim\(\) \|\| null,[\s\S]*\}/,
+  'ChatView should submit the complete snake_case chat risk payload',
+)
+
+assert.ok(
+  source.includes('await createRiskIssueFromChat(domainId, payload)') &&
+    source.includes('result.evidence.length') &&
+    source.includes("confirmButtonText: '前往风险交付'") &&
+    source.includes("cancelButtonText: '继续问数'") &&
+    source.includes("await router.push('/risk-delivery')"),
+  'ChatView should show the evidence count and offer navigation after risk issue creation',
+)
+
+assert.ok(
+  source.includes(':loading="riskSubmitting"') &&
+    source.includes(':loading="riskObjectLoading"') &&
+    source.includes('riskFormRules') &&
+    source.includes('风险事项创建失败'),
+  'ChatView should cover form validation, object loading, submission loading, and API errors',
 )

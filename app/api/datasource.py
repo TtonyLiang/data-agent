@@ -63,7 +63,11 @@ async def update_agent_datasource_ids(
 
 
 @router.put("/{ds_id}")
-async def update_datasource(ds_id: int, ds: DatasourceUpdate, _: PublicUser = Depends(require_admin)):
+async def update_datasource(
+    ds_id: int,
+    ds: DatasourceUpdate,
+    _: PublicUser = Depends(require_admin),
+):
     """更新数据源配置。密码为空或掩码时保留原值。"""
     svc = get_datasource_service()
     updated = await svc.update(ds_id, ds)
@@ -79,7 +83,10 @@ async def update_datasource(ds_id: int, ds: DatasourceUpdate, _: PublicUser = De
 async def delete_datasource(ds_id: int, _: PublicUser = Depends(require_admin)):
     """删除数据源及其关联的全部语义层资产与采集元数据。"""
     svc = get_datasource_service()
-    await svc.delete(ds_id)
+    try:
+        await svc.delete(ds_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"message": "删除成功"}
 
 

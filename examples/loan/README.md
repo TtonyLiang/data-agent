@@ -56,3 +56,40 @@ uv run python examples/loan/seed_loan_indicators.py --append --write --yes-appen
 The append mode uses stable IDs in the `9x, 19x, 29x, 39x, 49x, 90x` million ranges and
 `INSERT ... ON DUPLICATE KEY UPDATE`, so repeating the command updates the same synthetic rows
 instead of duplicating them. Existing rows and the historical full-rebuild mode are unchanged.
+
+## Persistent risk-delivery demo
+
+`seed_loan_risk_delivery.py` creates two persistent risk issues in the existing active
+`loan_risk` domain. It reads the current values from these already imported Ontology objects:
+
+- `LoanAccount/700001`
+- `CustomerRiskSnapshot/600001`
+
+The management database must already contain a published `loan_risk` Ontology release and the
+active administrator `wenqu_demo_admin`. The script reports a clear error when a prerequisite is
+missing and never creates an account.
+
+Preview the derived issue, evidence, and review plan without writing any records:
+
+```bash
+uv run python examples/loan/seed_loan_risk_delivery.py --preview
+```
+
+Run without flags to write the two issues, three evidence records per issue, and their initial
+review actions:
+
+```bash
+uv run python examples/loan/seed_loan_risk_delivery.py
+```
+
+The stable issue keys are `demo_m1_collection_700001` and `demo_high_dti_600001`. Repeating the
+write command skips an existing issue as a whole, so it does not duplicate evidence or reviews.
+The JSON output includes the domain ID, created/skipped counts, issue IDs, final statuses, and
+evidence counts.
+
+After seeding, open `http://127.0.0.1:4399/risk-delivery`, select the `loan_risk` domain, and view
+the records under **风险事项**. Their evidence and review history are available from the issue
+detail view; generated audit events are visible under **决策审计**.
+
+The thresholds, severity levels, descriptions, and review actions are technical demo fixtures
+only. They do not represent real lending, collection, compliance, or credit policy.

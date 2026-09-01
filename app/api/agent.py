@@ -36,7 +36,9 @@ async def create_agent(agent: AgentCreate):
             "chat_model_config_id": agent.chat_model_config_id,
             "embedding_model_config_id": agent.embedding_model_config_id,
             "semantic_domain_id": agent.semantic_domain_id,
-            "default_questions": json.dumps(normalize_default_questions(agent.default_questions), ensure_ascii=False),
+            "default_questions": json.dumps(
+                normalize_default_questions(agent.default_questions), ensure_ascii=False
+            ),
             "provider": agent.llm_provider,
             "model": agent.llm_model,
         },
@@ -82,7 +84,9 @@ async def update_agent(agent_id: int, agent: AgentCreate):
             "chat_model_config_id": agent.chat_model_config_id,
             "embedding_model_config_id": agent.embedding_model_config_id,
             "semantic_domain_id": agent.semantic_domain_id,
-            "default_questions": json.dumps(normalize_default_questions(agent.default_questions), ensure_ascii=False),
+            "default_questions": json.dumps(
+                normalize_default_questions(agent.default_questions), ensure_ascii=False
+            ),
             "provider": agent.llm_provider,
             "model": agent.llm_model,
         },
@@ -121,7 +125,38 @@ async def delete_agent(agent_id: int):
     """
     db = get_management_db()
 
-    # 第1步:删除语义资产(通过 semantic_domain 关联)
+    # 第1步:删除风险交付、本体运行时和语义资产(通过 semantic_domain 关联)
+    for table in (
+        "decision_audit_head",
+        "decision_audit_event",
+        "risk_evidence",
+        "risk_issue_review",
+        "risk_report_version",
+        "risk_report",
+        "risk_issue",
+        "ontology_action_run",
+        "ontology_link",
+        "ontology_object",
+        "ontology_release",
+        "ontology_action_type",
+        "ontology_link_type",
+    ):
+        await db.execute_query(
+            f"DELETE FROM {table} WHERE domain_id IN "
+            "(SELECT id FROM semantic_domain WHERE agent_id = :id)",
+            {"id": agent_id},
+        )
+    await db.execute_query(
+        "DELETE p FROM ontology_property p JOIN ontology_object_type o "
+        "ON o.id = p.object_type_id JOIN semantic_domain sd ON sd.id = o.domain_id "
+        "WHERE sd.agent_id = :id",
+        {"id": agent_id},
+    )
+    await db.execute_query(
+        "DELETE o FROM ontology_object_type o JOIN semantic_domain sd ON sd.id = o.domain_id "
+        "WHERE sd.agent_id = :id",
+        {"id": agent_id},
+    )
     for table in (
         "logic_form_template",
         "semantic_mapping",

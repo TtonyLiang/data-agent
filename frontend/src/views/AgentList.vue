@@ -394,7 +394,8 @@ async function handleDelete(agent: AgentItem) {
 
 <style scoped>
 .page-shell {
-  height: calc(100vh - 68px);
+  height: 100%;
+  min-height: 0;
   overflow: auto;
   padding: 28px;
   background: var(--wq-bg);

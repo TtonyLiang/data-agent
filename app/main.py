@@ -101,7 +101,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="问渠 WenQu · 企业本体智能平台",
+    title="问渠 WenQu · AI报告交付与风险决策平台",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -1672,7 +1672,7 @@ async def get_history(
     params["sid"] = session_id
     rows = await db.execute_query(
         "SELECT role, content, reasoning_trace, logic_form, compiled_sql, sql_text, sql_result, "
-        "plan_payload, semantic_check, python_result, report_payload, "
+        "execution_trace, plan_payload, semantic_check, python_result, report_payload, "
         "task_id, turn_id, turn_mode, task_status, task_metadata, created_at "
         f"FROM chat_history WHERE {user_filter} AND session_id = :sid ORDER BY id",
         params,
@@ -1697,6 +1697,7 @@ async def get_history(
                 except json.JSONDecodeError:
                     row["reasoning_trace"] = []
         for field in (
+            "execution_trace",
             "plan_payload",
             "semantic_check",
             "python_result",
@@ -1708,6 +1709,10 @@ async def get_history(
                     row[field] = json.loads(row[field])
                 except json.JSONDecodeError:
                     row[field] = None
+        execution_trace = row.get("execution_trace")
+        row["trace_id"] = (
+            execution_trace.get("trace_id") if isinstance(execution_trace, dict) else None
+        )
         task_metadata = row.pop("task_metadata", None)
         if not isinstance(task_metadata, dict):
             task_metadata = {}
@@ -2037,6 +2042,7 @@ from app.api.feedback import router as feedback_router  # noqa: E402
 from app.api.model_config import router as model_config_router  # noqa: E402
 from app.api.ontology import router as ontology_router  # noqa: E402
 from app.api.prompt import router as prompt_router  # noqa: E402
+from app.api.risk_workflow import router as risk_workflow_router  # noqa: E402
 from app.api.semantic import router as semantic_router  # noqa: E402
 from app.api.system_parameter import router as system_parameter_router  # noqa: E402
 from app.api.user import router as user_router  # noqa: E402
@@ -2048,6 +2054,7 @@ app.include_router(feedback_router, prefix="/api/feedback", tags=["反馈"])
 app.include_router(model_config_router, prefix="/api/model-config", tags=["模型配置"])
 app.include_router(ontology_router, prefix="/api/ontology", tags=["企业本体"])
 app.include_router(prompt_router, prefix="/api/prompt", tags=["Prompt配置"])
+app.include_router(risk_workflow_router, prefix="/api/risk", tags=["风险与报告交付"])
 app.include_router(semantic_router, prefix="/api/semantic", tags=["知识召回"])
 app.include_router(system_parameter_router, prefix="/api/system", tags=["系统参数"])
 app.include_router(user_router, prefix="/api/users", tags=["用户管理"])

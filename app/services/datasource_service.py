@@ -146,6 +146,18 @@ class DatasourceService:
         """
         logger.info("datasource delete id=%s", ds_id)
         db = get_management_db()
+        governed_domains = await db.execute_query(
+            "SELECT sd.id FROM semantic_domain sd WHERE sd.datasource_id = :id AND ("
+            "EXISTS (SELECT 1 FROM ontology_release r WHERE r.domain_id = sd.id) OR "
+            "EXISTS (SELECT 1 FROM ontology_action_run a WHERE a.domain_id = sd.id) OR "
+            "EXISTS (SELECT 1 FROM risk_issue i WHERE i.domain_id = sd.id) OR "
+            "EXISTS (SELECT 1 FROM risk_report p WHERE p.domain_id = sd.id) OR "
+            "EXISTS (SELECT 1 FROM decision_audit_event e WHERE e.domain_id = sd.id)"
+            ") LIMIT 1",
+            {"id": ds_id},
+        )
+        if governed_domains:
+            raise ValueError("数据源关联的领域已有发布或决策历史，不能直接删除")
         statements = []
         # 第1步:删除语义资产(通过 semantic_domain 关联)
         for table in (

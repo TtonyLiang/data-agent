@@ -65,7 +65,7 @@
                 新建对象
               </el-button>
             </div>
-            <el-table :data="objectTypes" row-key="id" height="calc(100vh - 312px)">
+            <el-table class="ontology-table" :data="objectTypes" row-key="id" height="100%">
               <el-table-column type="expand" width="42">
                 <template #default="{ row }">
                   <div class="property-grid">
@@ -138,7 +138,7 @@
               <div><strong>关系类型</strong><span>{{ linkTypes.length }} 项</span></div>
               <el-button v-if="canManage" type="primary" :icon="Plus" @click="openLinkTypeDialog()">新建关系</el-button>
             </div>
-            <el-table :data="linkTypes" height="calc(100vh - 312px)">
+            <el-table class="ontology-table" :data="linkTypes" height="100%">
               <el-table-column label="关系" min-width="200">
                 <template #default="{ row }">
                   <div class="primary-cell"><strong>{{ row.name }}</strong><code>{{ row.link_key }}</code></div>
@@ -177,7 +177,7 @@
               <div><strong>业务动作</strong><span>{{ actionTypes.length }} 项</span></div>
               <el-button v-if="canManage" type="primary" :icon="Plus" @click="openActionTypeDialog()">新建动作</el-button>
             </div>
-            <el-table :data="actionTypes" height="calc(100vh - 312px)">
+            <el-table class="ontology-table" :data="actionTypes" height="100%">
               <el-table-column label="动作" min-width="210">
                 <template #default="{ row }">
                   <div class="primary-cell"><strong>{{ row.name }}</strong><code>{{ row.action_key }}</code></div>
@@ -231,7 +231,7 @@
         </el-tab-pane>
 
         <el-tab-pane label="对象实例" name="instances">
-          <section class="table-section">
+          <section class="table-section instance-table-section">
             <div class="section-toolbar instance-toolbar">
               <div class="instance-filter">
                 <strong>业务对象</strong>
@@ -245,7 +245,7 @@
                 <el-button v-if="canManage" type="primary" :icon="Plus" @click="openObjectInstanceDialog()">新建实例</el-button>
               </div>
             </div>
-            <el-table class="instance-table" :data="objects" height="calc(100% - 116px)" v-loading="syncing">
+            <el-table class="instance-table" :data="objects" height="100%" v-loading="syncing">
               <el-table-column label="对象" min-width="220">
                 <template #default="{ row }">
                   <div class="primary-cell"><strong>{{ row.display_name }}</strong><code>{{ row.primary_value }}</code></div>
@@ -334,7 +334,7 @@
               <div><strong>动作与决策审计</strong><span>{{ actionRuns.length }} 条</span></div>
               <el-button :icon="Refresh" @click="loadActivity">刷新</el-button>
             </div>
-            <el-table :data="actionRuns" height="calc(100vh - 312px)">
+            <el-table class="ontology-table" :data="actionRuns" height="100%">
               <el-table-column label="状态" width="100">
                 <template #default="{ row }">
                   <el-tag :type="runStatusType(row.status)">{{ runStatusLabel(row.status) }}</el-tag>
@@ -1008,14 +1008,14 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.ontology-page { width: 100%; max-width: var(--wq-page-max-width); height: 100%; min-width: 0; margin: 0 auto; padding-inline: var(--wq-page-gutter); display: flex; flex-direction: column; color: var(--wq-text); }
+.ontology-page { width: 100%; max-width: var(--wq-page-max-width); height: 100%; min-height: 0; min-width: 0; margin: 0 auto; padding-inline: var(--wq-page-gutter); padding-bottom: var(--wq-page-bottom-gap); display: flex; flex-direction: column; overflow: hidden; color: var(--wq-text); }
 .page-toolbar { min-height: 66px; display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--wq-border); }
 .toolbar-actions, .section-toolbar, .instance-filter, .subsection-title { display: flex; align-items: center; }
 .file-input { display: none; }
 .title-group { min-width: 0; }.title-group h2 { color: var(--wq-text); font-size: 22px; line-height: 1.25; }.title-group p { margin-top: 8px; color: var(--wq-muted); font-size: 14px; }.toolbar-actions { justify-content: flex-end; gap: 8px; flex-wrap: wrap; }.domain-select { width: 210px; }
 .metric-strip { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 1px; margin: 14px 0 8px; background: var(--wq-border); border: 1px solid var(--wq-border); border-radius: 7px; overflow: hidden; }.metric-item { position: relative; min-height: 72px; padding: 13px 16px; background: var(--wq-surface); }.metric-item span { display: block; color: var(--wq-muted); font-size: 12px; }.metric-item strong { display: block; margin-top: 3px; font-size: 23px; font-weight: 680; }.metric-item .el-icon { position: absolute; right: 14px; top: 22px; color: #98a2b3; font-size: 24px; }
 .workspace-tabs { min-width: 0; min-height: 0; flex: 1; }.workspace-tabs :deep(.el-tabs__header) { margin: 0; }.workspace-tabs :deep(.el-tabs__content) { min-width: 0; height: calc(100% - 40px); }.workspace-tabs :deep(.el-tab-pane) { min-width: 0; height: 100%; }.graph-panel { position: relative; min-width: 0; height: 100%; min-height: 0; overflow: hidden; background: #fff; border-bottom: 1px solid var(--wq-border); }.ontology-graph { width: 100%; height: 100%; }.graph-empty { position: absolute; inset: 0; background: #fff; }
-.table-section { height: 100%; background: var(--wq-surface); }.section-toolbar { height: 54px; justify-content: space-between; border-bottom: 1px solid var(--wq-border); }.section-toolbar > div { display: flex; align-items: baseline; gap: 8px; }.section-toolbar span { color: var(--wq-muted); font-size: 12px; }.instance-filter { gap: 12px !important; }.instance-filter .el-select { width: 190px; }
+.table-section { height: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: var(--wq-surface); }.instance-table-section { grid-template-rows: auto minmax(0, 1fr) auto; }.section-toolbar { height: auto; min-height: 54px; justify-content: space-between; border-bottom: 1px solid var(--wq-border); }.section-toolbar > div { display: flex; align-items: baseline; gap: 8px; }.section-toolbar span { color: var(--wq-muted); font-size: 12px; }.instance-filter { gap: 12px !important; }.instance-filter .el-select { width: 190px; }.ontology-table, .instance-table { width: 100%; min-height: 0; height: 100%; }
 .sync-status-cell, .object-source-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }.sync-status-cell small { color: var(--wq-muted); font-size: 11px; white-space: nowrap; }.muted { color: var(--wq-muted); }.source-tags { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }.instance-pagination { position: relative; z-index: 2; min-height: 62px; display: flex; align-items: center; justify-content: flex-end; gap: 18px; padding: 8px 16px 14px; border-top: 1px solid var(--wq-border); background: var(--wq-surface); }.instance-pagination > span { color: var(--wq-muted); font-size: 12px; white-space: nowrap; }.source-query-input :deep(textarea) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; }
 .table-actions { display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 0; flex-wrap: nowrap; white-space: nowrap; }
 .table-actions :deep(.el-tooltip__trigger) { display: inline-flex; }
@@ -1047,5 +1047,5 @@ onBeforeUnmount(() => {
 .form-grid { display: grid; gap: 14px; }.form-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }.form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }.subsection-title { justify-content: space-between; min-height: 40px; margin-top: 4px; border-bottom: 1px solid var(--wq-border); }.builder-list { display: grid; gap: 7px; margin: 9px 0 14px; }.builder-row { display: grid; align-items: center; gap: 7px; padding: 7px; background: #f7f9fc; border: 1px solid var(--wq-border); border-radius: 6px; }.property-builder { grid-template-columns: 1.2fr 1.2fr 110px 62px 62px 32px; }.parameter-builder { grid-template-columns: 1fr 1fr 105px 1.2fr 62px 32px; }.condition-builder { grid-template-columns: 1fr 110px 1fr 1.2fr 32px; }.effect-builder { grid-template-columns: 1fr 2fr 32px; }
 .validation-result section { margin-top: 18px; }.validation-result h4 { margin-bottom: 8px; }.validation-item { display: grid; grid-template-columns: 130px 1fr; gap: 10px; margin-bottom: 7px; padding: 10px; border-left: 3px solid; background: #f8fafc; }.validation-item.error { border-color: var(--wq-danger); }.validation-item.warning { border-color: var(--wq-warning); }
 @media (max-width: 1100px) { .page-toolbar { align-items: flex-start; }.toolbar-actions { max-width: 60%; }.metric-strip { grid-template-columns: repeat(3, 1fr); }.form-grid.three { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 760px) { .ontology-page { padding-inline: 16px; }.page-toolbar { flex-direction: column; }.toolbar-actions { max-width: none; justify-content: flex-start; }.domain-select { width: 100%; }.metric-strip { grid-template-columns: repeat(2, 1fr); }.form-grid.two, .form-grid.three { grid-template-columns: 1fr; }.property-builder, .parameter-builder, .condition-builder, .effect-builder { grid-template-columns: 1fr; }.section-toolbar { height: auto; min-height: 54px; flex-wrap: wrap; } }
+@media (max-width: 760px) { .ontology-page { padding-inline: 16px; padding-bottom: 16px; overflow: auto; }.page-toolbar { flex-direction: column; }.toolbar-actions { max-width: none; justify-content: flex-start; }.domain-select { width: 100%; }.metric-strip { grid-template-columns: repeat(2, 1fr); }.form-grid.two, .form-grid.three { grid-template-columns: 1fr; }.property-builder, .parameter-builder, .condition-builder, .effect-builder { grid-template-columns: 1fr; }.section-toolbar { flex-wrap: wrap; } }
 </style>

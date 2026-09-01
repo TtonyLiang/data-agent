@@ -58,6 +58,10 @@ async def test_delete_domain_removes_assets_and_unbinds_agents(monkeypatch):
 
     assert deleted is True
     statements = [sql for sql, _ in db.queries]
+    assert "DELETE FROM decision_audit_head WHERE domain_id = :id" in statements
+    assert "DELETE FROM risk_issue WHERE domain_id = :id" in statements
+    assert "DELETE FROM risk_report_version WHERE domain_id = :id" in statements
+    assert "DELETE FROM decision_audit_event WHERE domain_id = :id" in statements
     assert "DELETE FROM semantic_concept WHERE domain_id = :id" in statements
     assert "DELETE FROM semantic_metric WHERE domain_id = :id" in statements
     assert "UPDATE agent SET semantic_domain_id = NULL WHERE semantic_domain_id = :id" in statements

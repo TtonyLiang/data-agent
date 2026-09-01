@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+from copy import deepcopy
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -19,6 +21,7 @@ from app.models.ontology import (
     OntologyObjectPayload,
     OntologyObjectTypePayload,
 )
+from app.services.decision_audit_service import get_decision_audit_service
 from app.services.permission_service import get_permission_service
 from app.utils.sql_validator import (
     find_top_level_keyword,
@@ -58,9 +61,77 @@ JSON_FALLBACKS: dict[str, Any] = {
     "definition_json": {},
 }
 
-
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _content_hash(value: Any) -> str:
+    canonical = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+_VOLATILE_DEFINITION_FIELDS = {
+    "id",
+    "domain_id",
+    "object_type_id",
+    "created_at",
+    "updated_at",
+    "last_sync_status",
+    "last_sync_count",
+    "last_sync_total",
+    "last_sync_error",
+    "last_synced_at",
+}
+
+
+def _stable_release_definition(bundle: dict[str, Any]) -> dict[str, Any]:
+    """Remove storage/runtime fields before hashing an Ontology definition."""
+
+    def clean_record(value: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: deepcopy(item)
+            for key, item in value.items()
+            if key not in _VOLATILE_DEFINITION_FIELDS
+        }
+
+    definition = {
+        "format": bundle.get("format"),
+        "version": bundle.get("version"),
+        "domain": clean_record(bundle.get("domain") or {}),
+        "object_types": [],
+        "link_types": [clean_record(item) for item in bundle.get("link_types") or []],
+        "action_types": [clean_record(item) for item in bundle.get("action_types") or []],
+    }
+    for item in bundle.get("object_types") or []:
+        object_type = clean_record(item)
+        object_type["properties"] = [
+            clean_record(prop) for prop in item.get("properties") or []
+        ]
+        definition["object_types"].append(object_type)
+    definition["object_types"] = sorted(
+        definition["object_types"], key=lambda item: str(item.get("object_key") or "")
+    )
+    for object_type in definition["object_types"]:
+        object_type["properties"] = sorted(
+            object_type.get("properties") or [],
+            key=lambda item: (
+                int(item.get("sort_order") or 0),
+                str(item.get("property_key") or ""),
+            ),
+        )
+    definition["link_types"] = sorted(
+        definition.get("link_types") or [], key=lambda item: str(item.get("link_key") or "")
+    )
+    definition["action_types"] = sorted(
+        definition.get("action_types") or [], key=lambda item: str(item.get("action_key") or "")
+    )
+    return definition
 
 
 def _loads(value: Any, fallback: Any) -> Any:
@@ -88,6 +159,42 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 class OntologyService:
+    async def _append_action_audit(
+        self,
+        session: Any,
+        *,
+        domain_id: int,
+        run_id: int,
+        release_id: int,
+        action: dict[str, Any],
+        target_object_id: int,
+        user: dict[str, Any],
+        status: str,
+        payload: dict[str, Any],
+    ) -> int:
+        event = await get_decision_audit_service().append_in_session(
+            session,
+            domain_id=domain_id,
+            event_type=f"ontology.action.{status}",
+            entity_type="ontology_action_run",
+            entity_id=run_id,
+            actor_id=int(user["id"]) if user.get("id") is not None else None,
+            actor=str(
+                user.get("display_name")
+                or user.get("username")
+                or user.get("id")
+                or "unknown"
+            ),
+            ontology_release_id=release_id,
+            payload={
+                "action_key": action.get("action_key"),
+                "target_object_id": target_object_id,
+                "status": status,
+                **payload,
+            },
+        )
+        return int(event["id"])
+
     async def _require_domain(self, domain_id: int) -> dict[str, Any]:
         rows = await get_management_db().execute_query(
             "SELECT * FROM semantic_domain WHERE id = :id", {"id": domain_id}
@@ -734,13 +841,16 @@ class OntologyService:
             {"domain_id": domain_id},
         )
         version = int(rows[0]["version"] if rows else 0) + 1
-        definition = await self.export_bundle(domain_id, include_instances=False)
+        definition = _stable_release_definition(
+            await self.export_bundle(domain_id, include_instances=False)
+        )
+        definition_hash = _content_hash(definition)
         release_id = await db.execute_insert(
             "INSERT INTO ontology_release "
             "(domain_id, version, name, description, validation_json, "
-            "definition_json, published_by) "
+            "definition_json, definition_hash, published_by) "
             "VALUES (:domain_id, :version, :name, :description, :validation_json, "
-            ":definition_json, :published_by)",
+            ":definition_json, :definition_hash, :published_by)",
             {
                 "domain_id": domain_id,
                 "version": version,
@@ -748,6 +858,7 @@ class OntologyService:
                 "description": description,
                 "validation_json": _json(validation),
                 "definition_json": _json(definition),
+                "definition_hash": definition_hash,
                 "published_by": published_by,
             },
         )
@@ -755,6 +866,7 @@ class OntologyService:
             "published": True,
             "id": release_id,
             "version": version,
+            "definition_hash": definition_hash,
             "validation": validation,
         }
 
@@ -762,7 +874,8 @@ class OntologyService:
         await self._require_domain(domain_id)
         rows = await get_management_db().execute_query(
             "SELECT id, domain_id, version, name, description, validation_json, "
-            "published_by, created_at FROM ontology_release WHERE domain_id = :domain_id "
+            "definition_hash, published_by, created_at FROM ontology_release "
+            "WHERE domain_id = :domain_id "
             "ORDER BY version DESC",
             {"domain_id": domain_id},
         )
@@ -1368,7 +1481,21 @@ class OntologyService:
     async def delete_object(self, domain_id: int, object_id: int) -> bool:
         if not await self.get_object(domain_id, object_id):
             return False
-        await get_management_db().execute_transaction(
+        db = get_management_db()
+        references = await db.execute_query(
+            "SELECT "
+            "(SELECT COUNT(*) FROM risk_issue WHERE domain_id = :domain_id "
+            "AND subject_object_id = :id) AS risk_issues, "
+            "(SELECT COUNT(*) FROM ontology_action_run WHERE domain_id = :domain_id "
+            "AND target_object_id = :id) AS action_runs",
+            {"domain_id": domain_id, "id": object_id},
+        )
+        reference_counts = references[0] if references else {}
+        if int(reference_counts.get("risk_issues") or 0) or int(
+            reference_counts.get("action_runs") or 0
+        ):
+            raise ValueError("对象已进入风险或动作审计，不能删除；请改为归档")
+        await db.execute_transaction(
             [
                 (
                     "DELETE FROM ontology_link WHERE domain_id = :domain_id "
@@ -1462,7 +1589,8 @@ class OntologyService:
         if action.get("requires_approval") and not payload.approval_reference:
             raise ValueError("该动作需要提供审批单号")
         release = await get_management_db().execute_query(
-            "SELECT id FROM ontology_release WHERE domain_id = :domain_id "
+            "SELECT id, version, definition_hash FROM ontology_release "
+            "WHERE domain_id = :domain_id "
             "ORDER BY version DESC LIMIT 1",
             {"domain_id": domain_id},
         )
@@ -1483,115 +1611,123 @@ class OntologyService:
         target_version = int(target.get("version") or 1)
         before_state = {"properties": target["properties"], "version": target_version}
         context = dict(payload.decision_context)
+        release_row = release[0]
+        context["ontology_release"] = {
+            "id": int(release_row["id"]),
+            "version": release_row.get("version"),
+            "definition_hash": release_row.get("definition_hash"),
+        }
         if payload.approval_reference:
             context["approval_reference"] = payload.approval_reference
-        run_id = await db.execute_insert(
-            "INSERT INTO ontology_action_run "
-            "(domain_id, action_type_id, target_object_id, user_id, status, parameters, "
-            "decision_context, before_state) VALUES "
-            "(:domain_id, :action_type_id, :target_object_id, :user_id, 'running', "
-            ":parameters, :decision_context, :before_state)",
-            {
-                "domain_id": domain_id,
-                "action_type_id": action_type_id,
-                "target_object_id": payload.target_object_id,
-                "user_id": user.get("id"),
-                "parameters": _json(payload.parameters),
-                "decision_context": _json(context),
-                "before_state": _json(before_state),
-            },
+        parameters = validate_action_parameters(action["parameters"], payload.parameters)
+        check_preconditions(action["preconditions"], target["properties"], parameters)
+        updated_properties = dict(target["properties"])
+        updated_overlay = dict(target.get("overlay_properties") or {})
+        for effect in action["effects"]:
+            effect_value = resolve_action_value(
+                effect.get("value"), parameters, target["properties"], user
+            )
+            updated_properties[effect["property"]] = effect_value
+            updated_overlay[effect["property"]] = effect_value
+        object_type = await self.get_object_type(
+            domain_id, object_type_id=int(target["object_type_id"])
         )
-        try:
-            parameters = validate_action_parameters(action["parameters"], payload.parameters)
-            check_preconditions(action["preconditions"], target["properties"], parameters)
-            updated_properties = dict(target["properties"])
-            updated_overlay = dict(target.get("overlay_properties") or {})
-            for effect in action["effects"]:
-                effect_value = resolve_action_value(
-                    effect.get("value"), parameters, target["properties"], user
-                )
-                updated_properties[effect["property"]] = effect_value
-                updated_overlay[effect["property"]] = effect_value
-            object_type = await self.get_object_type(
-                domain_id, object_type_id=int(target["object_type_id"])
-            )
-            if not object_type:
-                raise ValueError("动作目标对象类型不存在")
-            primary_property = object_type.get("primary_property")
-            if primary_property and any(
-                effect.get("property") == primary_property for effect in action["effects"]
-            ):
-                raise ValueError("动作不能修改对象主标识")
-            updated_properties = validate_property_values(
-                object_type["properties"], updated_properties
-            )
-            display_key = object_type.get("display_property")
-            display_name = (
-                str(updated_properties.get(display_key))
-                if display_key and updated_properties.get(display_key) is not None
-                else target["display_name"]
-            )
-            update_sql = (
-                "UPDATE ontology_object SET properties = :properties, "
-                "overlay_properties = :overlay_properties, display_name = :display_name, "
-                "version = version + 1 "
-                "WHERE id = :id AND domain_id = :domain_id"
-            )
-            update_params = {
-                "properties": _json(updated_properties),
-                "overlay_properties": _json(updated_overlay),
-                "display_name": display_name,
-                "id": payload.target_object_id,
-                "domain_id": domain_id,
-            }
-            if payload.expected_version is not None:
-                update_sql += " AND version = :expected_version"
-                update_params["expected_version"] = payload.expected_version
-            if payload.expected_version is not None and hasattr(db, "execute_in_transaction"):
+        if not object_type:
+            raise ValueError("动作目标对象类型不存在")
+        primary_property = object_type.get("primary_property")
+        if primary_property and any(
+            effect.get("property") == primary_property for effect in action["effects"]
+        ):
+            raise ValueError("动作不能修改对象主标识")
+        updated_properties = validate_property_values(
+            object_type["properties"], updated_properties
+        )
+        display_key = object_type.get("display_property")
+        display_name = (
+            str(updated_properties.get(display_key))
+            if display_key and updated_properties.get(display_key) is not None
+            else target["display_name"]
+        )
+        after_state = {
+            "properties": updated_properties,
+            "version": target_version + 1,
+        }
 
-                async def update_with_version(session: Any) -> None:
-                    result = await session.execute(text(update_sql), update_params)
-                    if result.rowcount != 1:
-                        raise ValueError("目标对象版本已变化，请刷新后重试")
-
-                await db.execute_in_transaction(update_with_version)
-            else:
-                await db.execute_query(update_sql, update_params)
-                if payload.expected_version is not None:
-                    current_version = await db.execute_query(
-                        "SELECT version FROM ontology_object "
-                        "WHERE id = :id AND domain_id = :domain_id",
-                        {"id": payload.target_object_id, "domain_id": domain_id},
-                    )
-                    if (
-                        not current_version
-                        or int(current_version[0]["version"]) != payload.expected_version + 1
-                    ):
-                        raise ValueError("目标对象版本已变化，请刷新后重试")
-            after_state = {
-                "properties": updated_properties,
-                "version": target_version + 1,
-            }
-            await db.execute_query(
-                "UPDATE ontology_action_run SET status = 'succeeded', after_state = :after_state, "
-                "completed_at = CURRENT_TIMESTAMP WHERE id = :id",
+        async def execute_in_transaction(session: Any) -> dict[str, Any]:
+            run_insert = await session.execute(
+                text(
+                    "INSERT INTO ontology_action_run "
+                    "(domain_id, ontology_release_id, action_type_id, target_object_id, "
+                    "user_id, status, parameters, decision_context, before_state) VALUES "
+                    "(:domain_id, :ontology_release_id, :action_type_id, :target_object_id, "
+                    ":user_id, 'running', :parameters, :decision_context, :before_state)"
+                ),
+                {
+                    "domain_id": domain_id,
+                    "ontology_release_id": int(release_row["id"]),
+                    "action_type_id": action_type_id,
+                    "target_object_id": payload.target_object_id,
+                    "user_id": user.get("id"),
+                    "parameters": _json(parameters),
+                    "decision_context": _json(context),
+                    "before_state": _json(before_state),
+                },
+            )
+            run_id = int(run_insert.lastrowid or 0)
+            object_update = await session.execute(
+                text(
+                    "UPDATE ontology_object SET properties = :properties, "
+                    "overlay_properties = :overlay_properties, display_name = :display_name, "
+                    "version = version + 1 WHERE id = :id AND domain_id = :domain_id "
+                    "AND version = :expected_version"
+                ),
+                {
+                    "properties": _json(updated_properties),
+                    "overlay_properties": _json(updated_overlay),
+                    "display_name": display_name,
+                    "id": payload.target_object_id,
+                    "domain_id": domain_id,
+                    "expected_version": target_version,
+                },
+            )
+            if object_update.rowcount != 1:
+                raise ValueError("目标对象版本已变化，请刷新后重试")
+            await session.execute(
+                text(
+                    "UPDATE ontology_action_run SET status = 'succeeded', "
+                    "after_state = :after_state, completed_at = CURRENT_TIMESTAMP "
+                    "WHERE id = :id"
+                ),
                 {"after_state": _json(after_state), "id": run_id},
+            )
+            audit_event_id = await self._append_action_audit(
+                session,
+                domain_id=domain_id,
+                run_id=run_id,
+                release_id=int(release_row["id"]),
+                action=action,
+                target_object_id=payload.target_object_id,
+                user=user,
+                status="succeeded",
+                payload={
+                    "parameters": parameters,
+                    "decision_context": context,
+                    "before_state": before_state,
+                    "after_state": after_state,
+                },
             )
             return {
                 "run_id": run_id,
                 "status": "succeeded",
                 "action": action["action_key"],
+                "ontology_release": context["ontology_release"],
+                "audit_event_id": audit_event_id,
                 "target_object_id": payload.target_object_id,
                 "before_state": before_state,
                 "after_state": after_state,
             }
-        except Exception as exc:
-            await db.execute_query(
-                "UPDATE ontology_action_run SET status = 'failed', error_message = :error, "
-                "completed_at = CURRENT_TIMESTAMP WHERE id = :id",
-                {"error": str(exc)[:2000], "id": run_id},
-            )
-            raise
+
+        return await db.execute_in_transaction(execute_in_transaction)
 
     async def list_action_runs(
         self, domain_id: int, *, user_id: int | None = None, limit: int = 100
@@ -1599,11 +1735,13 @@ class OntologyService:
         await self._require_domain(domain_id)
         sql = (
             "SELECT r.*, a.action_key, a.name AS action_name, o.display_name AS target_name, "
-            "u.display_name AS user_name, u.username "
+            "u.display_name AS user_name, u.username, rel.version AS ontology_release_version, "
+            "rel.definition_hash AS ontology_release_hash "
             "FROM ontology_action_run r "
             "JOIN ontology_action_type a ON a.id = r.action_type_id "
             "LEFT JOIN ontology_object o ON o.id = r.target_object_id "
             "LEFT JOIN app_user u ON u.id = r.user_id "
+            "LEFT JOIN ontology_release rel ON rel.id = r.ontology_release_id "
             "WHERE r.domain_id = :domain_id"
         )
         params: dict[str, Any] = {"domain_id": domain_id, "limit": min(max(limit, 1), 500)}
@@ -1870,6 +2008,20 @@ class OntologyService:
 
     async def _clear_domain(self, domain_id: int) -> None:
         db = get_management_db()
+        history = await db.execute_query(
+            "SELECT "
+            "(SELECT COUNT(*) FROM ontology_release WHERE domain_id = :id) AS releases, "
+            "(SELECT COUNT(*) FROM ontology_action_run WHERE domain_id = :id) AS action_runs, "
+            "(SELECT COUNT(*) FROM risk_issue WHERE domain_id = :id) AS risk_issues, "
+            "(SELECT COUNT(*) FROM risk_report WHERE domain_id = :id) AS reports, "
+            "(SELECT COUNT(*) FROM decision_audit_event WHERE domain_id = :id) AS audit_events",
+            {"id": domain_id},
+        )
+        counts = history[0] if history else {}
+        if any(int(counts.get(key) or 0) for key in counts):
+            raise ValueError(
+                "当前领域已有发布版本或决策历史，不能替换 Ontology；请新建领域或发布新版本"
+            )
         await db.execute_transaction(
             [
                 ("DELETE FROM ontology_action_run WHERE domain_id = :id", {"id": domain_id}),

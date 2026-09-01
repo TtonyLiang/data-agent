@@ -13,6 +13,7 @@ const routes = [
   { path: '/system-parameter', name: 'SystemParameter', component: () => import('../views/SystemParameterConfig.vue') },
   { path: '/datasource', name: 'Datasource', component: () => import('../views/DatasourceConfig.vue') },
   { path: '/knowledge', name: 'SemanticRuntime', component: () => import('../views/KnowledgeConfig.vue') },
+  { path: '/risk-delivery', name: 'RiskDelivery', component: () => import('../views/RiskDeliveryWorkbench.vue') },
   { path: '/ontology', name: 'OntologyWorkbench', component: () => import('../views/OntologyWorkbench.vue') },
   { path: '/users', redirect: { path: '/system-parameter', query: { tab: 'users' } } },
 ]

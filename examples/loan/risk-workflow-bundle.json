@@ -1,0 +1,284 @@
+{
+  "format": "wenqu-risk-workflow",
+  "version": 1,
+  "created_on": "2026-09-01",
+  "name": "贷款风控风险交付技术验证",
+  "description": "在贷款 Ontology 发布后，用风险事项、证据、人工复核、报告版本和审计链验证风险交付闭环。",
+  "disclaimer": "本 bundle 仅用于技术验证，阈值、规则、结论和处置建议不代表真实信贷政策。",
+  "ontology": {
+    "bundle_path": "examples/loan/ontology-bundle.json",
+    "release_name": "贷款风险交付 Demo V1",
+    "release_description": "2026-09-01 技术验证发布"
+  },
+  "issues": [
+    {
+      "ref": "m1_plus_collection_risk",
+      "subject": {
+        "object_type_key": "LoanAccount",
+        "primary_value": 700001
+      },
+      "request": {
+        "issue_key": "m1_plus_collection_risk",
+        "title": "M1+逾期催收风险",
+        "description": "演示贷款当前逾期45天、剩余本金42000元且未核销，需要进入人工确认的催收风险事项。",
+        "category": "collection_risk",
+        "severity": "critical",
+        "rule_key": "demo_m1_plus_collection_review",
+        "detected_value": {
+          "current_overdue_days": 45,
+          "remaining_principal": 42000
+        },
+        "expected_value": {
+          "current_overdue_days_lte": 30
+        },
+        "source_context": {
+          "object_type_key": "LoanAccount",
+          "primary_value": 700001,
+          "display_name": "LN-20250001",
+          "customer_primary_value": 200001,
+          "snapshot_date": "2026-08-31"
+        }
+      },
+      "evidence": [
+        {
+          "request": {
+            "evidence_type": "ontology_object",
+            "title": "贷款账户对象快照",
+            "trace_id": "loan-demo-20260901-overdue-object",
+            "source_ref": "ontology://LoanAccount/700001",
+            "content": {
+              "object_type_key": "LoanAccount",
+              "primary_value": 700001,
+              "display_name": "LN-20250001",
+              "snapshot": {
+                "current_status": "overdue",
+                "remaining_principal": 42000,
+                "current_overdue_days": 45,
+                "overdue_bucket": "M1",
+                "is_written_off": false
+              }
+            }
+          }
+        },
+        {
+          "request": {
+            "evidence_type": "metric",
+            "title": "M1+逾期风险暴露指标",
+            "trace_id": "loan-demo-20260901-overdue-metric",
+            "source_ref": "metric://m1_plus_overdue_exposure/2026-08-31",
+            "content": {
+              "metric_key": "m1_plus_overdue_exposure",
+              "metric_name": "M1+逾期风险暴露",
+              "value": 42000,
+              "unit": "CNY",
+              "as_of": "2026-08-31"
+            }
+          }
+        },
+        {
+          "request": {
+            "evidence_type": "manual",
+            "title": "M1+催收人工确认规则",
+            "trace_id": "loan-demo-20260901-overdue-rule",
+            "source_ref": "rule://demo_m1_plus_collection_review/v1",
+            "content": {
+              "rule_key": "demo_m1_plus_collection_review",
+              "expression": "current_overdue_days > 30 and is_written_off == false",
+              "matched": true,
+              "policy_status": "technical_demo_only"
+            }
+          }
+        },
+        {
+          "request": {
+            "evidence_type": "query",
+            "title": "M1+逾期贷款查询证据",
+            "trace_id": "loan-demo-20260901-overdue-query",
+            "source_ref": "query://loan-demo/m1-plus/2026-08-31",
+            "content": {
+              "question": "查找当前逾期超过30天且未核销的演示贷款",
+              "sql": "SELECT loan_id, loan_no, remaining_principal, current_overdue_days FROM loan_account_indicator WHERE loan_id = 700001 AND current_overdue_days > 30 AND is_written_off = 0",
+              "row_count": 1
+            }
+          }
+        }
+      ],
+      "review": {
+        "request": {
+          "action": "confirm",
+          "comment": "确认该演示事项进入催收风险清单；实际处置仍需遵循正式信贷政策和授权流程。"
+        }
+      }
+    },
+    {
+      "ref": "high_dti_manual_review_risk",
+      "subject": {
+        "object_type_key": "CustomerRiskSnapshot",
+        "primary_value": 600001
+      },
+      "request": {
+        "issue_key": "high_dti_manual_review_risk",
+        "title": "高 DTI 人工复核风险",
+        "description": "演示客户风险快照的负债收入比为0.62，需要补充收入和负债资料后再判断。",
+        "category": "credit_risk",
+        "severity": "high",
+        "rule_key": "demo_high_dti_request_info",
+        "detected_value": {
+          "dti": 0.62
+        },
+        "expected_value": {
+          "dti_lt": 0.6
+        },
+        "source_context": {
+          "object_type_key": "CustomerRiskSnapshot",
+          "primary_value": 600001,
+          "display_name": "200001-2026年08月风险快照",
+          "customer_primary_value": 200001,
+          "snapshot_date": "2026-08-01"
+        }
+      },
+      "evidence": [
+        {
+          "request": {
+            "evidence_type": "ontology_object",
+            "title": "客户风险快照对象证据",
+            "trace_id": "loan-demo-20260901-dti-object",
+            "source_ref": "ontology://CustomerRiskSnapshot/600001",
+            "content": {
+              "object_type_key": "CustomerRiskSnapshot",
+              "primary_value": 600001,
+              "display_name": "200001-2026年08月风险快照",
+              "snapshot": {
+                "dti": 0.62,
+                "risk_grade": "C",
+                "model_pd": 0.071,
+                "max_dpd_12m": 45,
+                "is_blacklist_hit": false
+              }
+            }
+          }
+        },
+        {
+          "request": {
+            "evidence_type": "metric",
+            "title": "负债收入比指标",
+            "trace_id": "loan-demo-20260901-dti-metric",
+            "source_ref": "metric://customer_dti/200001/2026-08",
+            "content": {
+              "metric_key": "customer_dti",
+              "metric_name": "客户负债收入比",
+              "value": 0.62,
+              "unit": "ratio",
+              "as_of": "2026-08-01"
+            }
+          }
+        },
+        {
+          "request": {
+            "evidence_type": "manual",
+            "title": "高 DTI 补充资料演示规则",
+            "trace_id": "loan-demo-20260901-dti-rule",
+            "source_ref": "rule://demo_high_dti_request_info/v1",
+            "content": {
+              "rule_key": "demo_high_dti_request_info",
+              "expression": "dti >= 0.60",
+              "threshold": 0.6,
+              "matched": true,
+              "policy_status": "technical_demo_only"
+            }
+          }
+        },
+        {
+          "request": {
+            "evidence_type": "query",
+            "title": "客户最新风险快照查询证据",
+            "trace_id": "loan-demo-20260901-dti-query",
+            "source_ref": "query://loan-demo/customer-dti/2026-08",
+            "content": {
+              "question": "查询演示客户200001的2026年08月负债收入比和风险等级",
+              "sql": "SELECT customer_id, stat_month, dti, risk_grade, model_pd FROM customer_risk_monthly_indicator WHERE snapshot_id = 600001",
+              "row_count": 1
+            }
+          }
+        }
+      ],
+      "review": {
+        "request": {
+          "action": "request_info",
+          "comment": "请补充最新收入证明和外部负债明细；当前仅保留为待补充资料事项，不形成正式授信结论。"
+        }
+      }
+    }
+  ],
+  "report": {
+    "ref": "loan_portfolio_risk_review",
+    "issue_refs": [
+      "m1_plus_collection_risk",
+      "high_dti_manual_review_risk"
+    ],
+    "request": {
+      "report_key": "loan_portfolio_risk_review",
+      "name": "贷款组合风险复核报告",
+      "report_type": "loan_risk_review",
+      "period_start": "2026-08-01",
+      "period_end": "2026-08-31",
+      "status": "draft"
+    },
+    "versions": [
+      {
+        "ref": "V1",
+        "bind_current_ontology_release": true,
+        "request": {
+          "snapshot": {
+            "stage": "system_detected",
+            "change_summary": "初始版本：记录系统识别的两个待复核风险事项及其证据。",
+            "review_status": "pending",
+            "findings": [
+              {
+                "issue_ref": "m1_plus_collection_risk",
+                "severity": "critical",
+                "conclusion": "待人工确认"
+              },
+              {
+                "issue_ref": "high_dti_manual_review_risk",
+                "severity": "high",
+                "conclusion": "待人工确认"
+              }
+            ]
+          },
+          "markdown": "# 贷款组合风险复核报告\n\n报告期间：2026-08-01 至 2026-08-31。\n\n## 系统识别\n\n- M1+逾期催收风险：critical，待人工确认。\n- 高 DTI 人工复核风险：high，待人工确认。\n\n> 本报告仅用于技术验证，不代表真实信贷政策。"
+        }
+      },
+      {
+        "ref": "V2",
+        "bind_current_ontology_release": true,
+        "request": {
+          "snapshot": {
+            "stage": "human_reviewed",
+            "change_summary": "复核版本：确认M1+事项，并将高DTI事项转为补充资料。",
+            "review_status": "reviewed",
+            "findings": [
+              {
+                "issue_ref": "m1_plus_collection_risk",
+                "severity": "critical",
+                "review_decision": "confirm",
+                "conclusion": "纳入演示催收风险清单"
+              },
+              {
+                "issue_ref": "high_dti_manual_review_risk",
+                "severity": "high",
+                "review_decision": "request_info",
+                "conclusion": "等待收入和负债资料"
+              }
+            ]
+          },
+          "markdown": "# 贷款组合风险复核报告\n\n报告期间：2026-08-01 至 2026-08-31。\n\n## 人工复核结果\n\n- M1+逾期催收风险：已确认纳入演示风险清单。\n- 高 DTI 人工复核风险：等待补充收入证明和外部负债明细。\n\n> 本报告仅用于技术验证，不代表真实信贷政策。"
+        }
+      }
+    ],
+    "finalize": {
+      "version_ref": "V2"
+    }
+  },
+  "expected_audit_events": 16
+}

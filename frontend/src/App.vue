@@ -8,7 +8,7 @@
           <div class="brand-mark">WQ</div>
           <div>
             <h1>问渠 WenQu</h1>
-            <span>企业本体智能平台</span>
+            <span>AI报告交付与风险决策平台</span>
           </div>
         </div>
         <el-menu
@@ -16,7 +16,7 @@
           :default-active="route.path"
           router
           mode="horizontal"
-          :ellipsis="false"
+          :ellipsis="true"
         >
           <el-menu-item index="/" :disabled="isNavigationDisabled('/')">
             <el-icon><ChatDotRound /></el-icon>
@@ -37,6 +37,10 @@
           <el-menu-item v-if="isAdminUser" index="/knowledge" :disabled="isNavigationDisabled('/knowledge')">
             <el-icon><Document /></el-icon>
             <span>查询语义</span>
+          </el-menu-item>
+          <el-menu-item v-if="isAuthenticatedUser" index="/risk-delivery" :disabled="isNavigationDisabled('/risk-delivery')">
+            <el-icon><WarningFilled /></el-icon>
+            <span>风险交付</span>
           </el-menu-item>
           <el-menu-item v-if="isAuthenticatedUser" index="/ontology" :disabled="isNavigationDisabled('/ontology')">
             <el-icon><Share /></el-icon>
@@ -182,9 +186,9 @@ html, body, #app {
   background: rgba(255, 255, 255, 0.96);
   border-bottom: 1px solid var(--wq-border);
   display: grid;
-  grid-template-columns: 232px minmax(420px, 1fr) auto;
+  grid-template-columns: minmax(190px, 220px) minmax(0, 1fr) auto;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   flex-shrink: 0;
   backdrop-filter: blur(14px) saturate(120%);
   -webkit-backdrop-filter: blur(14px) saturate(120%);
@@ -227,6 +231,7 @@ html, body, #app {
 }
 
 .top-nav {
+  width: 100%;
   height: var(--wq-header-height);
   border-bottom: 0;
   background: transparent;
@@ -238,6 +243,7 @@ html, body, #app {
 }
 
 .top-nav.el-menu--horizontal > .el-menu-item {
+  flex: 0 0 auto;
   height: 36px;
   margin: 14px 2px;
   padding: 0 12px;
@@ -247,6 +253,7 @@ html, body, #app {
   font-size: 14px;
   font-weight: 520;
   letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .top-nav.el-menu--horizontal > .el-menu-item.is-active {
@@ -304,6 +311,12 @@ html, body, #app {
   font-size: 14px;
   font-weight: 520;
   white-space: nowrap;
+}
+
+.user-pill > span:last-child {
+  max-width: 128px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .avatar {
@@ -366,9 +379,29 @@ html, body, #app {
   color: #344054;
 }
 
-@media (max-width: 1240px) {
+@media (max-width: 1560px) {
+  .app-header {
+    grid-template-columns: 204px minmax(0, 1fr) auto;
+    padding-inline: 16px;
+  }
+
   .header-tools .env-tag {
     display: none;
+  }
+
+  .top-nav.el-menu--horizontal > .el-menu-item {
+    margin-inline: 0;
+    padding-inline: 9px;
+  }
+}
+
+@media (max-width: 1240px) {
+  .user-pill > span:last-child {
+    max-width: 92px;
+  }
+
+  .top-nav.el-menu--horizontal > .el-menu-item {
+    padding-inline: 8px;
   }
 }
 

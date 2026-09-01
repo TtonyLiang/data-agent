@@ -1,8 +1,8 @@
-# WenQu Enterprise Ontology Platform
+# WenQu Finance & Tax AI Report Delivery & Risk Decision Platform
 
 English | [中文](./README_CN.md)
 
-> An enterprise ontology platform built on LangGraph — model objects, relationships, states, and actions, then connect them to governed data querying, decision execution, and auditability.
+> An AI report delivery and risk decision platform for finance and tax services. Ontology connects data, metrics, rules, evidence, reviews, and governed actions as the underlying business model.
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)
@@ -16,6 +16,7 @@ English | [中文](./README_CN.md)
 
 ## Table of Contents
 
+- [Product Focus](#product-focus)
 - [Features](#features)
 - [Architecture](#architecture)
 - [Quick Start](#quick-start)
@@ -37,19 +38,52 @@ English | [中文](./README_CN.md)
 
 ---
 
+## Product Focus
+
+WenQu is converging on a concrete customer outcome: help finance and tax service teams turn governed data into reviewable risk issues, evidence-backed report versions, and auditable decisions. Customers buy faster, more consistent, and traceable delivery. They do not need to buy or operate a generic ontology modeling platform as the final product.
+
+Ontology remains a core platform capability. It provides the shared object, relationship, state, action, permission, and version model used by AI querying, reports, workflows, and applications.
+
+The target delivery loop is:
+
+```text
+Data / governed query -> Risk issue -> Evidence -> Human review
+-> Report version -> Decision action -> Audit
+```
+
+### Capability Boundary as of 2026-09-01
+
+| Status | Scope |
+|--------|-------|
+| **Implemented foundation** | Governed AI querying, semantic assets, LogicForm validation and deterministic SQL compilation, analytical reports, persistent tasks, and the generic Ontology CRUD/release/action-audit prototype |
+| **Implemented technical slice** | Risk issues, evidence links, assigned review with self-review prevention, immutable report versions, and a hash-chained audit across reports and Ontology actions |
+| **Requires business validation** | Real finance/tax rules, materiality thresholds, evidence sufficiency, reviewer roles, formal report templates, UAT, and paid-pilot value |
+
+The loan-risk domain is currently used only to validate the technical workflow. Its sample data, thresholds, rules, and conclusions are synthetic and must not be treated as real lending, finance, tax, accounting, audit, or compliance advice.
+
+See the [risk report delivery roadmap](docs/risk-report-delivery-roadmap.md) for the staged validation plan.
+
+---
+
 ## Features
 
-### Enterprise Ontology Modeling
+### Risk Report Delivery Loop (Loan Technical Slice Implemented)
 
-Model the enterprise through object types, properties, relationships, states, and governed business actions. Validate and publish model versions, manage instances and permissions, and retain runtime audit records for shared use by data, AI agents, and applications.
+The loan technical slice now connects structured risk issues, traceable evidence, human review, versioned reports, controlled Ontology actions, and hash-chained audit through migrations, APIs, a workbench, synthetic demo assets, and automated replay. Real finance/tax rules, roles, and report templates still require internal business validation.
 
-### Ontology-Driven Data Querying
+Completed query results in Chat can be converted directly into risk issues. The platform resolves the exact turn by `trace_id`, then freezes the question, LogicForm, SQL, result preview, and bounded analysis summary as query/metric evidence. Selecting an Ontology object adds an immutable object snapshot, so users no longer need to copy query evidence manually.
+
+### Business Ontology Foundation
+
+Model the business through object types, properties, relationships, states, and governed actions. Validate and publish model versions, manage instances and permissions, and retain runtime audit records for shared use by data, AI agents, reports, and applications. This is an extensible platform foundation, not the customer-facing outcome by itself.
+
+### Governed AI Data Querying
 
 Natural-language questions are grounded in enterprise objects, relationships, and governed business definitions before schema recall, SQL generation, query execution, statistical analysis, and reporting. Multi-turn context, follow-ups, and corrections remain supported.
 
-### Governed Actions and Audit
+### Governed Actions and Decision Audit
 
-Actions are part of the ontology model, with explicit parameters, preconditions, roles, approval requirements, and state effects. Every execution records decision context and before/after object snapshots for a traceable operational loop.
+Actions are part of the Ontology model, with explicit parameters, preconditions, roles, approval requirements, and state effects. Object updates, action-run records, and unified audit events commit atomically; risk issues, evidence, reviews, report versions, and actions share an append-only hash chain with a persisted head anchor.
 
 ### Deep Analysis & Reporting
 
@@ -83,7 +117,7 @@ Prompt templates can be overridden per agent, model, and semantic domain. System
 
 ![System Architecture](docs/images/architecture-en.png)
 
-The system combines an enterprise ontology modeling workbench, an intelligent querying interface, a FastAPI backend, LangGraph workflows, ontology/query-semantic runtimes, and external dependencies (LLM, MySQL, Milvus). The backend governs ontology releases, analytical queries, and controlled action execution.
+The current technical foundation combines an Ontology modeling workbench, an intelligent querying interface, a FastAPI backend, LangGraph workflows, Ontology/query-semantic runtimes, and external dependencies (LLM, MySQL, Milvus). The risk report delivery slice builds on this foundation rather than replacing the existing querying and generic modeling capabilities.
 
 ### Query Execution Flow
 
@@ -95,7 +129,7 @@ Full pipeline: User question → Intent Recognition → Semantic Enhancement →
 
 ![Enterprise Ontology and Query Semantics](docs/images/er-diagram-en.png)
 
-Enterprise ontology provides the object, relationship, state, and action model. Query semantics add concepts, metrics, rules, mappings, and templates that connect the ontology to physical data and compilable queries.
+Ontology provides the underlying object, relationship, state, and action model. Query semantics add concepts, metrics, rules, mappings, and templates that connect that business model to physical data and compilable queries.
 
 ---
 
@@ -171,6 +205,8 @@ uv run python examples/loan/seed_loan_indicators.py
 # Import semantic layer assets
 uv run python scripts/import_semantic_bundle.py --path examples/loan/semantic-domain.json
 ```
+
+The loan domain is a synthetic technical demo. Its rules and generated conclusions are not real lending or compliance opinions.
 
 **Douyin E-commerce domain:**
 
@@ -250,7 +286,7 @@ flowchart TD
 
 ### 2. Enterprise Ontology and Query Semantics
 
-Enterprise ontology is the core model of WenQu: objects, properties, relationships, states, and actions describe the business world. Query semantics connect that model to metrics, physical fields, and compilable queries so data answers can lead to governed, auditable actions.
+Ontology is WenQu's underlying business model: objects, properties, relationships, states, and actions describe the relevant business context. Query semantics connect that model to metrics, physical fields, and compilable queries so data answers can enter evidence, review, report, and governed-action workflows.
 
 #### Enterprise Ontology Runtime Model
 
@@ -737,6 +773,8 @@ uv run python examples/loan/seed_loan_indicators.py
 uv run python scripts/import_semantic_bundle.py --path examples/loan/semantic-domain.json
 ```
 
+This domain validates the platform's technical contracts with synthetic data and rules. It is not a validated lending or finance/tax compliance model.
+
 Example queries:
 - What are the top 3 application regions by loan count, and how many applications did each have?
 - Monthly application count trend for the last 3 months
@@ -759,12 +797,16 @@ Example queries:
 
 ## Roadmap
 
-- [ ] SQL AST safety validation enhancement (dedicated parsing library)
-- [ ] Prompt template versioning and hit statistics
-- [ ] Multi-datasource type support (PostgreSQL, ClickHouse)
-- [ ] Fine-grained permission audit logging
-- [ ] One-click Docker deployment
-- [ ] CI/CD pipeline (GitHub Actions)
+The product roadmap is maintained in [Risk Report Delivery Roadmap](docs/risk-report-delivery-roadmap.md), dated 2026-09-01.
+
+| Phase | Goal | Acceptance gate |
+|-------|------|-----------------|
+| Loan technical slice | Implement the full risk/evidence/review/report/action/audit contract with synthetic loan cases | At least 10 end-to-end cases; evidence, review, report-version, and audit linkage complete for every case |
+| Internal finance/tax workflow selection | Select one high-frequency internal delivery process and replace demo assumptions with owned business definitions | One signed decision canvas, at least 20 historical cases, baseline metrics, initial governed rules, and one report template |
+| Historical-case shadow run | Run the system alongside the existing expert process without replacing professional judgment | At least 30 cases across two rounds, 100% human review, at least 95% evidence traceability, and at least 30% preparation-time reduction |
+| First paid pilot | Sell a bounded report-delivery outcome to one customer | One paid scope, at least four delivery batches, 100% audit completeness, and an explicit renew/expand/stop decision |
+
+Cross-cutting engineering work such as SQL AST validation, Prompt versioning, datasource expansion, permission audit, deployment, and CI/CD continues in support of these product phases rather than as a separate product narrative.
 
 ---
 

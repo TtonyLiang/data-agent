@@ -184,6 +184,19 @@ async def main() -> None:
             runs.raise_for_status()
             statuses["audit_rows"] = len(runs.json()["runs"])
 
+            decision_audit = await client.get(
+                f"/api/risk/domains/{domain_id}/audit", headers=headers
+            )
+            decision_audit.raise_for_status()
+            statuses["decision_audit_events"] = len(
+                decision_audit.json().get("events") or []
+            )
+            audit_verify = await client.get(
+                f"/api/risk/domains/{domain_id}/audit/verify", headers=headers
+            )
+            audit_verify.raise_for_status()
+            statuses["decision_audit_valid"] = bool(audit_verify.json().get("valid"))
+
             exported = await client.get(
                 f"/api/ontology/domains/{domain_id}/export", headers=headers
             )

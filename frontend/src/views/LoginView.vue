@@ -1,20 +1,20 @@
 <template>
   <main class="auth-page">
     <div class="auth-shell">
-      <aside class="brand-panel" aria-label="问渠 WenQu 企业本体智能平台">
+      <aside class="brand-panel" aria-label="问渠 WenQu AI报告交付与风险决策平台">
         <div class="brand-lockup">
           <div class="brand-mark" aria-hidden="true">
             <el-icon :size="20"><DataAnalysis /></el-icon>
           </div>
           <div class="brand-text">
             <strong>问渠 WenQu</strong>
-            <span>企业本体智能平台</span>
+            <span>AI报告交付与风险决策平台</span>
           </div>
         </div>
 
         <div class="brand-copy">
-          <h2>建模企业业务世界。</h2>
-          <p>统一定义对象、关系、状态与动作，连接数据、问数与决策。</p>
+          <h2>把数据结论变成可交付决策。</h2>
+          <p>连接风险事项、证据、人工复核、报告版本与受控业务动作。</p>
         </div>
 
         <div class="access-note">
@@ -30,7 +30,7 @@
           </div>
           <div class="brand-text">
             <strong>问渠 WenQu</strong>
-            <span>企业本体智能平台</span>
+            <span>AI报告交付与风险决策平台</span>
           </div>
         </div>
 

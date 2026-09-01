@@ -1,20 +1,20 @@
 <template>
   <main class="auth-page">
     <div class="auth-shell">
-      <aside class="brand-panel" aria-label="问渠 WenQu 企业本体智能平台">
+      <aside class="brand-panel" aria-label="问渠 WenQu AI报告交付与风险决策平台">
         <div class="brand-lockup">
           <div class="brand-mark" aria-hidden="true">
             <el-icon :size="20"><DataAnalysis /></el-icon>
           </div>
           <div class="brand-text">
             <strong>问渠 WenQu</strong>
-            <span>企业本体智能平台</span>
+            <span>AI报告交付与风险决策平台</span>
           </div>
         </div>
 
         <div class="brand-copy">
           <h2>创建账号，进入工作区。</h2>
-          <p>账号注册后，由管理员分配企业本体、智能体与数据权限。</p>
+          <p>账号注册后，由管理员分配风险交付、智能体与数据访问权限。</p>
         </div>
 
         <div class="access-note">
@@ -30,7 +30,7 @@
           </div>
           <div class="brand-text">
             <strong>问渠 WenQu</strong>
-            <span>企业本体智能平台</span>
+            <span>AI报告交付与风险决策平台</span>
           </div>
         </div>
 

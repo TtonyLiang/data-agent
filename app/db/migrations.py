@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 
@@ -19,6 +20,7 @@ from app.agent.prompts import default_prompt_templates
 from app.config import get_settings
 from app.db.mysql import get_management_db
 from app.db.ontology_schema import ONTOLOGY_TABLE_STATEMENTS
+from app.db.risk_schema import RISK_WORKFLOW_TABLE_STATEMENTS
 from app.services.user_service import hash_password
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,7 @@ async def run_management_migrations() -> None:
     # 建表语句(幂等)
     statements = [
         *ONTOLOGY_TABLE_STATEMENTS,
+        *RISK_WORKFLOW_TABLE_STATEMENTS,
         """
         CREATE TABLE IF NOT EXISTS model_config (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -389,6 +392,26 @@ async def run_management_migrations() -> None:
         "ALTER TABLE ontology_object ADD COLUMN last_synced_at TIMESTAMP NULL DEFAULT NULL "
         "COMMENT '最近业务库同步时间' AFTER overlay_properties",
     )
+    await add_column_if_missing(
+        "ontology_release",
+        "definition_hash",
+        "ALTER TABLE ontology_release ADD COLUMN definition_hash CHAR(64) DEFAULT NULL "
+        "COMMENT '不可变发布定义SHA-256' AFTER definition_json",
+    )
+    await add_column_if_missing(
+        "ontology_action_run",
+        "ontology_release_id",
+        "ALTER TABLE ontology_action_run ADD COLUMN ontology_release_id BIGINT DEFAULT NULL "
+        "COMMENT '动作执行绑定的Ontology发布版本' AFTER domain_id",
+    )
+    await create_index_if_missing(
+        "ontology_action_run",
+        "idx_ontology_run_release",
+        "ALTER TABLE ontology_action_run ADD INDEX idx_ontology_run_release "
+        "(ontology_release_id, created_at)",
+    )
+    await backfill_ontology_release_hashes()
+    await backfill_decision_audit_heads()
     # 改列类型:sql_result 从 VARCHAR 升级为 LONGTEXT(支持大结果集)
     await ensure_column_type(
         "chat_history",
@@ -450,6 +473,64 @@ async def create_index_if_missing(table: str, index_name: str, statement: str) -
     )
     if not rows:
         await db.execute_query(statement)
+
+
+async def backfill_ontology_release_hashes() -> None:
+    """Populate deterministic hashes for releases created before hash lineage existed."""
+    db = get_management_db()
+    rows = await db.execute_query(
+        "SELECT id, definition_json FROM ontology_release "
+        "WHERE definition_hash IS NULL OR definition_hash = ''"
+    )
+    for row in rows:
+        definition = row.get("definition_json")
+        if isinstance(definition, str):
+            try:
+                definition = json.loads(definition)
+            except json.JSONDecodeError:
+                definition = definition
+        canonical = json.dumps(
+            definition,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        definition_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        await db.execute_query(
+            "UPDATE ontology_release SET definition_hash = :definition_hash WHERE id = :id",
+            {"id": row["id"], "definition_hash": definition_hash},
+        )
+
+
+async def backfill_decision_audit_heads() -> None:
+    """Create chain-head anchors for audit domains written before the head table existed."""
+    db = get_management_db()
+    domains = await db.execute_query(
+        "SELECT DISTINCT domain_id FROM decision_audit_event ORDER BY domain_id"
+    )
+    for row in domains:
+        domain_id = int(row["domain_id"])
+        count_rows = await db.execute_query(
+            "SELECT COUNT(*) AS count FROM decision_audit_event WHERE domain_id = :domain_id",
+            {"domain_id": domain_id},
+        )
+        head_rows = await db.execute_query(
+            "SELECT event_hash FROM decision_audit_event WHERE domain_id = :domain_id "
+            "ORDER BY sequence_no DESC LIMIT 1",
+            {"domain_id": domain_id},
+        )
+        if not head_rows:
+            continue
+        await db.execute_query(
+            "INSERT IGNORE INTO decision_audit_head (domain_id, event_count, head_hash) "
+            "VALUES (:domain_id, :event_count, :head_hash)",
+            {
+                "domain_id": domain_id,
+                "event_count": int(count_rows[0].get("count") or 0) if count_rows else 0,
+                "head_hash": head_rows[0]["event_hash"],
+            },
+        )
 
 
 async def seed_default_admin_user() -> None:
@@ -551,7 +632,10 @@ async def seed_default_system_parameters() -> None:
             "value": settings.schema_recall_max_tables,
             "value_type": "int",
             "category": "schema_recall",
-            "description": "数据定位阶段最多保留多少张候选表。值越大上下文越全，但会增加大模型噪音。",
+            "description": (
+                "数据定位阶段最多保留多少张候选表。"
+                "值越大上下文越全，但会增加大模型噪音。"
+            ),
         },
         {
             "key": "schema_recall.required_score_ratio",
@@ -567,7 +651,10 @@ async def seed_default_system_parameters() -> None:
             "value": settings.schema_recall_optional_score_ratio,
             "value_type": "float",
             "category": "schema_recall",
-            "description": "候选表分数低于该比例时剔除；介于可召回和必须召回之间时，只在表数不足时补充。",
+            "description": (
+                "候选表分数低于该比例时剔除；介于可召回和必须召回之间时，"
+                "只在表数不足时补充。"
+            ),
         },
     ]
     statements = [
@@ -608,7 +695,10 @@ async def seed_default_prompt_templates() -> None:
                 {
                     "prompt_key": item["prompt_key"],
                     "name": item["name"],
-                    "description": f"{item['description']} 默认来源：app/agent/prompts/{item['filename']}",
+                    "description": (
+                        f"{item['description']} "
+                        f"默认来源：app/agent/prompts/{item['filename']}"
+                    ),
                     "template_text": item["template_text"],
                 },
             )

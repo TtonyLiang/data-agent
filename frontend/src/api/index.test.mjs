@@ -298,6 +298,57 @@ function stripAxiosConfig(calls) {
   ])
 }
 
+{
+  axiosCalls.length = 0
+  await api.fetchRiskSummary(7)
+  await api.fetchRiskIssues(7, { status: 'open', severity: 'high' })
+  await api.createRiskIssue(7, { title: 'M1+逾期风险', severity: 'high' })
+  await api.createRiskIssueFromChat(7, {
+    domain_id: 7,
+    agent_id: 3,
+    session_id: 'session-risk',
+    trace_id: 'trace-risk',
+    issue_key: 'chat_risk_trace_risk',
+    category: 'data_query_risk',
+    severity: 'medium',
+    title: '问数结果风险',
+  })
+  await api.addRiskEvidence(7, 12, { evidence_type: 'query', title: '逾期查询' })
+  await api.submitRiskReview(7, 12, { decision: 'confirm', comment: '确认进入处置' })
+  await api.fetchRiskReports(7)
+  await api.createRiskReport(7, { name: '贷款组合风险复核报告', issue_ids: [12] })
+  await api.createRiskReportVersion(7, 5, { title: '复核后版本', issue_ids: [12] })
+  await api.fetchRiskReportVersions(7, 5)
+  await api.finalizeRiskReport(7, 5, 2)
+  await api.fetchDecisionAuditEvents(7)
+  await api.verifyDecisionAuditChain(7)
+
+  assert.deepEqual(stripAxiosConfig(axiosCalls), [
+    ['get', '/risk/domains/7/summary'],
+    ['get', '/risk/domains/7/issues'],
+    ['post', '/risk/domains/7/issues', { title: 'M1+逾期风险', severity: 'high' }],
+    ['post', '/risk/domains/7/issues/from-chat', {
+      domain_id: 7,
+      agent_id: 3,
+      session_id: 'session-risk',
+      trace_id: 'trace-risk',
+      issue_key: 'chat_risk_trace_risk',
+      category: 'data_query_risk',
+      severity: 'medium',
+      title: '问数结果风险',
+    }],
+    ['post', '/risk/domains/7/issues/12/evidence', { evidence_type: 'query', title: '逾期查询' }],
+    ['post', '/risk/domains/7/issues/12/reviews', { decision: 'confirm', comment: '确认进入处置' }],
+    ['get', '/risk/domains/7/reports'],
+    ['post', '/risk/domains/7/reports', { name: '贷款组合风险复核报告', issue_ids: [12] }],
+    ['post', '/risk/domains/7/reports/5/versions', { title: '复核后版本', issue_ids: [12] }],
+    ['get', '/risk/domains/7/reports/5/versions'],
+    ['post', '/risk/domains/7/reports/5/finalize', { expected_version: 2 }],
+    ['get', '/risk/domains/7/audit'],
+    ['get', '/risk/domains/7/audit/verify'],
+  ])
+}
+
 assert.ok(
   source.includes('enable_low_confidence_clarification?: boolean'),
   'ChatRequest should expose the low-confidence clarification switch',
