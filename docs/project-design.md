@@ -1,6 +1,6 @@
 # 问渠 WenQu 财税 AI 报告交付与风险决策平台总体设计
 
-> 文档基准日期：2026-09-01
+> 文档基准日期：2026-09-02
 
 ## 1. 项目定位
 
@@ -106,6 +106,48 @@ flowchart LR
 - `app/agent/nodes/*`：意图识别、语义增强、知识召回、数据定位、LogicForm、SQL、Python 分析、报告生成等节点。
 - `app/services/task_checkpoint_service.py`：MySQL checkpoint、轮次分类、上下文指纹和产物失效。
 - `app/services/*`：LLM、模型配置、语义运行时、元数据、Python 执行器等服务层。
+
+### 2.3 Ontology / OSDK 对齐与增量改造
+
+本项目借鉴 Palantir OSDK 的指导思想，但当前不直接依赖 Palantir Foundry 或将 OSDK 当作本体建模层。职责划分如下：
+
+```text
+L1 Ontology Model / Semantic Contract
+    对象类型、属性、关系和行为契约
+            ↓
+L2 Semantic Mapping / Backing Data Mapping
+    标准语义到现有表、字段、指标和查询路径
+            ↓
+Typed Capability Facade
+    类型化、可复用的应用和 Agent 访问契约
+            ↓
+L3a Query Capability       L3b Action Capability
+    只读查询、聚合、关联       创建、修改、审批、状态变更
+            ↓
+现有 LogicForm/SQL 校验与只读执行链路      现有 Ontology Action 链路
+```
+
+改造采用兼容适配方式，不推翻现有 ChatView、LangGraph、LogicForm、确定性 SQL 编译、SQL 安全、权限、脱敏、报告和 Ontology 运行时。当前优先将已有问数链路提升为可执行的只读 Query Capability；已有 `OntologyActionType` 和 `execute_action()` 作为后续写入 Action 能力保留。
+
+当前第一版 `ontology_query_capability` 的执行口径是“流程简化，但真实执行”：
+
+```text
+capability key + 业务参数
+  → capability / LogicForm 校验
+  → 确定性 SQL 编译
+  → 复用现有 sql_execute_node 的简化只读流程
+  → 返回实际查询结果、执行状态和语义 trace
+```
+
+第一版执行边界和结果契约如下：
+
+- 独立 `ontology_query_capability` 按简化流程直接执行只读 SQL，不经过现有 Chat 图的 SQL 确认 checkpoint；仍复用现有 SQL 安全校验、数据源/表列权限和结果脱敏，不新增独立数据库执行器。
+- 独立 Query Capability API 要求当前语义域的 `datasource_id` 非空且数据源属于该域所属 Agent；缺失时返回 400，跨 Agent 时返回 403，避免回退到默认 `business DB`。
+- `execution.status` 取 `validation_blocked`、`security_blocked`、`permission_blocked`、`database_error` 或 `succeeded`。校验阻断时 `attempted=false`；进入 SQL 执行节点后 `attempted=true`；只有 `succeeded` 才标识 `executed=true`。
+- 结果返回 `executed_sql`（SQL 执行节点规范化后的实际语句；未实际执行或失败时可能为空）和 `execution_trace`，其中保留服务端 `trace_id`、`domain_id`、`datasource_id`、Query Capability 以及 Ontology `release` 信息。
+- Query Capability 严格只读，不调用 `execute_action()`，不创建或修改 Ontology 对象，也不产生外部写入副作用。现有 Chat 图的 SQL 确认开关和 HITL 门禁继续保留；完整的 capability 级人工确认、影子运行、灰度发布和治理审计留到后续阶段。
+
+详细的官方术语对齐、当前代码基线、增量功能点、阶段顺序和验收标准见 [Ontology / OSDK 对齐与 DataQueryAgent 增量改造计划](./ontology-osdk-alignment-plan.md)。
 
 ## 3. 配置关系模型
 
@@ -505,7 +547,7 @@ checkpoint 以 `(user_id, agent_id, session_id)` 为主键，`revision` 每次�
 - HITL 等待不是失败，也不能在同一个图调用里轮询用户；恢复必须由后续 HTTP 请求触发。
 - 用户反馈回流：`/api/feedback` 记录 `agent_id`、`session_id`、`trace_id`、评分、备注和上下文 payload，供后续评估和 Prompt/语义层迭代。
 
-上述 HITL 主要覆盖 SQL 执行确认和低置信度追问，不等同于财税风险事项的业务复核。贷款技术切片已提供开始复核、确认、驳回、补件、解决和重新打开状态，并实施指派复核、禁止普通用户自审和管理员定稿边界。
+上述 HITL 条目描述的是现有 Chat 图中的 SQL 执行确认和低置信度追问，不等同于财税风险事项的业务复核。独立 `ontology_query_capability` 第一版不进入 Chat 图的 SQL 确认门禁，而是按简化流程直接执行只读 SQL；完整的 capability 级人工确认、影子运行、灰度发布和治理控制后置。贷款技术切片已提供开始复核、确认、驳回、补件、解决和重新打开状态，并实施指派复核、禁止普通用户自审和管理员定稿边界。
 
 ## 11. 后续演进方向
 

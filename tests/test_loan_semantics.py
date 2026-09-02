@@ -71,10 +71,10 @@ def test_loan_example_semantic_bundle_contains_core_assets():
         "collection_recovery_rate",
     }
     assert {item.relation_key for item in runtime.relations} >= {
-        "application_to_account",
-        "account_to_repayment",
-        "account_to_collection",
-        "account_to_customer_risk",
+        "application_creates_account",
+        "account_has_repayment",
+        "account_has_collection_case",
+        "account_has_risk_snapshot",
     }
     assert {item.rule_key for item in runtime.rules} >= {
         "m1_plus_definition",

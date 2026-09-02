@@ -14,6 +14,7 @@ import logging
 from app.agent.ontology_evidence import build_ontology_evidence
 from app.services.embedding_service import get_embedding_service
 from app.services.ontology_service import get_ontology_service
+from app.services.query_context import build_query_context
 from app.services.semantic_runtime import get_semantic_runtime_service
 from app.services.vector_store import get_vector_store
 from app.utils.logging_helpers import (
@@ -59,6 +60,25 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
         result = {
             "semantic_runtime": None,
             "runtime_evidence": [],
+            "ontology_context": None,
+            "ontology_evidence": {},
+            "query_context": {
+                "question": question,
+                "domain": {},
+                "ontology": {},
+                "ontology_context": {},
+                "bridge": {},
+                "query_capabilities": [],
+                "release": None,
+                "evidence": {},
+                "warnings": [
+                    {
+                        "code": "semantic_runtime_unavailable",
+                        "message": "语义运行时不可用，未构建统一 query_context",
+                        "details": {"error": str(exc)},
+                    }
+                ],
+            },
             "semantic_error": str(exc),
             "final_answer": f"知识召回不可用: {exc}",
         }
@@ -115,6 +135,39 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
     result["ontology_context"] = ontology_context
     result["ontology_evidence"] = build_ontology_evidence(question, ontology_context)
     runtime_payload = runtime.model_dump()
+    try:
+        result["query_context"] = build_query_context(
+            question,
+            runtime_payload,
+            ontology_context,
+            result["ontology_evidence"],
+        )
+    except Exception as exc:
+        logger.warning(
+            "query context unavailable agent_id=%s domain_id=%s error=%s",
+            agent_id,
+            domain_id,
+            exc,
+        )
+        result["query_context"] = {
+            "question": question,
+            "domain": runtime_payload.get("domain") or {},
+            "ontology": ontology_context or {},
+            "ontology_context": ontology_context or {},
+            "bridge": {},
+            "query_capabilities": [],
+            "release": (ontology_context or {}).get("release")
+            if isinstance(ontology_context, dict)
+            else None,
+            "evidence": result["ontology_evidence"],
+            "warnings": [
+                {
+                    "code": "query_context_build_failed",
+                    "message": "统一 query_context 构建失败，已保留旧语义召回结果",
+                    "details": {"error": str(exc)},
+                }
+            ],
+        }
     logger.info(
         "semantic runtime recalled counts=%s evidence=%s",
         json_for_log(

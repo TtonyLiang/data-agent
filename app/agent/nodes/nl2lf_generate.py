@@ -28,6 +28,10 @@ from app.agent.domain_rules import (
 )
 from app.agent.ontology_evidence import select_ontology_context
 from app.agent.prompts import load_prompt
+from app.agent.query_capability import (
+    query_capability_prompt_payload,
+    resolve_query_capability_key,
+)
 from app.models.knowledge import LogicFilter, LogicForm, LogicSort
 from app.services.llm_service import get_llm_service
 from app.services.prompt_service import get_prompt_service
@@ -66,6 +70,7 @@ async def nl2lf_generate_node(state: dict) -> dict:
     schema_scope = state.get("schema_scope") or {}
     runtime_context = build_runtime_context(
         runtime,
+        query_context=state.get("query_context"),
         ontology_context=state.get("ontology_context"),
         ontology_evidence=state.get("ontology_evidence"),
         relevant_tables=relevant_tables,
@@ -131,6 +136,11 @@ async def nl2lf_generate_node(state: dict) -> dict:
     logger.info("nl2lf normalized logic_form=%s", json_for_log(logic_form.model_dump()))
 
     result = {"logic_form": logic_form.model_dump()}
+    query_context = state.get("query_context")
+    if query_context:
+        result["query_capability_key"] = resolve_query_capability_key(
+            logic_form, query_context
+        )
     if relevant_tables or relevant_columns or likely_joins:
         result["schema_scope"] = {
             "relevant_tables": relevant_tables,
@@ -512,6 +522,7 @@ def unique_strings(values: list[str]) -> list[str]:
 def build_runtime_context(
     runtime: dict,
     *,
+    query_context: dict | None = None,
     ontology_context: dict | None = None,
     ontology_evidence: dict | None = None,
     relevant_tables: list[dict] | None = None,
@@ -580,14 +591,17 @@ def build_runtime_context(
         ],
     }
     ontology_payload = select_ontology_context(ontology_context, ontology_evidence)
-    return json.dumps(
-        {
+    payload = {
             "metrics": metrics,
             "dimensions_and_filters": dimensions,
             "rules": rules,
             "physical_schema": physical_schema,
             "ontology": ontology_payload,
-        },
+    }
+    if query_context:
+        payload["query_capabilities"] = query_capability_prompt_payload(query_context)
+    return json.dumps(
+        payload,
         ensure_ascii=False,
     )
 

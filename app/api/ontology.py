@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.agent.ontology_tools import build_ontology_tool_definitions, invoke_ontology_tool
+from app.agent.ontology_tools import (
+    QUERY_CAPABILITY_TOOL,
+    _load_query_runtime_context,
+    build_ontology_tool_definitions,
+    build_query_capability_definitions,
+    invoke_ontology_tool,
+)
 from app.api.deps import get_current_user, require_admin, require_agent_access
 from app.models.ontology import (
     OntologyActionExecutePayload,
@@ -19,6 +25,7 @@ from app.models.ontology import (
     OntologySyncPayload,
 )
 from app.models.user import PublicUser
+from app.services.datasource_service import get_datasource_service
 from app.services.ontology_service import get_ontology_service
 from app.services.semantic_runtime import get_semantic_runtime_service
 from app.services.user_service import get_user_service
@@ -146,12 +153,39 @@ async def list_action_types(domain_id: int, current_user: PublicUser = Depends(g
 
 @router.get("/domains/{domain_id}/agent-context")
 async def get_agent_context(domain_id: int, current_user: PublicUser = Depends(get_current_user)):
-    """Return the role-filtered context and bounded tools for an application."""
+    """Return role-filtered Ontology context and bounded runtime tools.
+
+    The application context includes object-query, read-only Query Capability,
+    and published Action definitions.
+    """
     await require_domain_access(domain_id, current_user)
-    context = await get_ontology_service().build_agent_context(
-        domain_id, role=current_user.role
+    context, runtime = await _load_query_runtime_context(
+        get_ontology_service(),
+        domain_id,
+        current_user.model_dump(),
     )
-    return {**context, "tools": build_ontology_tool_definitions()}
+    return {
+        **context,
+        "query_capabilities": build_query_capability_definitions(runtime, context),
+        "tools": build_ontology_tool_definitions(include_query_capability=True),
+    }
+
+
+@router.get("/domains/{domain_id}/query-capabilities")
+async def list_query_capabilities(
+    domain_id: int,
+    current_user: PublicUser = Depends(get_current_user),
+):
+    """Return the read-only Query Capability contracts available in a domain."""
+    await require_domain_access(domain_id, current_user)
+    context, runtime = await _load_query_runtime_context(
+        get_ontology_service(),
+        domain_id,
+        current_user.model_dump(),
+    )
+    return {
+        "query_capabilities": build_query_capability_definitions(runtime, context),
+    }
 
 
 @router.get("/domains/{domain_id}/query")
@@ -181,15 +215,51 @@ async def run_agent_tool(
     payload: OntologyAgentToolPayload,
     current_user: PublicUser = Depends(get_current_user),
 ):
-    """Invoke one of the two explicit Ontology runtime tools."""
+    """Invoke one bounded Ontology runtime tool.
+
+    For ``ontology_query_capability``, the domain must have a non-null
+    datasource owned by its Agent.  The independent v1 Query path executes
+    read-only SQL directly after validation and deterministic compilation; it
+    does not use the Chat graph's SQL-confirmation checkpoint.  Object query
+    and published Action behavior retain their existing boundaries.
+    """
     await require_domain_access(domain_id, current_user)
     try:
+        query_context: dict[str, object] = {}
+        if tool_name == QUERY_CAPABILITY_TOOL:
+            context, runtime = await _load_query_runtime_context(
+                get_ontology_service(),
+                domain_id,
+                current_user.model_dump(),
+            )
+            datasource_id = runtime.domain.datasource_id
+            if datasource_id is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Query Capability 未绑定 datasource_id，"
+                        "拒绝回退到默认 business DB"
+                    ),
+                )
+            if not await get_datasource_service().belongs_to_agent(
+                datasource_id,
+                runtime.domain.agent_id,
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Query Capability 无权访问该数据源",
+                )
+            query_context = {
+                "ontology_context": context,
+                "semantic_runtime": runtime,
+            }
         return await invoke_ontology_tool(
             get_ontology_service(),
             domain_id,
             tool_name,
             payload.arguments,
             current_user.model_dump(),
+            **query_context,
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

@@ -276,10 +276,12 @@
                     v-if="objectPropertyEntries(row.properties).length"
                     placement="top-start"
                     effect="light"
-                    :show-after="180"
+                    :show-after="120"
+                    :hide-after="80"
+                    transition="object-property-popover-fade"
                     popper-class="object-property-tooltip"
                   >
-                    <div class="audit-field-list object-property-list">
+                    <div class="audit-field-list object-property-list object-property-trigger">
                       <div v-for="entry in objectPropertyPreview(row.properties)" :key="entry.key" class="audit-field-row">
                         <span :class="['audit-field-key', `tone-${entry.tone}`]">{{ entry.key }}</span>
                         <span class="audit-field-value object-property-value">{{ formatStateValue(entry.value, entry.key) }}</span>
@@ -287,10 +289,16 @@
                       <span v-if="hiddenPropertyCount(row.properties)" class="object-property-more">+{{ hiddenPropertyCount(row.properties) }} 项</span>
                     </div>
                     <template #content>
-                      <div class="audit-field-list object-property-tooltip-list">
-                        <div v-for="entry in objectPropertyEntries(row.properties)" :key="entry.key" class="audit-field-row">
-                          <span :class="['audit-field-key', `tone-${entry.tone}`]">{{ entry.key }}</span>
-                          <span class="audit-field-value">{{ formatStateValue(entry.value, entry.key) }}</span>
+                      <div class="object-property-tooltip-content">
+                        <div class="object-property-tooltip-heading">
+                          <span>完整属性</span>
+                          <b>{{ objectPropertyEntries(row.properties).length }} 项</b>
+                        </div>
+                        <div class="audit-field-list object-property-tooltip-list">
+                          <div v-for="entry in objectPropertyEntries(row.properties)" :key="entry.key" class="audit-field-row">
+                            <span :class="['audit-field-key', `tone-${entry.tone}`]">{{ entry.key }}</span>
+                            <span class="audit-field-value">{{ formatStateValue(entry.value, entry.key) }}</span>
+                          </div>
                         </div>
                       </div>
                     </template>
@@ -1042,8 +1050,10 @@ onBeforeUnmount(() => {
 .state-value.is-after { background: #ecfdf3; color: #067647; }
 .state-arrow { color: #98a2b3; font-size: 12px; line-height: 22px; text-align: center; }
 .audit-empty { color: var(--wq-subtle); }
-.primary-cell { display: flex; flex-direction: column; gap: 3px; }.primary-cell strong { font-weight: 620; }.primary-cell code, code { color: #344054; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }.property-grid { display: grid; gap: 5px; padding: 12px 58px; background: #f8fafc; }.property-row { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(140px, 1fr) 80px 70px 60px; align-items: center; gap: 10px; min-height: 30px; }.object-property-list { gap: 6px; }.object-property-value { min-width: 0; display: block; overflow: hidden; cursor: help; text-overflow: ellipsis; white-space: nowrap; }.object-property-more { color: var(--wq-primary-strong); font-size: 12px; line-height: 1.5; cursor: help; }
-:global(.object-property-tooltip) { max-width: min(680px, calc(100vw - 40px)); color: #344054; line-height: 1.6; white-space: normal; overflow-wrap: anywhere; }.object-property-tooltip-list { min-width: min(420px, calc(100vw - 56px)); max-width: min(640px, calc(100vw - 56px)); }
+.primary-cell { display: flex; flex-direction: column; gap: 3px; }.primary-cell strong { font-weight: 620; }.primary-cell code, code { color: #344054; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }.property-grid { display: grid; gap: 5px; padding: 12px 58px; background: #f8fafc; }.property-row { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(140px, 1fr) 80px 70px 60px; align-items: center; gap: 10px; min-height: 30px; }.object-property-list { gap: 6px; }.object-property-trigger { padding: 6px 8px; border: 1px solid transparent; border-radius: 6px; transition: border-color 150ms ease, background-color 150ms ease, transform 150ms ease; }.object-property-trigger:hover { background: #eff8ff; border-color: #b2ddff; transform: translateY(-1px); }.object-property-value { min-width: 0; display: block; overflow: hidden; cursor: help; text-overflow: ellipsis; white-space: nowrap; }.object-property-more { color: var(--wq-primary-strong); font-size: 12px; line-height: 1.5; cursor: help; }
+:global(.object-property-tooltip.el-popper) { max-width: min(680px, calc(100vw - 40px)); padding: 0 !important; color: #182230; background: #ffffff; border: 1px solid #98a2b3 !important; border-radius: 8px !important; box-shadow: 0 16px 36px rgba(16, 24, 40, 0.18), 0 3px 8px rgba(16, 24, 40, 0.1) !important; line-height: 1.6; white-space: normal; overflow: hidden; overflow-wrap: anywhere; }.object-property-tooltip-content { overflow: hidden; }.object-property-tooltip-heading { display: flex; align-items: center; justify-content: space-between; min-height: 38px; padding: 0 12px; color: #344054; background: #f2f4f7; border-bottom: 1px solid #d0d5dd; font-size: 12px; font-weight: 700; }.object-property-tooltip-heading b { display: inline-flex; align-items: center; min-height: 20px; padding: 0 6px; color: #175cd3; background: #eff8ff; border: 1px solid #b2ddff; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }.object-property-tooltip-list { min-width: min(420px, calc(100vw - 56px)); max-width: min(640px, calc(100vw - 56px)); max-height: min(420px, calc(100vh - 120px)); gap: 0; padding: 7px 12px 9px; overflow: auto; }.object-property-tooltip-list .audit-field-row { grid-template-columns: minmax(120px, max-content) minmax(0, 1fr); gap: 10px; min-height: 32px; padding: 5px 0; border-bottom: 1px solid #eaecf0; }.object-property-tooltip-list .audit-field-row:last-child { border-bottom: 0; }.object-property-tooltip-list .audit-field-key { align-self: start; color: #344054; background: #f9fafb; border-color: #b8c2d1; font-weight: 700; }.object-property-tooltip-list .audit-field-key.tone-status { color: #175cd3; background: #eff8ff; border-color: #b2ddff; }.object-property-tooltip-list .audit-field-key.tone-time { color: #0e7090; background: #ecfdff; border-color: #a5f0fc; }.object-property-tooltip-list .audit-field-key.tone-number { color: #067647; background: #ecfdf3; border-color: #abefc6; }.object-property-tooltip-list .audit-field-key.tone-text { color: #b54708; background: #fff7ed; border-color: #fed7aa; }.object-property-tooltip-list .audit-field-key.tone-reference { color: #5925dc; background: #f4f3ff; border-color: #d9d6fe; }.object-property-tooltip-list .audit-field-key.tone-category { color: #c01048; background: #fff1f3; border-color: #fecdd6; }.object-property-tooltip-list .audit-field-value { padding-top: 2px; color: #182230; font-size: 13px; font-weight: 560; line-height: 1.55; }
+:global(.object-property-tooltip.el-popper .el-popper__arrow::before) { background: #ffffff; border-color: #98a2b3; }
+:global(.object-property-popover-fade-enter-active), :global(.object-property-popover-fade-leave-active) { transition: opacity 160ms ease, transform 160ms cubic-bezier(0.22, 1, 0.36, 1); transform-origin: top left; }:global(.object-property-popover-fade-enter-from), :global(.object-property-popover-fade-leave-to) { opacity: 0; transform: translateY(6px) scale(0.98); }
 .form-grid { display: grid; gap: 14px; }.form-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }.form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }.subsection-title { justify-content: space-between; min-height: 40px; margin-top: 4px; border-bottom: 1px solid var(--wq-border); }.builder-list { display: grid; gap: 7px; margin: 9px 0 14px; }.builder-row { display: grid; align-items: center; gap: 7px; padding: 7px; background: #f7f9fc; border: 1px solid var(--wq-border); border-radius: 6px; }.property-builder { grid-template-columns: 1.2fr 1.2fr 110px 62px 62px 32px; }.parameter-builder { grid-template-columns: 1fr 1fr 105px 1.2fr 62px 32px; }.condition-builder { grid-template-columns: 1fr 110px 1fr 1.2fr 32px; }.effect-builder { grid-template-columns: 1fr 2fr 32px; }
 .validation-result section { margin-top: 18px; }.validation-result h4 { margin-bottom: 8px; }.validation-item { display: grid; grid-template-columns: 130px 1fr; gap: 10px; margin-bottom: 7px; padding: 10px; border-left: 3px solid; background: #f8fafc; }.validation-item.error { border-color: var(--wq-danger); }.validation-item.warning { border-color: var(--wq-warning); }
 @media (max-width: 1100px) { .page-toolbar { align-items: flex-start; }.toolbar-actions { max-width: 60%; }.metric-strip { grid-template-columns: repeat(3, 1fr); }.form-grid.three { grid-template-columns: 1fr 1fr; } }

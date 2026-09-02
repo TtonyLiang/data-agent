@@ -66,18 +66,32 @@ assert.ok(
 
 assert.ok(
   source.includes('objectPropertyEntries(row.properties)') &&
-    source.includes('class="audit-field-list object-property-list"') &&
+    source.includes('class="audit-field-list object-property-list object-property-trigger"') &&
     source.includes('class="audit-field-value object-property-value"') &&
     source.includes('objectPropertyPreview(row.properties)') &&
     source.includes('hiddenPropertyCount(row.properties)') &&
     source.includes('const PROPERTY_PREVIEW_LIMIT = 4') &&
     source.includes('popper-class="object-property-tooltip"') &&
+    source.includes('transition="object-property-popover-fade"') &&
+    source.includes('class="object-property-tooltip-heading"') &&
+    source.includes('完整属性') &&
     source.includes('<template #content>') &&
     source.includes('object-property-tooltip-list') &&
     source.includes('function objectPropertyEntries') &&
     !source.includes('properties-tooltip') &&
     !source.includes('popper-class="properties-tooltip"'),
   'object properties should truncate long values and reveal the full value on hover',
+)
+
+assert.ok(
+  source.includes('.object-property-trigger:hover') &&
+    source.includes(':global(.object-property-tooltip.el-popper)') &&
+    source.includes('border: 1px solid #98a2b3') &&
+    source.includes('box-shadow: 0 16px 36px') &&
+    source.includes(':global(.object-property-popover-fade-enter-active)') &&
+    source.includes('translateY(6px) scale(0.98)') &&
+    source.includes('max-height: min(420px, calc(100vh - 120px))'),
+  'object property hover popover should have contrast, motion, and bounded scrolling for large records',
 )
 
 assert.ok(

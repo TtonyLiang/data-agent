@@ -9,7 +9,9 @@
 
 import logging
 
+from app.agent.query_capability import build_query_capability_registry
 from app.models.knowledge import LogicForm, SemanticRuntime
+from app.services.query_capability import QueryCapabilityFacade
 from app.services.semantic_runtime import get_semantic_runtime_service
 from app.utils.logging_helpers import (
     json_for_log,
@@ -36,11 +38,24 @@ async def lf_to_sql_compile_node(state: dict) -> dict:
         log_node_end(logger, "lf_to_sql_compile", result)
         return result
 
-    svc = get_semantic_runtime_service()
     logic_form = LogicForm(**state["logic_form"])
     runtime = SemanticRuntime(**state["semantic_runtime"])
+    capability_key = state.get("query_capability_key")
+    query_context = state.get("query_context")
     try:
-        compiled = svc.compile_logic_form(logic_form, runtime)
+        if capability_key and query_context:
+            registry = build_query_capability_registry(query_context)
+            facade = QueryCapabilityFacade(registry)
+            compiled = facade.compile_logic_form(
+                str(capability_key),
+                logic_form,
+                runtime,
+                ontology_context=query_context.get("ontology_context")
+                if isinstance(query_context, dict)
+                else None,
+            )
+        else:
+            compiled = get_semantic_runtime_service().compile_logic_form(logic_form, runtime)
     except Exception as exc:
         log_node_error(logger, "lf_to_sql_compile", exc, state)
         result = {
@@ -57,6 +72,16 @@ async def lf_to_sql_compile_node(state: dict) -> dict:
         "warnings": compiled.warnings,
         "compile_strategy": "deterministic_logic_form",
     }
+    if capability_key and query_context:
+        capability = build_query_capability_registry(query_context).resolve(str(capability_key))
+        if capability is not None:
+            trace.update(
+                {
+                    "query_capability_key": capability.key,
+                    "target_object": capability.target_object,
+                    "read_only": capability.read_only,
+                }
+            )
     result = {
         "compiled_query": compiled.model_dump(),
         "compiled_sql": compiled.sql,

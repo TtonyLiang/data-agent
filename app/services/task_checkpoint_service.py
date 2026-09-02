@@ -57,6 +57,7 @@ _SEMANTIC_FIELDS = {
     "runtime_evidence",
     "ontology_context",
     "semantic_error",
+    "query_context",
 }
 _SCHEMA_FIELDS = {
     "ontology_evidence",
@@ -69,6 +70,8 @@ _SCHEMA_FIELDS = {
 _QUERY_FIELDS = {
     "logic_form",
     "logic_form_attempted",
+    "query_capability_key",
+    "query_capability_validation",
     "lf_validation",
     "compiled_query",
     "compiled_sql",
@@ -233,6 +236,8 @@ def reconcile_task_state(
                 "sql_executed",
                 "sql_error",
                 "sql_retry_count",
+                "query_capability_key",
+                "query_capability_validation",
             }
             | _ANALYSIS_FIELDS,
             invalidated,
@@ -340,7 +345,12 @@ def _is_dimension_refinement(question: str) -> bool:
 def _reused_artifacts(state: dict[str, Any]) -> list[str]:
     groups = (
         ("semantic_runtime", bool(state.get("semantic_runtime"))),
+        ("query_context", bool(state.get("query_context"))),
         ("schema", bool(state.get("schema_ready") or state.get("relevant_tables"))),
+        (
+            "query_capability",
+            bool(state.get("query_capability_key") or state.get("query_capability_validation")),
+        ),
         ("logic_form", bool(state.get("logic_form"))),
         ("compiled_sql", bool(state.get("compiled_sql") or state.get("sql_text"))),
         ("sql_result", bool(state.get("sql_executed")) or "sql_result" in state),
@@ -555,10 +565,85 @@ class TaskCheckpointService:
                 "WHERE mt.datasource_id = :datasource_id ORDER BY mt.id, mc.id",
                 {"datasource_id": datasource_id},
             )
+        ontology_version = {
+            "definitions_available": False,
+            "definitions": [],
+            "release_available": False,
+            "release": None,
+        }
+        if domain_id:
+            try:
+                ontology_rows = await db.execute_query(
+                    "SELECT 'object_type' AS kind, COUNT(*) AS item_count, "
+                    "MAX(updated_at) AS latest FROM ontology_object_type "
+                    "WHERE domain_id = :domain_id UNION ALL "
+                    "SELECT 'property', COUNT(*), MAX(p.updated_at) "
+                    "FROM ontology_property p JOIN ontology_object_type ot "
+                    "ON ot.id = p.object_type_id WHERE ot.domain_id = :domain_id UNION ALL "
+                    "SELECT 'link_type', COUNT(*), MAX(updated_at) "
+                    "FROM ontology_link_type WHERE domain_id = :domain_id UNION ALL "
+                    "SELECT 'action_type', COUNT(*), MAX(updated_at) "
+                    "FROM ontology_action_type WHERE domain_id = :domain_id",
+                    {"domain_id": domain_id},
+                )
+            except DBAPIError as exc:
+                logger.warning(
+                    "ontology definition version signal unavailable domain_id=%s error=%s",
+                    domain_id,
+                    exc,
+                )
+            else:
+                definitions = sorted(
+                    (
+                        {
+                            "kind": str(row.get("kind") or ""),
+                            "item_count": int(row.get("item_count") or 0),
+                            "latest": row.get("latest"),
+                        }
+                        for row in ontology_rows
+                    ),
+                    key=lambda row: row["kind"],
+                )
+                ontology_version["definitions"] = definitions
+                ontology_version["definitions_available"] = {
+                    row["kind"] for row in definitions
+                } >= {"object_type", "property", "link_type", "action_type"}
+
+            release_rows = []
+            try:
+                release_rows = await db.execute_query(
+                    "SELECT id, version, definition_hash, created_at FROM ontology_release "
+                    "WHERE domain_id = :domain_id ORDER BY version DESC, id DESC LIMIT 1",
+                    {"domain_id": domain_id},
+                )
+                ontology_version["release_available"] = True
+            except DBAPIError:
+                try:
+                    release_rows = await db.execute_query(
+                        "SELECT id, version, created_at FROM ontology_release "
+                        "WHERE domain_id = :domain_id ORDER BY version DESC, id DESC LIMIT 1",
+                        {"domain_id": domain_id},
+                    )
+                    ontology_version["release_available"] = True
+                except DBAPIError as exc:
+                    logger.warning(
+                        "ontology release version signal unavailable domain_id=%s error=%s",
+                        domain_id,
+                        exc,
+                    )
+            if release_rows:
+                release = release_rows[0]
+                ontology_version["release"] = {
+                    "id": release.get("id"),
+                    "version": release.get("version"),
+                    "definition_hash": release.get("definition_hash"),
+                    "created_at": release.get("created_at"),
+                }
         fingerprint_source = {
             "identity": identity,
             "semantic": semantic_versions,
             "schema": schema_version,
+            "ontology": ontology_version,
         }
         fingerprint = hashlib.sha256(
             json.dumps(fingerprint_source, ensure_ascii=False, sort_keys=True, default=str).encode()
@@ -569,6 +654,7 @@ class TaskCheckpointService:
             "semantic_domain_id": domain_id,
             "chat_model_config_id": identity.get("chat_model_config_id"),
             "embedding_model_config_id": identity.get("embedding_model_config_id"),
+            "ontology_version": ontology_version,
         }
 
     async def prepare_turn(

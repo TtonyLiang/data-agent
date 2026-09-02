@@ -203,8 +203,13 @@ Frontend runs at `http://localhost:4399` by default (use the Network URL printed
 uv run python examples/loan/seed_loan_indicators.py
 
 # Import semantic layer assets
-uv run python scripts/import_semantic_bundle.py --path examples/loan/semantic-domain.json
+uv run python scripts/import_semantic_bundle.py \
+  --path examples/loan/semantic-domain.json \
+  --agent-id 1 \
+  --datasource-id 1
 ```
+
+Note: In the demo environment, always pass `--agent-id 1 --datasource-id 1` explicitly. `import_semantic_bundle.py` only upserts semantic assets; it does not delete old `semantic_relation` records that are not present in the bundle. Remove obsolete relations separately and deliberately, after backing up and verifying the data.
 
 The loan domain is a synthetic technical demo. Its rules and generated conclusions are not real lending or compliance opinions.
 
@@ -770,8 +775,13 @@ uv run ruff format .
 
 ```bash
 uv run python examples/loan/seed_loan_indicators.py
-uv run python scripts/import_semantic_bundle.py --path examples/loan/semantic-domain.json
+uv run python scripts/import_semantic_bundle.py \
+  --path examples/loan/semantic-domain.json \
+  --agent-id 1 \
+  --datasource-id 1
 ```
+
+Note: The demo command must explicitly specify the agent and datasource (`--agent-id 1 --datasource-id 1`). The import script only performs upserts and does not delete old `semantic_relation` records.
 
 This domain validates the platform's technical contracts with synthetic data and rules. It is not a validated lending or finance/tax compliance model.
 

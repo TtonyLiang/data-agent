@@ -3,6 +3,11 @@
 ## 当前语义运行时
 {runtime_context}
 
+当上下文中存在 `query_capabilities` 时，只能选择其中明确列出的只读查询能力；
+能力的 `key` 只用于系统侧解析，不要把 capability key 放进 LogicForm JSON。
+LogicForm 的 metrics 和 dimensions 必须使用能力定义中支持的 canonical key。
+如果多个能力都完整匹配，或没有能力完整匹配，不要猜测能力，也不要改写物理表名和字段名。
+
 ## 可用字段
 - intent_type: metric_query
 - domain_key: 当前语义运行时中的领域标识；不要臆造固定行业标识

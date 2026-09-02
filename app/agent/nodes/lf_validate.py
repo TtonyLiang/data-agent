@@ -7,9 +7,10 @@
 
 import logging
 
+from app.agent.query_capability import validate_query_capability
 from app.models.knowledge import LogicForm, SemanticRuntime
 from app.services.semantic_runtime import get_semantic_runtime_service
-from app.utils.logging_helpers import json_for_log, log_node_end, log_node_start, log_node_error
+from app.utils.logging_helpers import json_for_log, log_node_end, log_node_start
 
 logger = logging.getLogger(__name__)
 
@@ -33,17 +34,55 @@ async def lf_validate_node(state: dict) -> dict:
         log_node_end(logger, "lf_validate", result)
         return result
 
-    svc = get_semantic_runtime_service()
     logic_form = LogicForm(**logic_form_data)
     runtime = SemanticRuntime(**runtime_data)
+    capability_key = state.get("query_capability_key")
+    capability_validation = None
+    if capability_key and state.get("query_context"):
+        capability_validation = validate_query_capability(
+            str(capability_key), logic_form, state.get("query_context")
+        )
+
+    # Keep the existing deterministic semantic validation, but make the
+    # capability boundary the first gate when the new context is active.
+    svc = get_semantic_runtime_service()
     validation = svc.validate_logic_form(logic_form, runtime)
-    result = {"lf_validation": validation.model_dump()}
-    if not validation.valid:
-        result["final_answer"] = "语义校验未通过: " + "；".join(validation.errors)
+    result = {
+        "lf_validation": validation.model_dump(),
+        **(
+            {"query_capability_validation": capability_validation}
+            if capability_validation is not None
+            else {}
+        ),
+    }
+    if capability_validation is not None and not capability_validation.get("valid"):
+        merged_errors = [
+            *list(capability_validation.get("errors") or []),
+            *list(validation.errors),
+        ]
+        result["lf_validation"] = validation.model_copy(
+            update={
+                "valid": False,
+                "errors": list(dict.fromkeys(merged_errors)),
+                "warnings": list(
+                    dict.fromkeys(
+                        [
+                            *list(capability_validation.get("warnings") or []),
+                            *list(validation.warnings),
+                        ]
+                    )
+                ),
+            }
+        ).model_dump()
+    if not result["lf_validation"].get("valid"):
+        result["final_answer"] = "语义校验未通过: " + "；".join(
+            result["lf_validation"].get("errors") or []
+        )
     logger.info(
-        "lf validation logic_form=%s validation=%s",
+        "lf validation logic_form=%s validation=%s capability=%s",
         json_for_log(logic_form.model_dump()),
-        json_for_log(validation.model_dump()),
+        json_for_log(result["lf_validation"]),
+        json_for_log(result.get("query_capability_validation")),
     )
     log_node_end(logger, "lf_validate", result)
     return result

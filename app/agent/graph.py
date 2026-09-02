@@ -43,10 +43,13 @@ class AgentState(TypedDict, total=False):
     runtime_evidence: list[dict[str, Any]]
     semantic_runtime: dict[str, Any]
     ontology_context: dict[str, Any]
+    query_context: dict[str, Any]
     ontology_evidence: dict[str, Any]
     semantic_error: str | None
     schema_scope: dict[str, Any]
     logic_form: dict[str, Any]
+    query_capability_key: str | None
+    query_capability_validation: dict[str, Any]
     lf_validation: dict[str, Any]
     compiled_query: dict[str, Any]
     compiled_sql: str

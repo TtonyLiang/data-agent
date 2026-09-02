@@ -131,6 +131,8 @@ Prompt 模板支持按智能体、模型、语义层覆盖；系统参数支持�
 
 Ontology 提供底层对象、关系、状态和动作模型；查询语义补充概念、指标、规则、映射和模板，并把业务模型连接到真实数据与可编译查询。
 
+Ontology / OSDK 术语对齐及 `dataqueryAgent` 增量改造计划见 [相关架构与开发计划](docs/ontology-osdk-alignment-plan.md)。
+
 ---
 
 ## 快速开始
@@ -203,8 +205,13 @@ npm run dev
 uv run python examples/loan/seed_loan_indicators.py
 
 # 导入语义层资产
-uv run python scripts/import_semantic_bundle.py --path examples/loan/semantic-domain.json
+uv run python scripts/import_semantic_bundle.py \
+  --path examples/loan/semantic-domain.json \
+  --agent-id 1 \
+  --datasource-id 1
 ```
+
+注意：演示环境必须显式传入 `--agent-id 1 --datasource-id 1`。`import_semantic_bundle.py` 只会对语义资产执行 upsert，不会删除数据库中 bundle 未包含的旧 `semantic_relation`；如需清理旧关系，必须在备份和核对后另行定向处理。
 
 贷款域是合成数据和演示规则组成的技术样例，其规则与生成结论不构成真实授信或合规意见。
 
@@ -777,8 +784,13 @@ uv run ruff format .
 
 ```bash
 uv run python examples/loan/seed_loan_indicators.py
-uv run python scripts/import_semantic_bundle.py --path examples/loan/semantic-domain.json
+uv run python scripts/import_semantic_bundle.py \
+  --path examples/loan/semantic-domain.json \
+  --agent-id 1 \
+  --datasource-id 1
 ```
+
+注意：必须显式指定演示智能体和数据源（`--agent-id 1 --datasource-id 1`）。该导入脚本只执行 upsert，不会删除旧的 `semantic_relation` 记录。
 
 该领域使用合成数据和规则验证平台技术契约，不是经过业务验证的授信或财税合规模型。
 

@@ -54,6 +54,16 @@ V1 定位为“可验证的本地运营本体闭环”，用于业务试点和�
 | 治理 | JWT、管理员权限、语义快照 | 本体校验、发布快照、动作审计 |
 | 体验 | Vue、Element Plus、ECharts | 企业本体工作台和本体图谱 |
 
+### OSDK 术语边界
+
+本项目借鉴 Palantir OSDK 的类型化能力访问思想，但不把 OSDK 当作本体建模层。当前开发统一采用以下边界：
+
+- `Query Capability`：只读对象查询、过滤、关联、聚合、排名、趋势和指标计算；可由 `LogicForm` 与确定性 SQL 编译链路承载。
+- `Action Capability`：创建、修改、审批、状态变更或其他有业务副作用的操作；由 `OntologyActionType` 和受控动作执行器承载。
+- `Typed Capability Facade`：为 Chat、Agent、报告和风险流程提供统一的类型化访问契约，底层可以继续复用现有 SQL/API 和 Ontology 服务。
+
+第一阶段优先建设 `Query Capability`，已有动作模型继续保留并作为后续写入能力；只读查询不得命名或实现为写入 Action。详细的对齐和增量开发计划见 [Ontology / OSDK 对齐与 DataQueryAgent 增量改造计划](./ontology-osdk-alignment-plan.md)。
+
 ## 5. 数据与动作契约
 
 ### 对象类型

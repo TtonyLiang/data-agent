@@ -42,8 +42,11 @@ uv run python examples/loan/seed_loan_indicators.py --append --write --yes-appen
 # 将现有审批率、M1+、Vintage 等问数语义导入同一个信贷智能体
 uv run python scripts/import_semantic_bundle.py \
   --path examples/loan/semantic-domain.json \
-  --agent-id <信贷智能体ID>
+  --agent-id 1 \
+  --datasource-id 1
 ```
+
+演示环境必须显式使用 `--agent-id 1 --datasource-id 1`，不要省略数据源参数。`import_semantic_bundle.py` 只会对语义资产执行 upsert，不会删除 bundle 中未出现的旧 `semantic_relation`；如需清理旧关系，应先备份并核对，再单独执行定向清理。
 
 在“智能体管理”中把这个 `loan_risk` 语义域绑定到信贷智能体，并确认领域已绑定包含上述信贷表的默认数据源。对象同步沿用该智能体的数据权限，因此还要允许访问 `loan_application_indicator`、`loan_account_indicator`、`loan_repayment_period_indicator`、`customer_risk_monthly_indicator` 和 `collection_case_indicator`。
 

@@ -192,7 +192,7 @@
   ],
   "relations": [
     {
-      "relation_key": "application_to_account",
+      "relation_key": "application_creates_account",
       "relation_type": "join_path",
       "source_concept": "LoanApplication",
       "target_concept": "LoanAccount",
@@ -206,7 +206,7 @@
       ]
     },
     {
-      "relation_key": "account_to_repayment",
+      "relation_key": "account_has_repayment",
       "relation_type": "join_path",
       "source_concept": "LoanAccount",
       "target_concept": "RepaymentPeriod",
@@ -220,7 +220,7 @@
       ]
     },
     {
-      "relation_key": "account_to_collection",
+      "relation_key": "account_has_collection_case",
       "relation_type": "join_path",
       "source_concept": "LoanAccount",
       "target_concept": "CollectionCase",
@@ -234,7 +234,7 @@
       ]
     },
     {
-      "relation_key": "account_to_customer_risk",
+      "relation_key": "account_has_risk_snapshot",
       "relation_type": "join_path",
       "source_concept": "LoanAccount",
       "target_concept": "CustomerRiskSnapshot",
@@ -266,7 +266,10 @@
         "application_channel",
         "application_region",
         "application_risk_grade"
-      ]
+      ],
+      "metadata": {
+        "object_key": "LoanApplication"
+      }
     },
     {
       "metric_key": "application_count",
@@ -297,7 +300,10 @@
         "application_product_type",
         "application_risk_grade",
         "application_approval_status"
-      ]
+      ],
+      "metadata": {
+        "object_key": "LoanApplication"
+      }
     },
     {
       "metric_key": "disbursement_amount",
@@ -319,7 +325,10 @@
         "region",
         "channel",
         "risk_grade"
-      ]
+      ],
+      "metadata": {
+        "object_key": "LoanAccount"
+      }
     },
     {
       "metric_key": "outstanding_balance",
@@ -341,7 +350,10 @@
         "region",
         "channel",
         "risk_grade"
-      ]
+      ],
+      "metadata": {
+        "object_key": "LoanAccount"
+      }
     },
     {
       "metric_key": "m1_plus_rate",
@@ -363,7 +375,10 @@
         "mob",
         "region",
         "overdue_bucket"
-      ]
+      ],
+      "metadata": {
+        "object_key": "RepaymentPeriod"
+      }
     },
     {
       "metric_key": "mob",
@@ -381,7 +396,10 @@
         "product_type",
         "vintage",
         "region"
-      ]
+      ],
+      "metadata": {
+        "object_key": "LoanAccount"
+      }
     },
     {
       "metric_key": "dpd",
@@ -400,7 +418,10 @@
         "vintage",
         "mob",
         "region"
-      ]
+      ],
+      "metadata": {
+        "object_key": "LoanAccount"
+      }
     },
     {
       "metric_key": "vintage",
@@ -419,7 +440,10 @@
         "mob",
         "product_type",
         "region"
-      ]
+      ],
+      "metadata": {
+        "object_key": "LoanAccount"
+      }
     },
     {
       "metric_key": "pd",
@@ -438,7 +462,10 @@
         "region",
         "risk_grade",
         "vintage"
-      ]
+      ],
+      "metadata": {
+        "object_key": "LoanApplication"
+      }
     },
     {
       "metric_key": "dti",
@@ -456,7 +483,10 @@
         "region",
         "customer_segment",
         "risk_grade"
-      ]
+      ],
+      "metadata": {
+        "object_key": "CustomerRiskSnapshot"
+      }
     },
     {
       "metric_key": "writeoff_amount",
@@ -483,7 +513,10 @@
         "vintage",
         "mob",
         "region"
-      ]
+      ],
+      "metadata": {
+        "object_key": "LoanAccount"
+      }
     },
     {
       "metric_key": "collection_recovery_rate",
@@ -504,7 +537,10 @@
         "overdue_bucket_at_entry",
         "product_type",
         "region"
-      ]
+      ],
+      "metadata": {
+        "object_key": "CollectionCase"
+      }
     }
   ],
   "rules": [
