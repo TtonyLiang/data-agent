@@ -3,16 +3,17 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 
-def test_primary_product_position_is_risk_report_delivery():
+def test_primary_product_position_is_enterprise_ontology_digital_twin():
     chinese_readme = (ROOT / "README_CN.md").read_text(encoding="utf-8")
     app_shell = (ROOT / "frontend/src/App.vue").read_text(encoding="utf-8")
     project_design = (ROOT / "docs/project-design.md").read_text(encoding="utf-8")
 
-    expected = "财税 AI 报告交付与风险决策平台"
+    expected = "Ontology 驱动的企业运营数字孪生与智能决策平台"
     assert expected in chinese_readme
-    assert "AI报告交付与风险决策平台" in app_shell
-    assert "风险事项 -> 证据 -> 人工复核" in project_design
-    assert "Ontology" in project_design
+    assert "企业本体数字孪生与智能决策平台" in app_shell
+    assert "企业智能中枢和决策引擎" in project_design
+    assert "Agent 负责在具体场景中与用户交互和调用能力" in project_design
+    assert "财税报告交付、贷款风控和智能问数" in project_design
 
 
 def test_loan_risk_demo_is_explicitly_non_production():

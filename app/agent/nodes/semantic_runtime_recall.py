@@ -97,7 +97,11 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
                 "source_id": item.source_id,
                 "metadata": item.metadata,
             }
-            for item in get_vector_store().search(agent_id, query_vector)
+            for item in get_vector_store().search(
+                agent_id,
+                query_vector,
+                domain_id=runtime.domain.id,
+            )
         ]
         logger.info("semantic runtime vector evidence count=%s", len(evidence))
     except Exception as exc:

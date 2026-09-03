@@ -113,10 +113,26 @@ CREATE TABLE IF NOT EXISTS meta_column (
     INDEX idx_table_id (table_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='元数据-字段';
 
--- 语义领域
+-- 企业空间: 当前阶段仅作为领域/本体资产的逻辑容器，不承担完整多租户隔离
+CREATE TABLE IF NOT EXISTS enterprise_workspace (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    workspace_key VARCHAR(128) NOT NULL COMMENT '企业空间标识',
+    name VARCHAR(256) NOT NULL COMMENT '企业空间名称',
+    description TEXT COMMENT '企业空间说明',
+    status VARCHAR(32) DEFAULT 'active' COMMENT 'active/disabled',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_enterprise_workspace_key (workspace_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='企业空间逻辑容器';
+
+INSERT IGNORE INTO enterprise_workspace (workspace_key, name, description, status)
+VALUES ('default', '默认企业空间', '企业业务领域与本体资产的默认逻辑空间', 'active');
+
+-- 企业业务领域
 CREATE TABLE IF NOT EXISTS semantic_domain (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    agent_id BIGINT NOT NULL COMMENT '所属智能体',
+    workspace_id BIGINT NOT NULL COMMENT '所属企业空间',
+    agent_id BIGINT DEFAULT NULL COMMENT '兼容字段: 原创建/归属智能体',
     datasource_id BIGINT DEFAULT NULL COMMENT '默认数据源',
     domain_key VARCHAR(128) NOT NULL COMMENT '领域标识',
     name VARCHAR(256) NOT NULL COMMENT '领域名称',
@@ -124,10 +140,19 @@ CREATE TABLE IF NOT EXISTS semantic_domain (
     status VARCHAR(32) DEFAULT 'active' COMMENT '状态',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_agent_domain (agent_id, domain_key),
-    INDEX idx_agent_id (agent_id),
+    UNIQUE KEY uk_workspace_domain (workspace_id, domain_key),
+    INDEX idx_legacy_agent_id (agent_id),
     INDEX idx_datasource_id (datasource_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='语义领域';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='企业业务领域';
+
+-- 智能体消费企业业务领域的多对多关系；默认领域继续保存在 agent.semantic_domain_id
+CREATE TABLE IF NOT EXISTS agent_semantic_domain (
+    agent_id BIGINT NOT NULL COMMENT '智能体ID',
+    domain_id BIGINT NOT NULL COMMENT '企业业务领域ID',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (agent_id, domain_id),
+    INDEX idx_agent_semantic_domain_domain (domain_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体与企业业务领域关联';
 
 -- 语义层版本快照
 CREATE TABLE IF NOT EXISTS semantic_domain_snapshot (

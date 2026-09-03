@@ -61,6 +61,27 @@ async def run_management_migrations() -> None:
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体数据源关联'
         """,
         """
+        CREATE TABLE IF NOT EXISTS enterprise_workspace (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            workspace_key VARCHAR(128) NOT NULL COMMENT '企业空间标识',
+            name VARCHAR(256) NOT NULL COMMENT '企业空间名称',
+            description TEXT COMMENT '企业空间说明',
+            status VARCHAR(32) DEFAULT 'active' COMMENT 'active/disabled',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_enterprise_workspace_key (workspace_key)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='企业空间逻辑容器'
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS agent_semantic_domain (
+            agent_id BIGINT NOT NULL COMMENT '智能体ID',
+            domain_id BIGINT NOT NULL COMMENT '企业业务领域ID',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (agent_id, domain_id),
+            INDEX idx_agent_semantic_domain_domain (domain_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体与企业业务领域关联'
+        """,
+        """
         CREATE TABLE IF NOT EXISTS semantic_domain_snapshot (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             domain_id BIGINT NOT NULL COMMENT '语义层ID',
@@ -218,6 +239,18 @@ async def run_management_migrations() -> None:
         "default_questions",
         "ALTER TABLE agent ADD COLUMN default_questions JSON DEFAULT NULL "
         "COMMENT '对话页默认推荐问题' AFTER semantic_domain_id",
+    )
+    await add_column_if_missing(
+        "semantic_domain",
+        "workspace_id",
+        "ALTER TABLE semantic_domain ADD COLUMN workspace_id BIGINT DEFAULT NULL "
+        "COMMENT '所属企业空间' AFTER id",
+    )
+    await ensure_column_nullable(
+        "semantic_domain",
+        "agent_id",
+        "ALTER TABLE semantic_domain MODIFY COLUMN agent_id BIGINT DEFAULT NULL "
+        "COMMENT '兼容字段: 原创建/归属智能体'",
     )
     await add_column_if_missing(
         "datasource",
@@ -428,10 +461,21 @@ async def run_management_migrations() -> None:
     await seed_default_system_parameters()
     await seed_default_prompt_templates()
     await seed_default_admin_user()
+    await seed_default_workspace()
 
     # 回填关联(旧数据兼容)
     await backfill_agent_model_configs()
+    await backfill_semantic_domain_workspaces()
+    await backfill_agent_domain_bindings()
+    await cleanup_orphan_agent_domain_bindings()
     await backfill_agent_semantic_domains()
+    await ensure_column_not_nullable(
+        "semantic_domain",
+        "workspace_id",
+        "ALTER TABLE semantic_domain MODIFY COLUMN workspace_id BIGINT NOT NULL "
+        "COMMENT '所属企业空间'",
+    )
+    await ensure_workspace_domain_unique_index()
     await backfill_agent_default_questions()
     await backfill_agent_datasources()
 
@@ -463,6 +507,36 @@ async def ensure_column_type(table: str, column: str, expected_type: str, statem
         await db.execute_query(statement)
 
 
+async def ensure_column_nullable(table: str, column: str, statement: str) -> None:
+    """幂等放宽 NOT NULL 列，供旧归属字段平滑退出强依赖。"""
+    db = get_management_db()
+    rows = await db.execute_query(
+        "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table AND COLUMN_NAME = :column",
+        {"table": table, "column": column},
+    )
+    if not rows:
+        return
+    nullable = str(rows[0].get("IS_NULLABLE") or rows[0].get("is_nullable") or "").upper()
+    if nullable != "YES":
+        await db.execute_query(statement)
+
+
+async def ensure_column_not_nullable(table: str, column: str, statement: str) -> None:
+    """幂等收紧已完成回填的关键归属列。"""
+    db = get_management_db()
+    rows = await db.execute_query(
+        "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table AND COLUMN_NAME = :column",
+        {"table": table, "column": column},
+    )
+    if not rows:
+        return
+    nullable = str(rows[0].get("IS_NULLABLE") or rows[0].get("is_nullable") or "").upper()
+    if nullable == "YES":
+        await db.execute_query(statement)
+
+
 async def create_index_if_missing(table: str, index_name: str, statement: str) -> None:
     """幂等建索引:先查 INFORMATION_SCHEMA,不存在时才执行。"""
     db = get_management_db()
@@ -472,6 +546,18 @@ async def create_index_if_missing(table: str, index_name: str, statement: str) -
         {"table": table, "index_name": index_name},
     )
     if not rows:
+        await db.execute_query(statement)
+
+
+async def drop_index_if_exists(table: str, index_name: str, statement: str) -> None:
+    """幂等删除旧索引。"""
+    db = get_management_db()
+    rows = await db.execute_query(
+        "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table AND INDEX_NAME = :index_name",
+        {"table": table, "index_name": index_name},
+    )
+    if rows:
         await db.execute_query(statement)
 
 
@@ -621,6 +707,15 @@ async def seed_default_model_configs() -> None:
         )
 
 
+async def seed_default_workspace() -> None:
+    """Ensure the single default enterprise-space container exists."""
+    await get_management_db().execute_query(
+        "INSERT IGNORE INTO enterprise_workspace "
+        "(workspace_key, name, description, status) "
+        "VALUES ('default', '默认企业空间', '企业业务领域与本体资产的默认逻辑空间', 'active')"
+    )
+
+
 async def seed_default_system_parameters() -> None:
     """首次启动时播种默认系统参数(数据定位阈值)。"""
     db = get_management_db()
@@ -724,13 +819,74 @@ async def backfill_agent_model_configs() -> None:
 
 
 async def backfill_agent_semantic_domains() -> None:
-    """回填:为旧数据中没有 semantic_domain_id 的 agent 建立关联(取最新语义层)。"""
+    """回填:为没有默认领域的 Agent 从其消费绑定中选择一个。"""
     db = get_management_db()
     await db.execute_query(
         "UPDATE agent a SET semantic_domain_id = "
-        "(SELECT sd.id FROM semantic_domain sd WHERE sd.agent_id = a.id "
-        "ORDER BY sd.id DESC LIMIT 1) "
+        "(SELECT asd.domain_id FROM agent_semantic_domain asd WHERE asd.agent_id = a.id "
+        "ORDER BY asd.domain_id DESC LIMIT 1) "
         "WHERE a.semantic_domain_id IS NULL"
+    )
+
+
+async def backfill_semantic_domain_workspaces() -> None:
+    """回填:把历史领域归入默认企业空间，不改变其领域 ID。"""
+    db = get_management_db()
+    await db.execute_query(
+        "UPDATE semantic_domain SET workspace_id = "
+        "(SELECT id FROM enterprise_workspace WHERE workspace_key = 'default' LIMIT 1) "
+        "WHERE workspace_id IS NULL"
+    )
+
+
+async def backfill_agent_domain_bindings() -> None:
+    """回填:把历史归属字段和默认领域指针转换为多对多消费关系。"""
+    db = get_management_db()
+    await db.execute_query(
+        "INSERT IGNORE INTO agent_semantic_domain (agent_id, domain_id) "
+        "SELECT agent_id, id FROM semantic_domain WHERE agent_id IS NOT NULL"
+    )
+    await db.execute_query(
+        "INSERT IGNORE INTO agent_semantic_domain (agent_id, domain_id) "
+        "SELECT id, semantic_domain_id FROM agent WHERE semantic_domain_id IS NOT NULL"
+    )
+
+
+async def cleanup_orphan_agent_domain_bindings() -> None:
+    """Remove stale consumer links whose Agent or enterprise domain no longer exists."""
+    await get_management_db().execute_query(
+        "DELETE asd FROM agent_semantic_domain asd "
+        "LEFT JOIN agent a ON a.id = asd.agent_id "
+        "LEFT JOIN semantic_domain sd ON sd.id = asd.domain_id "
+        "WHERE a.id IS NULL OR sd.id IS NULL"
+    )
+
+
+async def ensure_workspace_domain_unique_index() -> None:
+    """Enforce one stable domain key per enterprise space after legacy backfill."""
+    db = get_management_db()
+    duplicates = await db.execute_query(
+        "SELECT workspace_id, domain_key, COUNT(*) AS duplicate_count "
+        "FROM semantic_domain WHERE workspace_id IS NOT NULL "
+        "GROUP BY workspace_id, domain_key HAVING COUNT(*) > 1 LIMIT 1"
+    )
+    if duplicates:
+        duplicate = duplicates[0]
+        raise RuntimeError(
+            "企业空间内存在重复领域标识，无法建立唯一约束: "
+            f"workspace_id={duplicate.get('workspace_id')}, "
+            f"domain_key={duplicate.get('domain_key')}"
+        )
+    await create_index_if_missing(
+        "semantic_domain",
+        "uk_workspace_domain",
+        "ALTER TABLE semantic_domain ADD UNIQUE INDEX uk_workspace_domain "
+        "(workspace_id, domain_key)",
+    )
+    await drop_index_if_exists(
+        "semantic_domain",
+        "uk_agent_domain",
+        "ALTER TABLE semantic_domain DROP INDEX uk_agent_domain",
     )
 
 

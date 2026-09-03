@@ -10,8 +10,8 @@
     {
       "concept_key": "LoanApplication",
       "concept_type": "object",
-      "name": "贷款申请",
-      "description": "客户提交的贷款申请及审批结果。",
+      "name": "贷款申请单",
+      "description": "客户提交的一笔申请记录及审批结果；业务上也称申请、进件。",
       "synonyms": [
         "申请",
         "进件",

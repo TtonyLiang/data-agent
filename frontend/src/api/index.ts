@@ -137,6 +137,7 @@ export interface AgentItem {
   chat_model_config_id?: number | null
   embedding_model_config_id?: number | null
   semantic_domain_id?: number | null
+  semantic_domain_ids?: number[]
   chat_model_config_name?: string | null
   embedding_model_config_name?: string | null
   semantic_domain_name?: string | null
@@ -153,6 +154,7 @@ export interface AgentCreateRequest {
   chat_model_config_id?: number | null
   embedding_model_config_id?: number | null
   semantic_domain_id?: number | null
+  semantic_domain_ids?: number[]
   default_questions?: string[]
   datasource_ids?: number[]
   llm_provider?: string
@@ -611,7 +613,8 @@ export async function fetchDatasourceSchemaStats(dsId: number): Promise<Datasour
 
 export interface SemanticDomain {
   id: number
-  agent_id: number
+  workspace_id?: number | null
+  agent_id?: number | null
   datasource_id?: number | null
   domain_key: string
   name: string
@@ -633,6 +636,44 @@ export async function fetchSemanticDomains(agentId: number): Promise<SemanticDom
 export async function fetchAllSemanticDomains(): Promise<SemanticDomain[]> {
   const { data } = await api.get<{ domains: SemanticDomain[] }>('/semantic/domains/all')
   return data.domains || []
+}
+
+export interface EnterpriseWorkspace {
+  id: number
+  workspace_key: string
+  name: string
+  description?: string | null
+  status: string
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface AgentDomainBinding {
+  domain_ids: number[]
+  default_domain_id?: number | null
+}
+
+export async function fetchEnterpriseWorkspaces(): Promise<EnterpriseWorkspace[]> {
+  const { data } = await api.get<{ workspaces: EnterpriseWorkspace[] }>('/workspaces')
+  return data.workspaces || []
+}
+
+export async function fetchWorkspaceDomains(workspaceId: number): Promise<SemanticDomain[]> {
+  const { data } = await api.get<{ domains: SemanticDomain[] }>(`/workspaces/${workspaceId}/domains`)
+  return data.domains || []
+}
+
+export async function fetchAgentDomainBinding(agentId: number): Promise<AgentDomainBinding> {
+  const { data } = await api.get<AgentDomainBinding>(`/agent/${agentId}/domain-ids`)
+  return {
+    domain_ids: data.domain_ids || [],
+    default_domain_id: data.default_domain_id || null,
+  }
+}
+
+export async function updateAgentDomainBinding(agentId: number, binding: AgentDomainBinding) {
+  const { data } = await api.put(`/agent/${agentId}/domain-ids`, binding)
+  return data
 }
 
 export async function upsertSemanticDomain(domain: SemanticDomainRequest) {
@@ -913,7 +954,39 @@ export interface OntologyAgentContext {
   link_types: Array<Record<string, unknown>>
   actions: Array<Record<string, unknown>>
   capabilities: { query_objects: boolean; execute_actions: boolean }
+  query_capabilities?: OntologyQueryCapability[]
   tools: OntologyAgentToolDefinition[]
+}
+
+export interface OntologyQueryCapability {
+  key: string
+  name: string
+  description?: string
+  target_object: string
+  domain_key?: string | null
+  supported_metrics: string[]
+  supported_dimensions: string[]
+  input_slots: Array<{
+    slot_key: string
+    data_type: string
+    required: boolean
+    description?: string
+    aliases?: string[]
+  }>
+  output: {
+    result_type: 'table' | 'scalar' | 'object_set' | 'json' | string
+    columns: string[]
+    description?: string
+    metadata?: Record<string, unknown>
+  }
+  execution: {
+    compiler: string
+    mode: string
+    max_limit: number
+    metadata?: Record<string, unknown>
+  }
+  read_only: true
+  metadata?: Record<string, unknown>
 }
 
 export async function fetchOntologyDomains(): Promise<SemanticDomain[]> {
@@ -964,6 +1037,13 @@ export async function fetchOntologyActionTypes(domainId: number): Promise<Ontolo
 export async function fetchOntologyAgentContext(domainId: number): Promise<OntologyAgentContext> {
   const { data } = await api.get<OntologyAgentContext>(`/ontology/domains/${domainId}/agent-context`)
   return data
+}
+
+export async function fetchOntologyQueryCapabilities(domainId: number): Promise<OntologyQueryCapability[]> {
+  const { data } = await api.get<{ query_capabilities: OntologyQueryCapability[] }>(
+    `/ontology/domains/${domainId}/query-capabilities`,
+  )
+  return data.query_capabilities || []
 }
 
 export async function queryOntologyObjects(

@@ -1,14 +1,14 @@
 <template>
   <main class="auth-page">
     <div class="auth-shell">
-      <aside class="brand-panel" aria-label="问渠 WenQu AI报告交付与风险决策平台">
+      <aside class="brand-panel" aria-label="问渠 WenQu 企业本体数字孪生与智能决策平台">
         <div class="brand-lockup">
           <div class="brand-mark" aria-hidden="true">
             <el-icon :size="20"><DataAnalysis /></el-icon>
           </div>
           <div class="brand-text">
             <strong>问渠 WenQu</strong>
-            <span>AI报告交付与风险决策平台</span>
+            <span>企业本体数字孪生与智能决策平台</span>
           </div>
         </div>
 
@@ -30,7 +30,7 @@
           </div>
           <div class="brand-text">
             <strong>问渠 WenQu</strong>
-            <span>AI报告交付与风险决策平台</span>
+            <span>企业本体数字孪生与智能决策平台</span>
           </div>
         </div>
 
@@ -39,16 +39,26 @@
           <p>创建普通用户账号，管理员会分配访问权限</p>
         </header>
 
+        <el-alert
+          v-if="errorMessage"
+          class="auth-feedback"
+          type="error"
+          show-icon
+          :closable="false"
+          :title="errorMessage"
+          role="alert"
+        />
+
         <el-form class="auth-form" :model="form" label-position="top" @submit.prevent="handleRegister">
           <el-form-item label="用户名">
-            <el-input v-model="form.username" autocomplete="username" placeholder="至少 3 位">
+            <el-input v-model="form.username" autocomplete="username" placeholder="至少 3 位" :disabled="loading" name="username">
               <template #prefix>
                 <el-icon aria-hidden="true"><User /></el-icon>
               </template>
             </el-input>
           </el-form-item>
           <el-form-item label="展示名">
-            <el-input v-model="form.display_name" autocomplete="name" placeholder="可选">
+            <el-input v-model="form.display_name" autocomplete="name" placeholder="可选" :disabled="loading" name="display_name">
               <template #prefix>
                 <el-icon aria-hidden="true"><UserFilled /></el-icon>
               </template>
@@ -61,6 +71,8 @@
               placeholder="至少 8 位"
               show-password
               type="password"
+              :disabled="loading"
+              name="password"
             >
               <template #prefix>
                 <el-icon aria-hidden="true"><Lock /></el-icon>
@@ -90,10 +102,12 @@ import { register } from '../stores/auth'
 
 const router = useRouter()
 const loading = ref(false)
+const errorMessage = ref('')
 const form = reactive({ username: '', display_name: '', password: '' })
 
 async function handleRegister() {
-  if (!form.username || !form.password) {
+  errorMessage.value = ''
+  if (!form.username.trim() || !form.password) {
     ElMessage.warning('请输入用户名和密码')
     return
   }
@@ -103,7 +117,7 @@ async function handleRegister() {
     ElMessage.success('注册成功，请登录')
     router.replace('/login')
   } catch (error: any) {
-    ElMessage.error(error?.response?.data?.detail || '注册失败')
+    errorMessage.value = error?.response?.data?.detail || '注册失败，请检查填写内容后重试。'
   } finally {
     loading.value = false
   }
@@ -128,6 +142,7 @@ async function handleRegister() {
 }
 
 .auth-shell {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(250px, 0.78fr) minmax(430px, 1.22fr);
   width: min(900px, 100%);
@@ -137,6 +152,7 @@ async function handleRegister() {
   border-radius: 12px;
   background: #ffffff;
   box-shadow: 0 24px 64px rgba(33, 46, 66, 0.12);
+  animation: authShellIn 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .brand-panel {
@@ -185,6 +201,17 @@ async function handleRegister() {
 
 .brand-copy {
   margin: auto 0;
+  animation: authContentIn 520ms 70ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.brand-copy::before {
+  content: '';
+  display: block;
+  width: 34px;
+  height: 3px;
+  margin-bottom: 22px;
+  border-radius: 2px;
+  background: var(--auth-accent);
 }
 
 .brand-copy h2 {
@@ -230,6 +257,7 @@ async function handleRegister() {
   padding: clamp(44px, 6vw, 66px) clamp(48px, 7vw, 72px);
   margin: 0 auto;
   background: #ffffff;
+  animation: authContentIn 520ms 120ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .mobile-brand {
@@ -238,6 +266,19 @@ async function handleRegister() {
 
 .form-heading {
   margin-bottom: 26px;
+}
+
+.auth-feedback {
+  margin: -8px 0 16px;
+  border: 1px solid #f0b4b4;
+  border-radius: 8px;
+  background: #fff7f7;
+}
+
+:deep(.auth-feedback .el-alert__title) {
+  color: #b42318 !important;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .form-heading h1 {
@@ -262,7 +303,7 @@ async function handleRegister() {
 }
 
 :deep(.el-form-item) {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 :deep(.el-form-item__label) {
@@ -325,12 +366,16 @@ async function handleRegister() {
   --el-button-active-text-color: #ffffff;
   width: 100%;
   min-height: 46px;
-  margin-top: 6px;
+  margin-top: 8px;
   border-radius: 8px;
   font-size: 14px;
   font-weight: 700;
   white-space: nowrap;
   transition: transform 0.16s ease;
+}
+
+.auth-submit:hover:not(.is-disabled) {
+  transform: translateY(-1px);
 }
 
 .auth-submit:active {
@@ -426,6 +471,24 @@ async function handleRegister() {
   :deep(.el-input__wrapper),
   .auth-submit {
     transition: none;
+  }
+}
+
+@keyframes authShellIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes authContentIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-shell,
+  .brand-copy,
+  .auth-panel {
+    animation: none;
   }
 }
 </style>

@@ -159,7 +159,7 @@ async def test_recall_node_preserves_legacy_fields_and_adds_query_context(monkey
             return [0.1]
 
     class FakeVectorStore:
-        def search(self, agent_id, query_vector):
+        def search(self, agent_id, query_vector, *, domain_id=None):
             return []
 
     class FakeOntologyService:
@@ -204,7 +204,7 @@ async def test_recall_node_query_context_failure_keeps_old_recall_output(monkeyp
             return [0.1]
 
     class FakeVectorStore:
-        def search(self, agent_id, query_vector):
+        def search(self, agent_id, query_vector, *, domain_id=None):
             return []
 
     class FakeOntologyService:

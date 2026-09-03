@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.deps import get_current_user, require_admin
-from app.api.ontology import require_domain_access
+from app.api.deps import get_current_user, require_admin, require_domain_access
 from app.models.risk_workflow import (
     ChatRiskIssueCreatePayload,
     EvidenceCreatePayload,

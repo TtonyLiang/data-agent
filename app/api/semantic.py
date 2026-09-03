@@ -17,7 +17,12 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.deps import get_current_user, require_admin, require_agent_access
+from app.api.deps import (
+    get_current_user,
+    require_admin,
+    require_agent_access,
+    require_domain_access,
+)
 from app.models.knowledge import LogicForm, SemanticAssetPayload, SemanticDomain
 from app.models.user import PublicUser
 from app.services.embedding_service import get_embedding_service
@@ -52,7 +57,7 @@ async def list_all_domains(_: PublicUser = Depends(require_admin)):
 
 @router.post("/domains")
 async def upsert_domain(payload: SemanticDomain, _: PublicUser = Depends(require_admin)):
-    """创建或更新语义领域。相同 domain_key+agent_id 时更新。"""
+    """创建或更新企业业务领域。同一企业空间内 domain_key 唯一。"""
     svc = get_semantic_runtime_service()
     try:
         domain_id = await svc.upsert_domain(
@@ -64,7 +69,7 @@ async def upsert_domain(payload: SemanticDomain, _: PublicUser = Depends(require
     return {
         "id": domain_id,
         "domain": domain.model_dump() if domain else None,
-        "message": "语义层已保存",
+        "message": "业务领域已保存",
     }
 
 
@@ -75,7 +80,7 @@ async def delete_domain(domain_id: int, _: PublicUser = Depends(require_admin)):
     deleted = await svc.delete_domain(domain_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="语义领域不存在")
-    return {"deleted": True, "id": domain_id, "message": "语义层已删除"}
+    return {"deleted": True, "id": domain_id, "message": "业务领域已删除"}
 
 
 @router.post("/domains/{domain_id}/copy")
@@ -90,7 +95,7 @@ async def copy_domain(domain_id: int, request: dict, _: PublicUser = Depends(req
     return {
         "id": new_id,
         "domain": domain.model_dump() if domain else None,
-        "message": "语义层已复制",
+        "message": "业务领域已复制",
     }
 
 
@@ -222,7 +227,7 @@ async def list_assets(
     domain = await svc.get_domain(domain_id)
     if domain is None:
         raise HTTPException(status_code=404, detail="语义领域不存在")
-    await require_agent_access(domain.agent_id, current_user)
+    await require_domain_access(domain_id, current_user)
     try:
         return {
             "domain": domain.model_dump(),
@@ -274,13 +279,27 @@ async def delete_asset(
 # ============================================================
 
 
+async def resolve_runtime_agent_id(svc, request: dict) -> int:
+    """Resolve the consumer Agent server-side when a domain ID is supplied."""
+    raw_agent_id = request.get("agent_id")
+    preferred_agent_id = int(raw_agent_id) if raw_agent_id is not None else None
+    raw_domain_id = request.get("domain_id")
+    if raw_domain_id is None:
+        return preferred_agent_id if preferred_agent_id is not None else 1
+    agent_id = await svc.resolve_domain_agent(int(raw_domain_id), preferred_agent_id)
+    if agent_id is None:
+        raise ValueError("领域尚未绑定可执行的智能体")
+    return agent_id
+
+
 @router.post("/runtime/build")
 async def build_runtime(request: dict, _: PublicUser = Depends(require_admin)):
     """手动构建语义运行时(调试用)。"""
     svc = get_semantic_runtime_service()
     try:
+        agent_id = await resolve_runtime_agent_id(svc, request)
         runtime = await svc.build_runtime(
-            agent_id=int(request.get("agent_id", 1)),
+            agent_id=agent_id,
             datasource_id=request.get("datasource_id"),
             domain_key=request.get("domain_key"),
             domain_id=request.get("domain_id"),
@@ -296,8 +315,9 @@ async def validate_logic_form(request: dict, _: PublicUser = Depends(require_adm
     svc = get_semantic_runtime_service()
     logic_form = LogicForm(**request.get("logic_form", request))
     try:
+        agent_id = await resolve_runtime_agent_id(svc, request)
         runtime = await svc.build_runtime(
-            agent_id=int(request.get("agent_id", 1)),
+            agent_id=agent_id,
             datasource_id=request.get("datasource_id"),
             domain_key=logic_form.domain_key,
             domain_id=request.get("domain_id"),
@@ -334,9 +354,12 @@ async def sync_domain_to_vector(domain_id: int, _: PublicUser = Depends(require_
     domain = await svc.get_domain(domain_id)
     if domain is None:
         raise HTTPException(status_code=404, detail="语义领域不存在")
+    execution_agent_ids = await svc.get_domain_agent_ids(domain_id)
+    if not execution_agent_ids:
+        raise HTTPException(status_code=400, detail="领域尚未绑定可执行的智能体")
 
     runtime = await svc.build_runtime(
-        agent_id=domain.agent_id,
+        agent_id=execution_agent_ids[0],
         datasource_id=domain.datasource_id,
         domain_key=domain.domain_key,
         domain_id=domain.id,
@@ -387,30 +410,54 @@ async def sync_domain_to_vector(domain_id: int, _: PublicUser = Depends(require_
             }
         )
 
-    # 第3步:清空旧向量,无资产时直接返回
+    # 第3步:每个消费 Agent 有独立向量模型和 collection，逐一同步
     vec_store = get_vector_store()
-    vec_store.delete_collection(domain.agent_id)
     if not records:
-        return {"synced": 0, "message": "无语义资产需要同步"}
+        for agent_id in execution_agent_ids:
+            vec_store.delete_collection(agent_id)
+            vec_store.delete_collection(agent_id, domain_id)
+        return {
+            "synced": 0,
+            "agent_ids": execution_agent_ids,
+            "message": "无语义资产需要同步",
+        }
 
-    # 第4步:批量向量化并插入
-    vectors = await get_embedding_service().embed_texts(
-        [item["text"] for item in records],
-        agent_id=domain.agent_id,
+    # 第4步:按 Agent 的 embedding 配置分别向量化并写入其 collection
+    for agent_id in execution_agent_ids:
+        vectors = await get_embedding_service().embed_texts(
+            [item["text"] for item in records],
+            agent_id=agent_id,
+        )
+        # Replace only this domain's collection so other bound domains remain
+        # intact. Remove the legacy namespace after the new index is ready.
+        vec_store.delete_collection(agent_id, domain_id)
+        vec_store.insert(
+            agent_id,
+            [
+                VectorRecord(
+                    content=item["text"],
+                    vector=vectors[index],
+                    source_type=item["source_type"],
+                    source_id=item["source_id"],
+                    agent_id=agent_id,
+                    metadata=item["metadata"],
+                )
+                for index, item in enumerate(records)
+            ],
+            domain_id=domain_id,
+        )
+        vec_store.delete_collection(agent_id)
+    logger.info(
+        "sync_vector domain_id=%s agent_ids=%s synced_per_agent=%s",
+        domain_id,
+        execution_agent_ids,
+        len(records),
     )
-    vec_store.insert(
-        domain.agent_id,
-        [
-            VectorRecord(
-                content=item["text"],
-                vector=vectors[index],
-                source_type=item["source_type"],
-                source_id=item["source_id"],
-                agent_id=domain.agent_id,
-                metadata=item["metadata"],
-            )
-            for index, item in enumerate(records)
-        ],
-    )
-    logger.info("sync_vector domain_id=%s agent_id=%s synced=%s", domain_id, domain.agent_id, len(records))
-    return {"synced": len(records), "message": f"同步完成，共 {len(records)} 条语义资产"}
+    return {
+        "synced": len(records),
+        "agent_ids": execution_agent_ids,
+        "message": (
+            f"同步完成，共 {len(records)} 条语义资产，"
+            f"已更新 {len(execution_agent_ids)} 个智能体"
+        ),
+    }

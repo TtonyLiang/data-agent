@@ -2,31 +2,75 @@
   <div class="chat-layout">
     <div class="session-sidebar">
       <div class="sidebar-header">
-        <el-button class="new-chat-button" type="primary" :disabled="loading || !hasSelectedAgent" @click="newSession">
-          <el-icon><Plus /></el-icon>
-          <span>新对话</span>
-        </el-button>
-        <el-button :icon="Refresh" :disabled="loading || !hasSelectedAgent" @click="loadSessions" />
+        <div class="sidebar-heading">
+          <strong>历史会话</strong>
+          <span>{{ sessions.length }} 个</span>
+        </div>
+        <div class="sidebar-actions">
+          <el-button class="new-chat-button" type="primary" :disabled="loading || !hasSelectedAgent" @click="newSession">
+            <el-icon><Plus /></el-icon>
+            <span>新对话</span>
+          </el-button>
+          <el-button
+            :icon="Refresh"
+            :disabled="loading || !hasSelectedAgent || sessionsLoading"
+            aria-label="刷新会话"
+            title="刷新会话"
+            @click="loadSessions"
+          />
+        </div>
       </div>
       <div class="session-search">
         <el-input v-model="sessionSearch" :prefix-icon="Search" placeholder="搜索历史会话" clearable />
       </div>
-      <div class="session-list">
-        <div class="session-group">今天</div>
-        <div
-          v-for="s in filteredSessions"
-          :key="s.session_id"
-          :class="['session-item', { active: s.session_id === sessionId, disabled: loading }]"
-          @click="loadSession(s.session_id)"
-        >
-          <div class="session-title">{{ s.last_question || '新对话' }}</div>
-          <div class="session-meta">
-            <span>{{ formatDateTime(s.created_at, '') }}</span>
-            <span>{{ s.turn_count }}轮</span>
-          </div>
-          <el-icon class="session-delete" @click.stop="handleDeleteSession(s.session_id)"><Delete /></el-icon>
+      <div class="session-list" aria-live="polite" :aria-busy="sessionsLoading">
+        <div class="session-group">
+          <span>最近会话</span>
+          <small v-if="sessionSearch">{{ filteredSessions.length }} 个匹配</small>
         </div>
-        <div v-if="filteredSessions.length === 0" class="empty-sessions">暂无历史会话</div>
+        <div v-if="sessionsLoading" class="session-loading">
+          <el-skeleton :rows="5" animated />
+        </div>
+        <div v-else-if="sessionsLoadError" class="session-list-error">
+          <el-icon><WarningFilled /></el-icon>
+          <p>历史会话暂时加载失败。</p>
+          <el-button size="small" @click="loadSessions">重试</el-button>
+        </div>
+        <template v-else>
+          <div
+            v-for="s in filteredSessions"
+            :key="s.session_id"
+            :class="['session-item', { active: s.session_id === sessionId, disabled: loading || sessionLoadingId === s.session_id }]"
+          >
+            <button
+              class="session-open"
+              type="button"
+              :disabled="loading || sessionLoadingId === s.session_id"
+              :aria-pressed="s.session_id === sessionId"
+              @click="loadSession(s.session_id)"
+            >
+              <div class="session-title">{{ s.last_question || '新对话' }}</div>
+              <div class="session-meta">
+                <span>{{ formatDateTime(s.created_at, '') }}</span>
+                <span>{{ s.turn_count }}轮</span>
+              </div>
+            </button>
+            <button
+              class="session-delete"
+              type="button"
+              aria-label="删除会话"
+              title="删除会话"
+              :disabled="loading || sessionLoadingId === s.session_id"
+              @click.stop="handleDeleteSession(s.session_id)"
+            >
+              <el-icon><Delete /></el-icon>
+            </button>
+          </div>
+          <div v-if="filteredSessions.length === 0" class="empty-sessions">
+            <el-icon><Search /></el-icon>
+            <span>{{ sessionSearch ? '没有找到匹配会话' : '暂无历史会话' }}</span>
+          </div>
+        </template>
       </div>
       <div class="session-footer">
         <span>历史记录按当前智能体自动保存</span>
@@ -59,7 +103,20 @@
       </div>
 
       <div class="chat-messages" ref="messagesRef" @scroll="handleMessagesScroll">
-        <div v-if="messages.length === 0" class="empty-hint">
+        <div v-if="agentsLoading" class="empty-hint chat-loading-state" aria-live="polite">
+          <div class="empty-icon"><el-icon class="is-loading" :size="24"><Loading /></el-icon></div>
+          <h3>正在加载可用智能体</h3>
+          <p>正在准备当前工作区的查询权限和语义配置。</p>
+        </div>
+
+        <div v-else-if="agentsLoadError" class="empty-hint chat-loading-state" aria-live="assertive">
+          <div class="empty-icon error"><el-icon :size="24"><WarningFilled /></el-icon></div>
+          <h3>智能体暂时不可用</h3>
+          <p>请确认服务正常后重试，或联系管理员检查工作区权限。</p>
+          <el-button type="primary" size="small" :loading="agentsLoading" @click="loadAgents">重新加载</el-button>
+        </div>
+
+        <div v-else-if="messages.length === 0" class="empty-hint">
           <div class="empty-icon">
             <el-icon :size="28"><ChatDotRound /></el-icon>
           </div>
@@ -89,6 +146,7 @@
                   v-if="!isAssistantStreaming(msg)"
                   class="analysis-process-toggle"
                   type="button"
+                  :aria-expanded="!msg.chainCollapsed"
                   @click="toggleChain(msg.id)"
                 >
                   <el-icon><ArrowRight v-if="msg.chainCollapsed" /><ArrowDown v-else /></el-icon>
@@ -302,7 +360,7 @@
               <div v-else-if="shouldShowAnswerCard(msg)" class="answer-card">
                 <div class="answer-card-header">
                   <div>
-                    <span class="answer-kicker">Final Answer</span>
+                    <span class="answer-kicker">查询结论</span>
                     <h3>{{ msg.report_payload ? '深度分析报告' : '分析结论' }}</h3>
                     <p class="answer-subtitle">{{ msg.report_payload ? reportDisplayTitle(msg.report_payload) : panelResultTitle(msg) }}</p>
                   </div>
@@ -420,7 +478,7 @@
                 </div>
                 <div v-if="msg.sql || msg.report_payload" class="answer-assets">
                   <button v-if="msg.sql" class="asset-chip" type="button" @click="activeResultTab = 'sql'">
-                    <span>SQL 详情</span>
+                    <span>技术 SQL</span>
                     <strong>{{ compactSql(msg.sql) }}</strong>
                   </button>
                   <button v-if="msg.report_payload" class="asset-chip" type="button" @click="openReport(msg)">
@@ -547,7 +605,7 @@
           <div v-else class="panel-empty">发起查询后，这里会展示理解问题、语义增强、知识召回、生成 LogicForm、编译 SQL 和执行查询的过程。</div>
         </el-tab-pane>
 
-        <el-tab-pane label="SQL" name="sql">
+        <el-tab-pane label="SQL 细节" name="sql">
           <div class="panel-actions">
             <el-button size="small" :icon="DocumentCopy" :disabled="!latestSql" @click="copyLatestSql">复制 SQL</el-button>
             <span class="result-count">生成的 SQL</span>
@@ -981,6 +1039,11 @@ const loading = ref(false)
 const agentId = ref<number>(Number(localStorage.getItem('wenqu_agent_id')) || 1)
 const agents = ref<AgentItem[]>([])
 const sessions = ref<SessionItem[]>([])
+const agentsLoading = ref(true)
+const agentsLoadError = ref(false)
+const sessionsLoading = ref(false)
+const sessionsLoadError = ref(false)
+const sessionLoadingId = ref('')
 const sessionId = ref<string>('')
 const messagesRef = ref<HTMLElement>()
 const semanticLabels = ref<Record<string, string>>({})
@@ -1221,6 +1284,8 @@ watch(latestRows, (rows) => {
 })
 
 async function loadAgents() {
+  agentsLoading.value = true
+  agentsLoadError.value = false
   try {
     agents.value = await fetchAgents()
     if (agents.value.length > 0 && !agents.value.some(agent => agent.id === agentId.value)) {
@@ -1237,6 +1302,9 @@ async function loadAgents() {
   } catch {
     ElMessage.error('智能体配置加载失败，请确认后端服务已启动')
     agents.value = []
+    agentsLoadError.value = true
+  } finally {
+    agentsLoading.value = false
   }
 }
 
@@ -1275,9 +1343,19 @@ async function loadSemanticLabels() {
 async function loadSessions() {
   if (!hasSelectedAgent.value) {
     sessions.value = []
+    sessionsLoadError.value = false
     return
   }
-  try { sessions.value = await fetchSessions(agentId.value) } catch { sessions.value = [] }
+  sessionsLoading.value = true
+  sessionsLoadError.value = false
+  try {
+    sessions.value = await fetchSessions(agentId.value)
+  } catch {
+    sessions.value = []
+    sessionsLoadError.value = true
+  } finally {
+    sessionsLoading.value = false
+  }
 }
 
 function cancelActiveStream() {
@@ -1371,6 +1449,7 @@ async function loadSession(sid: string) {
   cancelActiveStream()
   const loadRunId = activeRunId
   sessionId.value = sid
+  sessionLoadingId.value = sid
   streamState.value = createChatStreamState()
   try {
     const history = await fetchHistory(agentId.value, sid)
@@ -1380,7 +1459,11 @@ async function loadSession(sid: string) {
       messages: history.map((item, index) => historyToMessage(item, sid, index)),
     }
     scrollToBottom()
-  } catch { /* empty */ }
+  } catch {
+    ElMessage.error('会话加载失败，请稍后重试')
+  } finally {
+    if (sessionLoadingId.value === sid) sessionLoadingId.value = ''
+  }
 }
 
 async function handleDeleteSession(sid: string) {
@@ -1562,7 +1645,7 @@ async function openRiskIssueDialog(message: ChatMessage, messageIndex: number) {
   const domainId = Number(selectedAgent.value?.semantic_domain_id || 0)
   const traceId = messageTraceId(message)
   if (!domainId) {
-    ElMessage.warning('当前智能体未绑定语义领域，无法创建风险事项')
+    ElMessage.warning('当前智能体未绑定业务领域，无法创建风险事项')
     return
   }
   if (!traceId) {
@@ -5933,6 +6016,195 @@ onUnmounted(() => {
   background: var(--chat-soft);
 }
 
+.sidebar-header {
+  align-items: center;
+  gap: 12px;
+}
+
+.sidebar-heading {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.sidebar-heading strong {
+  color: var(--wq-text);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.sidebar-heading span,
+.session-group small {
+  color: var(--wq-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.sidebar-actions {
+  display: flex;
+  min-width: 0;
+  margin-left: auto;
+  gap: 6px;
+}
+
+.sidebar-actions .new-chat-button {
+  flex: 0 0 auto;
+}
+
+.sidebar-actions > :deep(.el-button:not(.new-chat-button)) {
+  flex: 0 0 34px;
+  width: 34px;
+  padding: 0;
+}
+
+.session-group {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session-loading {
+  padding: 6px 10px 0;
+}
+
+.session-loading :deep(.el-skeleton__item) {
+  background: var(--chat-raised);
+}
+
+.session-list-error,
+.empty-sessions {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 40px 12px;
+  color: var(--wq-muted);
+  text-align: center;
+}
+
+.session-list-error .el-icon,
+.empty-sessions .el-icon {
+  color: var(--wq-primary);
+  font-size: 18px;
+}
+
+.session-list-error p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.session-delete {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--wq-muted);
+  cursor: pointer;
+}
+
+.session-delete:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.session-open {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-open:disabled {
+  cursor: not-allowed;
+}
+
+.session-open:focus-visible {
+  outline: 2px solid var(--wq-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.session-item:hover .session-delete,
+.session-item:focus-within .session-delete {
+  display: inline-flex;
+}
+
+.chat-loading-state {
+  margin-top: min(18vh, 150px);
+}
+
+.empty-icon.error {
+  color: var(--wq-danger);
+  background: color-mix(in srgb, var(--wq-danger) 8%, var(--chat-surface));
+}
+
+.chat-loading-state :deep(.el-button) {
+  margin-top: 10px;
+}
+
+.answer-card {
+  border-left: 3px solid var(--wq-primary);
+  box-shadow: 0 4px 16px rgba(16, 24, 40, 0.06);
+}
+
+.answer-card-header {
+  min-height: 72px;
+}
+
+.answer-badges {
+  max-width: 46%;
+}
+
+.asset-chip:focus-visible,
+.analysis-process-toggle:focus-visible,
+.result-cell-button:focus-visible {
+  outline: 2px solid var(--wq-primary);
+  outline-offset: 2px;
+}
+
+.analysis-process-toggle small {
+  white-space: nowrap;
+}
+
+.analysis-code-block,
+.analysis-table,
+.panel-sql {
+  position: relative;
+}
+
+.panel-sql::before {
+  content: '技术追溯';
+  display: block;
+  margin: -2px 0 9px;
+  color: #98a2b3;
+  font-size: 11px;
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.result-meta-card {
+  border-left: 3px solid var(--wq-success);
+}
+
+.result-grid :deep(.el-table__body tr:hover > td.el-table__cell),
+.compact-result :deep(.el-table__body tr:hover > td.el-table__cell) {
+  background: var(--wq-primary-soft);
+}
+
+.insight-panel {
+  min-height: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .analysis-stream-cursor span {
     animation: none;
@@ -5942,21 +6214,43 @@ onUnmounted(() => {
 @media (max-width: 1260px) {
   .chat-layout {
     grid-template-columns: 236px minmax(440px, 1fr);
+    grid-template-rows: minmax(0, 1fr) 320px;
   }
 
   .insight-panel {
-    display: none;
+    display: flex;
+    grid-column: 2;
+    grid-row: 2;
+    border-top: 1px solid var(--wq-border);
+    border-left: 0;
   }
 }
 
 @media (max-width: 860px) {
   .chat-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(260px, 44dvh);
     height: calc(100dvh - var(--wq-header-height));
   }
 
   .session-sidebar {
     display: none;
+  }
+
+  .chat-container,
+  .insight-panel {
+    grid-column: 1;
+  }
+
+  .chat-container {
+    grid-row: 1;
+  }
+
+  .insight-panel {
+    display: flex;
+    grid-row: 2;
+    border-top: 1px solid var(--wq-border);
+    border-left: 0;
   }
 
   .workspace-toolbar {
@@ -5991,6 +6285,10 @@ onUnmounted(() => {
     width: 100% !important;
   }
 
+  .sidebar-heading {
+    width: 100%;
+  }
+
   .composer-footer {
     align-items: stretch;
     flex-direction: column;
@@ -6001,6 +6299,24 @@ onUnmounted(() => {
   }
 
   .result-pagination {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .result-column-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .answer-card-header {
+    flex-direction: column;
+  }
+
+  .answer-badges {
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  .panel-actions {
     align-items: flex-start;
     flex-direction: column;
   }

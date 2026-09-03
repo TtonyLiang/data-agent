@@ -11,7 +11,7 @@ from app.agent.ontology_tools import (
     build_query_capability_definitions,
     invoke_ontology_tool,
 )
-from app.api.deps import get_current_user, require_admin, require_agent_access
+from app.api.deps import get_current_user, require_admin, require_domain_access
 from app.models.ontology import (
     OntologyActionExecutePayload,
     OntologyActionTypePayload,
@@ -33,19 +33,12 @@ from app.services.user_service import get_user_service
 router = APIRouter()
 
 
-async def require_domain_access(domain_id: int, user: PublicUser) -> None:
-    domain = await get_semantic_runtime_service().get_domain(domain_id)
-    if domain is None:
-        raise HTTPException(status_code=404, detail="Ontology 领域不存在")
-    await require_agent_access(domain.agent_id, user)
-
-
 @router.get("/domains")
 async def list_accessible_domains(current_user: PublicUser = Depends(get_current_user)):
     """List Ontology domains visible to the current user.
 
-    Administrators see all domains; business users see only domains belonging
-    to an agent explicitly granted through ``user_agent_permission``.
+    Administrators see all domains; business users see domains consumable by
+    an Agent explicitly granted through ``user_agent_permission``.
     """
     svc = get_semantic_runtime_service()
     if current_user.role == "admin":
@@ -218,12 +211,12 @@ async def run_agent_tool(
     """Invoke one bounded Ontology runtime tool.
 
     For ``ontology_query_capability``, the domain must have a non-null
-    datasource owned by its Agent.  The independent v1 Query path executes
+    datasource accessible to the selected consumer Agent.  The independent v1 Query path executes
     read-only SQL directly after validation and deterministic compilation; it
     does not use the Chat graph's SQL-confirmation checkpoint.  Object query
     and published Action behavior retain their existing boundaries.
     """
-    await require_domain_access(domain_id, current_user)
+    access_agent_id = await require_domain_access(domain_id, current_user)
     try:
         query_context: dict[str, object] = {}
         if tool_name == QUERY_CAPABILITY_TOOL:
@@ -241,9 +234,25 @@ async def run_agent_tool(
                         "拒绝回退到默认 business DB"
                     ),
                 )
+            runtime_service = get_semantic_runtime_service()
+            preferred_agent_id = runtime.domain.agent_id
+            if isinstance(access_agent_id, int):
+                execution_agent_id = access_agent_id
+            elif current_user.role == "admin":
+                execution_agent_id = await runtime_service.resolve_domain_agent(
+                    domain_id,
+                    preferred_agent_id,
+                )
+            else:
+                # Compatibility for direct function callers/tests that replace
+                # the access dependency without returning its resolved Agent.
+                execution_agent_id = preferred_agent_id
+            if execution_agent_id is None:
+                raise HTTPException(status_code=403, detail="领域尚未绑定当前用户可用的智能体")
+            runtime.domain.agent_id = execution_agent_id
             if not await get_datasource_service().belongs_to_agent(
                 datasource_id,
-                runtime.domain.agent_id,
+                execution_agent_id,
             ):
                 raise HTTPException(
                     status_code=403,

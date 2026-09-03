@@ -3,12 +3,12 @@
     <router-view v-if="isAuthPage" />
     <el-container class="app-container" direction="vertical">
       <template v-if="!isAuthPage">
-      <el-header class="app-header">
+      <el-header class="app-header" role="banner">
         <div class="brand">
-          <div class="brand-mark">WQ</div>
-          <div>
+          <div class="brand-mark" aria-hidden="true">WQ</div>
+          <div class="brand-copy">
             <h1>问渠 WenQu</h1>
-            <span>AI报告交付与风险决策平台</span>
+            <span>企业本体数字孪生与智能决策平台</span>
           </div>
         </div>
         <el-menu
@@ -17,48 +17,53 @@
           router
           mode="horizontal"
           :ellipsis="true"
+          aria-label="主导航"
         >
           <el-menu-item index="/" :disabled="isNavigationDisabled('/')">
             <el-icon><ChatDotRound /></el-icon>
             <span>对话</span>
           </el-menu-item>
-          <el-menu-item v-if="isAdminUser" index="/agent" :disabled="isNavigationDisabled('/agent')">
-            <el-icon><User /></el-icon>
-            <span>智能体管理</span>
+          <el-menu-item v-if="isAuthenticatedUser" index="/enterprise-model" :disabled="isNavigationDisabled('/enterprise-model')">
+            <el-icon><Share /></el-icon>
+            <span>企业模型</span>
           </el-menu-item>
-          <el-menu-item v-if="isAdminUser" index="/model-config" :disabled="isNavigationDisabled('/model-config')">
-            <el-icon><Setting /></el-icon>
-            <span>模型配置</span>
+          <el-menu-item v-if="isAuthenticatedUser" index="/twin-runtime" :disabled="isNavigationDisabled('/twin-runtime')">
+            <el-icon><DataBoard /></el-icon>
+            <span>孪生运行</span>
           </el-menu-item>
-          <el-menu-item v-if="isAdminUser" index="/datasource" :disabled="isNavigationDisabled('/datasource')">
-            <el-icon><Coin /></el-icon>
-            <span>数据源</span>
-          </el-menu-item>
-          <el-menu-item v-if="isAdminUser" index="/knowledge" :disabled="isNavigationDisabled('/knowledge')">
-            <el-icon><Document /></el-icon>
-            <span>查询语义</span>
+          <el-menu-item v-if="isAuthenticatedUser" index="/capability-center" :disabled="isNavigationDisabled('/capability-center')">
+            <el-icon><Connection /></el-icon>
+            <span>能力发布</span>
           </el-menu-item>
           <el-menu-item v-if="isAuthenticatedUser" index="/risk-delivery" :disabled="isNavigationDisabled('/risk-delivery')">
             <el-icon><WarningFilled /></el-icon>
             <span>风险交付</span>
           </el-menu-item>
-          <el-menu-item v-if="isAuthenticatedUser" index="/ontology" :disabled="isNavigationDisabled('/ontology')">
-            <el-icon><Share /></el-icon>
-            <span>本体建模</span>
+          <el-menu-item v-if="isAdminUser" index="/agent" :disabled="isNavigationDisabled('/agent')">
+            <el-icon><User /></el-icon>
+            <span>应用智能体</span>
+          </el-menu-item>
+          <el-menu-item v-if="isAdminUser" index="/datasource" :disabled="isNavigationDisabled('/datasource')">
+            <el-icon><Coin /></el-icon>
+            <span>数据源</span>
+          </el-menu-item>
+          <el-menu-item v-if="isAdminUser" index="/model-config" :disabled="isNavigationDisabled('/model-config')">
+            <el-icon><Setting /></el-icon>
+            <span>模型配置</span>
           </el-menu-item>
           <el-menu-item v-if="isAdminUser" index="/system-parameter" :disabled="isNavigationDisabled('/system-parameter')">
             <el-icon><Setting /></el-icon>
             <span>系统参数</span>
           </el-menu-item>
         </el-menu>
-        <div class="header-tools">
-          <el-tag class="env-tag" :type="envTagType" effect="light" round>{{ envLabel }}</el-tag>
+        <div class="header-tools" aria-label="用户工具">
+          <el-tag class="env-tag" :type="envTagType" effect="light" round :title="envLabel">{{ envLabel }}</el-tag>
           <el-button :icon="Bell" circle aria-label="通知" title="通知" />
-          <div class="user-pill">
+          <div class="user-pill" :title="displayName">
             <span class="avatar">{{ userInitial }}</span>
             <span>{{ displayName }}</span>
           </div>
-          <el-button text @click="handleLogout">退出</el-button>
+          <el-button class="logout-button" text :icon="SwitchButton" title="退出登录" @click="handleLogout">退出</el-button>
         </div>
       </el-header>
       <el-main class="app-main">
@@ -74,7 +79,7 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { chatRunState } from './stores/chatRun'
-import { Bell, Setting } from '@element-plus/icons-vue'
+import { Bell, Setting, SwitchButton } from '@element-plus/icons-vue'
 import { authState, isAdmin, isLoggedIn, logout } from './stores/auth'
 
 const route = useRoute()
@@ -105,8 +110,10 @@ async function handleLogout() {
   --wq-surface: #ffffff;
   --wq-surface-soft: #f7f9fc;
   --wq-surface-raised: #eef2f7;
+  --wq-surface-sunken: #edf1f6;
   --wq-border: #dfe4ec;
   --wq-border-strong: #c8d1de;
+  --wq-border-subtle: #edf0f4;
   --wq-text: #182230;
   --wq-muted: #475467;
   --wq-subtle: #667085;
@@ -120,7 +127,9 @@ async function handleLogout() {
   --wq-code: #101828;
   --wq-radius: 8px;
   --wq-control-radius: 7px;
-  --wq-shadow: 0 8px 24px rgba(24, 34, 48, 0.08);
+  --wq-shadow-sm: 0 1px 2px rgba(24, 34, 48, 0.05), 0 5px 14px rgba(24, 34, 48, 0.04);
+  --wq-shadow: 0 12px 32px rgba(24, 34, 48, 0.12), 0 2px 8px rgba(24, 34, 48, 0.06);
+  --wq-focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.14);
   --wq-header-height: 64px;
 
   --el-color-primary: var(--wq-primary-strong);
@@ -183,21 +192,28 @@ html, body, #app {
 .app-header {
   height: var(--wq-header-height);
   padding: 0 20px;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--wq-surface);
   border-bottom: 1px solid var(--wq-border);
   display: grid;
   grid-template-columns: minmax(190px, 220px) minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   flex-shrink: 0;
+  position: relative;
+  z-index: 2;
   backdrop-filter: blur(14px) saturate(120%);
   -webkit-backdrop-filter: blur(14px) saturate(120%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8), 0 4px 14px rgba(24, 34, 48, 0.04);
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+}
+
+.brand-copy {
   min-width: 0;
 }
 
@@ -212,6 +228,7 @@ html, body, #app {
   font-weight: 750;
   background: var(--wq-primary);
   letter-spacing: 0;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.18);
 }
 
 .brand h1 {
@@ -236,6 +253,9 @@ html, body, #app {
   border-bottom: 0;
   background: transparent;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
   --el-menu-active-color: var(--wq-primary-strong);
   --el-menu-text-color: var(--wq-muted);
   --el-menu-hover-text-color: var(--wq-text);
@@ -254,12 +274,14 @@ html, body, #app {
   font-weight: 520;
   letter-spacing: 0;
   white-space: nowrap;
+  transition: color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 120ms ease;
 }
 
 .top-nav.el-menu--horizontal > .el-menu-item.is-active {
   color: var(--wq-primary-strong);
   font-weight: 650;
   background: var(--wq-primary-soft);
+  box-shadow: inset 0 0 0 1px rgba(147, 180, 251, 0.46);
 }
 
 .top-nav.el-menu--horizontal > .el-menu-item.is-active .el-icon {
@@ -269,6 +291,7 @@ html, body, #app {
 .top-nav.el-menu--horizontal > .el-menu-item:not(.is-disabled):not(.is-active):hover {
   color: var(--wq-text);
   background: var(--wq-surface-raised);
+  transform: translateY(-1px);
 }
 
 .top-nav.el-menu--horizontal > .el-menu-item.is-disabled {
@@ -281,6 +304,8 @@ html, body, #app {
   justify-content: flex-end;
   gap: 8px;
   min-width: 0;
+  padding-left: 12px;
+  border-left: 1px solid var(--wq-border-subtle);
 }
 
 .env-tag {
@@ -338,6 +363,17 @@ html, body, #app {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.header-tools .el-button.is-circle {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+
+.logout-button {
+  min-width: 54px;
 }
 
 .el-button {
@@ -418,6 +454,10 @@ html, body, #app {
     gap: 8px 12px;
   }
 
+  .header-tools {
+    padding-left: 8px;
+  }
+
   .top-nav {
     order: 3;
     grid-column: 1 / -1;
@@ -455,6 +495,22 @@ html, body, #app {
 
   .top-nav.el-menu--horizontal > .el-menu-item {
     padding: 0 10px;
+  }
+
+  .header-tools {
+    gap: 4px;
+  }
+
+  .logout-button {
+    width: 34px;
+    min-width: 34px;
+    padding: 0;
+    font-size: 0;
+  }
+
+  .logout-button .el-icon {
+    margin: 0;
+    font-size: 16px;
   }
 }
 </style>

@@ -31,19 +31,37 @@ class AgentConfig(BaseModel):
         default=None,
         description="绑定的默认语义层 id,决定问数链路使用的业务口径资产",
     )
+    semantic_domain_ids: list[int] = Field(
+        default_factory=list,
+        description="该智能体可消费的全部企业业务领域 id",
+    )
     # 以下三个 *_name 字段由 JOIN 查询填充,仅用于前端展示,不入库
-    chat_model_config_name: str | None = Field(default=None, description="大语言模型配置名(JOIN 填充,仅展示)")
-    embedding_model_config_name: str | None = Field(default=None, description="向量模型配置名(JOIN 填充,仅展示)")
-    semantic_domain_name: str | None = Field(default=None, description="语义层名称(JOIN 填充,仅展示)")
-    semantic_domain_key: str | None = Field(default=None, description="语义层 key(JOIN 填充,仅展示)")
+    chat_model_config_name: str | None = Field(
+        default=None, description="大语言模型配置名(JOIN 填充,仅展示)"
+    )
+    embedding_model_config_name: str | None = Field(
+        default=None, description="向量模型配置名(JOIN 填充,仅展示)"
+    )
+    semantic_domain_name: str | None = Field(
+        default=None, description="语义层名称(JOIN 填充,仅展示)"
+    )
+    semantic_domain_key: str | None = Field(
+        default=None, description="语义层 key(JOIN 填充,仅展示)"
+    )
     default_questions: list[str] = Field(
         default_factory=list,
         description="智能体默认推荐问题,用于对话页快捷问题展示",
     )
     # 兼容旧字段:部分链路仍读取 agent.llm_provider/llm_model 作为兜底
-    llm_provider: str = Field(default="ollama", description="兜底模型供应商,优先级低于 chat_model_config_id")
-    llm_model: str = Field(default="qwen3:14b", description="兜底模型名,优先级低于 chat_model_config_id")
-    api_key: str | None = Field(default=None, description="兜底 API Key(密文存储),优先级低于模型配置")
+    llm_provider: str = Field(
+        default="ollama", description="兜底模型供应商,优先级低于 chat_model_config_id"
+    )
+    llm_model: str = Field(
+        default="qwen3:14b", description="兜底模型名,优先级低于 chat_model_config_id"
+    )
+    api_key: str | None = Field(
+        default=None, description="兜底 API Key(密文存储),优先级低于模型配置"
+    )
     api_key_enabled: bool = Field(default=False, description="是否启用兜底 API Key")
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -61,6 +79,10 @@ class AgentCreate(BaseModel):
     chat_model_config_id: int | None = Field(default=None, description="绑定的大语言模型配置 id")
     embedding_model_config_id: int | None = Field(default=None, description="绑定的向量模型配置 id")
     semantic_domain_id: int | None = Field(default=None, description="绑定的默认语义层 id")
+    semantic_domain_ids: list[int] | None = Field(
+        default=None,
+        description="可消费的领域 id;不传时保留已有绑定并确保默认领域已绑定",
+    )
     default_questions: list[str] = Field(
         default_factory=list,
         description="智能体默认推荐问题,用于对话页快捷问题展示",
@@ -71,3 +93,10 @@ class AgentCreate(BaseModel):
     )
     llm_provider: str = Field(default="ollama", description="兜底模型供应商")
     llm_model: str = Field(default="qwen3:14b", description="兜底模型名")
+
+
+class AgentDomainBindingUpdate(BaseModel):
+    """替换智能体可消费领域集合，并指定其中一个默认领域。"""
+
+    domain_ids: list[int] = Field(default_factory=list, description="可消费的领域 id 列表")
+    default_domain_id: int | None = Field(default=None, description="默认领域 id")

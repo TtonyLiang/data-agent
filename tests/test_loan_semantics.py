@@ -147,7 +147,7 @@ def test_semantic_runtime_recall_prefers_agent_bound_domain(monkeypatch):
             return [0.1] * 4
 
     class FakeVectorStore:
-        def search(self, agent_id, query_vector):
+        def search(self, agent_id, query_vector, *, domain_id=None):
             return []
 
     class FakeOntologyService:

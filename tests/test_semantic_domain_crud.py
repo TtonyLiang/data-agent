@@ -65,6 +65,7 @@ async def test_delete_domain_removes_assets_and_unbinds_agents(monkeypatch):
     assert "DELETE FROM semantic_concept WHERE domain_id = :id" in statements
     assert "DELETE FROM semantic_metric WHERE domain_id = :id" in statements
     assert "UPDATE agent SET semantic_domain_id = NULL WHERE semantic_domain_id = :id" in statements
+    assert "DELETE FROM agent_semantic_domain WHERE domain_id = :id" in statements
     assert statements[-1] == "DELETE FROM semantic_domain WHERE id = :id"
 
 

@@ -2,10 +2,41 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const source = readFileSync(new URL('./ChatView.vue', import.meta.url), 'utf8')
+const loginSource = readFileSync(new URL('./LoginView.vue', import.meta.url), 'utf8')
+const registerSource = readFileSync(new URL('./RegisterView.vue', import.meta.url), 'utf8')
 
 assert.ok(
   source.includes('max-width: var(--wq-page-max-width)') && source.includes('margin-inline: auto'),
   'ChatView should use the same centered workbench width as other functional pages',
+)
+
+assert.ok(
+  source.includes('class="sidebar-heading"') &&
+    source.includes('class="session-loading"') &&
+    source.includes('class="session-list-error"') &&
+    source.includes('@click="loadSessions"'),
+  'ChatView should distinguish session navigation, loading, and retry states',
+)
+
+assert.ok(
+  source.includes('class="session-open"') &&
+    source.includes(':aria-pressed="s.session_id === sessionId"') &&
+    source.includes('aria-label="删除会话"'),
+  'ChatView session rows should use keyboard-reachable open and delete actions',
+)
+
+assert.ok(
+  source.includes('chat-loading-state') &&
+    source.includes('class="empty-icon error"') &&
+    source.includes('重新加载'),
+  'ChatView should expose agent loading and recovery states instead of only an empty result',
+)
+
+assert.ok(
+  source.includes('grid-template-rows: minmax(0, 1fr) 320px') &&
+    source.includes('grid-template-rows: minmax(0, 1fr) minmax(260px, 44dvh)') &&
+    source.includes('label="SQL 细节"'),
+  'ChatView should keep query details available below the main conversation on smaller screens',
 )
 
 assert.ok(!source.includes('v-html'), 'ChatView should not render chat content with v-html')
@@ -277,4 +308,20 @@ assert.ok(
     source.includes('riskFormRules') &&
     source.includes('风险事项创建失败'),
   'ChatView should cover form validation, object loading, submission loading, and API errors',
+)
+
+assert.ok(
+  loginSource.includes('class="auth-feedback"') &&
+    loginSource.includes('errorMessage.value =') &&
+    loginSource.includes(':disabled="loading"') &&
+    loginSource.includes('@keyframes authShellIn'),
+  'LoginView should provide inline failure feedback, lock inputs during submission, and use restrained entry motion',
+)
+
+assert.ok(
+  registerSource.includes('class="auth-feedback"') &&
+    registerSource.includes('errorMessage.value =') &&
+    registerSource.includes(':disabled="loading"') &&
+    registerSource.includes('@keyframes authContentIn'),
+  'RegisterView should provide inline failure feedback, lock inputs during submission, and use restrained entry motion',
 )

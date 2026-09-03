@@ -31,6 +31,18 @@ assert.ok(
 )
 
 assert.ok(
+  source.includes('class="page-error-row"') &&
+    source.includes('class="page-retry-button"') &&
+    source.includes('@click="retryPageLoad"') &&
+    source.includes('class="table-empty"') &&
+    source.includes('报告交付') &&
+    source.includes('决策审计事件') &&
+    source.includes('@row-click="openReportVersions"') &&
+    source.includes(':row-class-name="reportRowClassName"'),
+  'workbench should expose retryable errors, actionable empty states, and report detail navigation',
+)
+
+assert.ok(
     source.includes('证据链') &&
     source.includes('人工复核') &&
     source.includes('class="risk-detail-drawer"') &&
@@ -137,6 +149,119 @@ assert.ok(
   'report workflow should create versions, finalize reports, and display snapshot provenance',
 )
 
+assert.ok(
+  source.includes('class="report-reading-panel"') &&
+    source.includes('aria-label="业务阅读版"') &&
+    source.includes('业务阅读版') &&
+    source.includes('报告状态') &&
+    source.includes('报告期间') &&
+    source.includes('风险事项') &&
+    source.includes('当前版本') &&
+    source.includes('风险概览') &&
+    source.includes('reportVersionIssues(version)') &&
+    source.includes('reportIssueTitle(issue)') &&
+    source.includes('reportIssueSeverity(issue)') &&
+    source.includes('reportIssueStatus(issue)') &&
+    source.includes('reportIssueObjectLabel(issue)') &&
+    source.includes('reportIssueDetectedValue(issue)') &&
+    source.includes('reportIssueEvidenceSummary(issue)') &&
+    source.includes('reportIssueReviewSummary(issue)') &&
+    source.includes('function reportVersionFallbackSummary(version') &&
+    source.includes('暂无纳入的风险事项'),
+  'report versions should default to a readable business summary with graceful issue fallbacks',
+)
+
+assert.ok(
+  source.includes('class="technical-trace-collapse"') &&
+    source.includes('技术追溯（原始 JSON、哈希与版本字段）') &&
+    source.includes('Ontology release') &&
+    source.includes('创建人') &&
+    source.includes('快照哈希') &&
+    source.includes('原始 snapshot JSON') &&
+    source.includes('原始 Markdown') &&
+    source.includes('技术字段') &&
+    source.includes('function formatTechnicalFields(version'),
+  'technical provenance should be available in a secondary collapsed section',
+)
+
+const reportVersionIssuesSource = source.slice(
+  source.indexOf('function reportVersionIssues'),
+  source.indexOf('function reportIssueTitle'),
+)
+
+assert.ok(
+  source.includes("const REPORT_ISSUE_SNAPSHOT_STATE = '__report_snapshot_state'") &&
+    reportVersionIssuesSource.includes('if (hasSnapshotIssueDetails(snapshotIssue))') &&
+    reportVersionIssuesSource.includes("withReportIssueSnapshotState(snapshotIssue, 'snapshot')") &&
+    reportVersionIssuesSource.includes("withReportIssueSnapshotState({ ...liveIssue, ...snapshotIssue }, 'live_supplement')") &&
+    !reportVersionIssuesSource.includes('{ ...(liveById.get') &&
+    source.includes("if (state === 'live_supplement') return '未固化信息'") &&
+    source.includes("if (state === 'missing') return '快照缺失'") &&
+    source.includes("return '当前快照'") &&
+    source.includes('不属于不可变报告快照'),
+  'immutable report issues should keep snapshot fields authoritative and label live-only supplements',
+)
+
+const snapshotSummarySource = source.slice(
+  source.indexOf('function snapshotSummaryValue'),
+  source.indexOf('type VersionMarkdownBlock'),
+)
+
+assert.ok(
+  snapshotSummarySource.includes("const contextValue = field(snapshot, 'context')") &&
+    snapshotSummarySource.includes("textField(snapshot, 'change_summary', 'changeSummary', 'summary', 'stage')") &&
+    snapshotSummarySource.includes("textField(context, 'change_summary', 'changeSummary', 'summary', 'stage')") &&
+    source.includes('snapshotSummaryValue(version)'),
+  'snapshot summaries should read root fields first and then the backend context payload',
+)
+
+assert.ok(
+  source.includes('v-if="isCurrentReportVersion(version)"') &&
+    source.includes('<el-tag v-else type="info" size="small" effect="plain">不可变版本</el-tag>') &&
+    source.includes("{{ isCurrentReportVersion(version) ? '当前版本' : '版本号' }}") &&
+    source.includes("const currentVersion = numberField(selectedReport.value, 'current_version')") &&
+    source.includes('versionNumber === currentVersion'),
+  'only the selected report current version should receive the current-version label',
+)
+
+assert.ok(
+  source.includes('reportVersionMarkdownBlocks(version)') &&
+    source.includes('inlineMarkdownParts(block.text)') &&
+    source.includes("block.type === 'heading'") &&
+    source.includes("block.type === 'subheading'") &&
+    source.includes("block.type === 'paragraph'") &&
+    source.includes("block.type === 'list'") &&
+    source.includes('<ol v-else-if="block.type === \'list\' && block.ordered">') &&
+    source.includes('<ul v-else-if="block.type === \'list\'">') &&
+    source.includes("| { type: 'list'; ordered: boolean; items: string[] }") &&
+    source.includes("blocks.push({ type: 'list', ordered: Boolean(listOrdered), items: [...listItems] })") &&
+    source.includes("block.type === 'table'") &&
+    source.includes("block.type === 'code'") &&
+    source.includes('function parseVersionMarkdownTable(lines') &&
+    source.includes('function isVersionMarkdownTableLine(line') &&
+    !source.includes('v-html'),
+  'report markdown should use safe block rendering for headings, text, lists, tables, and code',
+)
+
+assert.ok(
+  source.includes('v-for="{ version, issues, markdownBlocks, issueOverviewLabel, fallbackSummary } in reportVersionViews"') &&
+    source.includes('const reportVersionViews = computed(() => reportVersions.value.map((version) => {') &&
+    source.includes('@change="handleTechnicalTraceChange(version, $event)"') &&
+    source.includes('<template v-if="isTechnicalTraceExpanded(version)">') &&
+    source.includes('const expandedTechnicalVersionKeys = ref<string[]>([])') &&
+    !source.includes('reportVersionIssues(version).length') &&
+    !source.includes('v-if="reportVersionMarkdownBlocks(version).length"'),
+  'version cards should precompute business projections and mount technical trace content only while expanded',
+)
+
+assert.ok(
+  source.includes('class="form-help"') &&
+    source.includes('技术追溯信息，普通阅读者无需填写或查看') &&
+    source.includes('V1 快照（JSON）') &&
+    source.includes('版本快照（JSON）'),
+  'technical JSON inputs should explain that they are for traceability rather than ordinary reading',
+)
+
 for (const auditColumn of ['事件类型', '实体', 'Release', '执行人', '时间', '事件哈希']) {
   assert.ok(source.includes(`label="${auditColumn}"`), `audit table should include the ${auditColumn} column`)
 }
@@ -185,10 +310,20 @@ assert.ok(
     source.includes('.table-action-btn.is-evidence') &&
     source.includes('.table-action-btn.is-review') &&
     source.includes('.table-action-btn.is-finalize') &&
+    source.includes('--risk-accent: #175cd3') &&
+    source.includes('.section-heading-copy') &&
+    source.includes('.filter-group') &&
+    source.includes('.metric-item.has-value') &&
+    source.includes('.workbench-table :deep(.el-table__header-wrapper th.el-table__cell)') &&
+    source.includes('.table-empty') &&
+    source.includes('.evidence-record') &&
+    source.includes('.review-record {') &&
+    source.includes('.report-table :deep(.el-table__body tr) { cursor: pointer; }') &&
+    source.includes('min-width: 920px;') &&
     source.includes('overflow-wrap: anywhere') &&
     source.includes('@media (max-width: 760px)') &&
     source.includes('grid-template-columns: repeat(2, minmax(0, 1fr))'),
-  'workbench should use a height-safe dense desktop layout with a narrow-screen fallback',
+  'workbench should use a hierarchy-first dense layout with actionable states and a narrow-screen fallback',
 )
 
 assert.ok(

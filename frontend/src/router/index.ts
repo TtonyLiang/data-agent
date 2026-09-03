@@ -12,9 +12,12 @@ const routes = [
   { path: '/prompt-config', redirect: { path: '/system-parameter', query: { tab: 'prompt' } } },
   { path: '/system-parameter', name: 'SystemParameter', component: () => import('../views/SystemParameterConfig.vue') },
   { path: '/datasource', name: 'Datasource', component: () => import('../views/DatasourceConfig.vue') },
-  { path: '/knowledge', name: 'SemanticRuntime', component: () => import('../views/KnowledgeConfig.vue') },
+  { path: '/enterprise-model', name: 'EnterpriseModel', component: () => import('../views/EnterpriseModelCenter.vue') },
+  { path: '/twin-runtime', name: 'TwinRuntime', component: () => import('../views/TwinRuntimeCenter.vue') },
+  { path: '/capability-center', name: 'CapabilityCenter', component: () => import('../views/CapabilityPublishCenter.vue') },
+  { path: '/knowledge', redirect: { path: '/enterprise-model', query: { section: 'semantic' } } },
   { path: '/risk-delivery', name: 'RiskDelivery', component: () => import('../views/RiskDeliveryWorkbench.vue') },
-  { path: '/ontology', name: 'OntologyWorkbench', component: () => import('../views/OntologyWorkbench.vue') },
+  { path: '/ontology', redirect: { path: '/enterprise-model', query: { section: 'ontology' } } },
   { path: '/users', redirect: { path: '/system-parameter', query: { tab: 'users' } } },
 ]
 

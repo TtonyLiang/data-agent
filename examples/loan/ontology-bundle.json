@@ -30,8 +30,8 @@
     },
     {
       "object_key": "LoanApplication",
-      "name": "贷款申请",
-      "description": "客户提交的贷款申请及其审批状态。",
+      "name": "贷款申请单",
+      "description": "客户提交的一笔申请记录及其审批状态；不是审批流程定义。",
       "primary_property": "application_id",
       "display_property": "application_no",
       "sync_enabled": true,

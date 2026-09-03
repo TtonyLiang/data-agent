@@ -43,6 +43,7 @@ from app.models.knowledge import (
     SemanticRule,
     SemanticRuntime,
 )
+from app.services.workspace_service import DEFAULT_WORKSPACE_KEY, DEFAULT_WORKSPACE_NAME
 from app.utils.logging_helpers import json_for_log, truncate_text
 
 logger = logging.getLogger(__name__)
@@ -84,10 +85,19 @@ class SemanticRuntimeService:
     """语义运行时服务：结构化资产读取、校验和 LogicForm 编译。"""
 
     async def list_domains(self, agent_id: int) -> list[SemanticDomain]:
-        """List semantic domains owned by an agent."""
+        """List enterprise domains consumable by an agent.
+
+        The association table is authoritative.  The legacy owner and default
+        domain columns remain as read fallbacks for databases not yet backfilled.
+        """
         db = get_management_db()
         rows = await db.execute_query(
-            "SELECT * FROM semantic_domain WHERE agent_id = :aid ORDER BY id ASC",
+            "SELECT DISTINCT sd.* FROM semantic_domain sd "
+            "LEFT JOIN agent_semantic_domain asd "
+            "ON asd.domain_id = sd.id AND asd.agent_id = :aid "
+            "LEFT JOIN agent a ON a.id = :aid AND a.semantic_domain_id = sd.id "
+            "WHERE asd.agent_id IS NOT NULL OR a.id IS NOT NULL OR sd.agent_id = :aid "
+            "ORDER BY sd.id ASC",
             {"aid": agent_id},
         )
         return [SemanticDomain(**row) for row in rows]
@@ -113,25 +123,29 @@ class SemanticRuntimeService:
         domain_key: str | None = None,
         datasource_id: int | None = None,
     ) -> SemanticDomain | None:
-        """Find the best active semantic domain for agent, key, and optional datasource."""
+        """Find a domain by key within the set consumable by an agent."""
         if not domain_key:
             return None
         db = get_management_db()
         params: dict[str, Any] = {"aid": agent_id, "domain_key": domain_key}
         datasource_filter = ""
         if datasource_id:
-            datasource_filter = " AND (datasource_id = :did OR datasource_id IS NULL)"
+            datasource_filter = " AND (sd.datasource_id = :did OR sd.datasource_id IS NULL)"
             params["did"] = datasource_id
         rows = await db.execute_query(
-            "SELECT * FROM semantic_domain "
-            "WHERE agent_id = :aid AND domain_key = :domain_key"
-            f"{datasource_filter} ORDER BY datasource_id DESC, id DESC LIMIT 1",
+            "SELECT DISTINCT sd.* FROM semantic_domain sd "
+            "LEFT JOIN agent_semantic_domain asd "
+            "ON asd.domain_id = sd.id AND asd.agent_id = :aid "
+            "LEFT JOIN agent a ON a.id = :aid AND a.semantic_domain_id = sd.id "
+            "WHERE (asd.agent_id IS NOT NULL OR a.id IS NOT NULL OR sd.agent_id = :aid) "
+            "AND sd.domain_key = :domain_key"
+            f"{datasource_filter} ORDER BY sd.datasource_id DESC, sd.id DESC LIMIT 1",
             params,
         )
         return SemanticDomain(**rows[0]) if rows else None
 
     async def get_agent_bound_domain(self, agent_id: int) -> SemanticDomain | None:
-        """Load the semantic domain explicitly selected on an agent."""
+        """Load the agent's default domain, with a binding/legacy fallback."""
         db = get_management_db()
         rows = await db.execute_query(
             "SELECT sd.* FROM agent a "
@@ -139,13 +153,190 @@ class SemanticRuntimeService:
             "WHERE a.id = :agent_id",
             {"agent_id": agent_id},
         )
-        return SemanticDomain(**rows[0]) if rows else None
+        if rows:
+            return SemanticDomain(**rows[0])
+        domains = await self.list_domains(agent_id)
+        return domains[0] if domains else None
+
+    async def get_agent_domain_ids(self, agent_id: int) -> list[int]:
+        """Return all domains an agent can consume, including compatibility links."""
+        return [int(item.id) for item in await self.list_domains(agent_id) if item.id is not None]
+
+    async def get_agent_domain_binding(self, agent_id: int) -> dict[str, Any] | None:
+        """Return consumer bindings and the default-domain compatibility pointer."""
+        rows = await get_management_db().execute_query(
+            "SELECT semantic_domain_id FROM agent WHERE id = :agent_id",
+            {"agent_id": agent_id},
+        )
+        if not rows:
+            return None
+        return {
+            "domain_ids": await self.get_agent_domain_ids(agent_id),
+            "default_domain_id": rows[0].get("semantic_domain_id"),
+        }
+
+    async def bind_agent_domain(self, agent_id: int, domain_id: int) -> None:
+        """Idempotently add one Agent-domain consumer binding."""
+        await get_management_db().execute_query(
+            "INSERT IGNORE INTO agent_semantic_domain (agent_id, domain_id) "
+            "VALUES (:agent_id, :domain_id)",
+            {"agent_id": agent_id, "domain_id": domain_id},
+        )
+
+    async def set_agent_domains(
+        self,
+        agent_id: int,
+        domain_ids: list[int],
+        default_domain_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Replace Agent-domain bindings and update the compatibility default pointer."""
+        db = get_management_db()
+        agent_rows = await db.execute_query(
+            "SELECT id FROM agent WHERE id = :agent_id",
+            {"agent_id": agent_id},
+        )
+        if not agent_rows:
+            raise ValueError("智能体不存在")
+
+        ids = sorted({int(domain_id) for domain_id in domain_ids if int(domain_id) > 0})
+        if default_domain_id is not None:
+            default_domain_id = int(default_domain_id)
+            if default_domain_id <= 0:
+                raise ValueError("默认领域 ID 无效")
+            if default_domain_id not in ids:
+                ids.append(default_domain_id)
+                ids.sort()
+
+        if ids:
+            params = {f"domain_{index}": domain_id for index, domain_id in enumerate(ids)}
+            placeholders = ", ".join(f":domain_{index}" for index in range(len(ids)))
+            rows = await db.execute_query(
+                f"SELECT id FROM semantic_domain WHERE id IN ({placeholders})",
+                params,
+            )
+            existing_ids = {int(row["id"]) for row in rows}
+            missing = [domain_id for domain_id in ids if domain_id not in existing_ids]
+            if missing:
+                raise ValueError(f"企业业务领域不存在: {', '.join(map(str, missing))}")
+
+        statements: list[tuple[str, dict[str, Any] | None]] = [
+            (
+                "UPDATE semantic_domain SET agent_id = NULL WHERE agent_id = :agent_id",
+                {"agent_id": agent_id},
+            ),
+            (
+                "DELETE FROM agent_semantic_domain WHERE agent_id = :agent_id",
+                {"agent_id": agent_id},
+            ),
+        ]
+        statements.extend(
+            (
+                "INSERT INTO agent_semantic_domain (agent_id, domain_id) "
+                "VALUES (:agent_id, :domain_id)",
+                {"agent_id": agent_id, "domain_id": domain_id},
+            )
+            for domain_id in ids
+        )
+        statements.append(
+            (
+                "UPDATE agent SET semantic_domain_id = :default_domain_id WHERE id = :agent_id",
+                {"agent_id": agent_id, "default_domain_id": default_domain_id},
+            )
+        )
+        if hasattr(db, "execute_transaction"):
+            await db.execute_transaction(statements)
+        else:
+            for sql, params in statements:
+                await db.execute_query(sql, params)
+        return {"domain_ids": ids, "default_domain_id": default_domain_id}
+
+    async def is_domain_bound_to_agent(self, domain_id: int, agent_id: int) -> bool:
+        """Check whether an Agent can consume a domain."""
+        db = get_management_db()
+        rows = await db.execute_query(
+            "SELECT sd.id FROM semantic_domain sd "
+            "LEFT JOIN agent_semantic_domain asd "
+            "ON asd.domain_id = sd.id AND asd.agent_id = :agent_id "
+            "LEFT JOIN agent a ON a.id = :agent_id "
+            "WHERE sd.id = :domain_id AND a.id IS NOT NULL AND (asd.agent_id IS NOT NULL "
+            "OR a.semantic_domain_id = sd.id OR sd.agent_id = :agent_id) LIMIT 1",
+            {"domain_id": domain_id, "agent_id": agent_id},
+        )
+        return bool(rows)
+
+    async def get_domain_agent_ids(self, domain_id: int) -> list[int]:
+        """Return every existing Agent that consumes one enterprise domain."""
+        rows = await get_management_db().execute_query(
+            "SELECT DISTINCT a.id FROM agent a "
+            "JOIN semantic_domain sd ON sd.id = :domain_id "
+            "LEFT JOIN agent_semantic_domain asd "
+            "ON asd.agent_id = a.id AND asd.domain_id = sd.id "
+            "WHERE asd.domain_id IS NOT NULL OR a.semantic_domain_id = sd.id "
+            "OR sd.agent_id = a.id ORDER BY a.id ASC",
+            {"domain_id": domain_id},
+        )
+        return [int(row["id"]) for row in rows]
+
+    async def resolve_domain_agent(
+        self,
+        domain_id: int,
+        preferred_agent_id: int | None = None,
+    ) -> int | None:
+        """Resolve one active consumer Agent for Agent-scoped runtime dependencies."""
+        if preferred_agent_id and await self.is_domain_bound_to_agent(
+            domain_id, preferred_agent_id
+        ):
+            return preferred_agent_id
+        agent_ids = await self.get_domain_agent_ids(domain_id)
+        return agent_ids[0] if agent_ids else None
+
+    async def _resolve_workspace_id(self, workspace_id: int | None) -> int:
+        """Resolve the explicit workspace or create/read the default logical container."""
+        db = get_management_db()
+        if workspace_id is not None:
+            rows = await db.execute_query(
+                "SELECT id FROM enterprise_workspace WHERE id = :workspace_id",
+                {"workspace_id": workspace_id},
+            )
+            if not rows:
+                raise ValueError("企业空间不存在")
+            return int(workspace_id)
+        return await db.execute_insert(
+            "INSERT INTO enterprise_workspace "
+            "(workspace_key, name, description, status) "
+            "VALUES (:workspace_key, :name, :description, 'active') "
+            "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)",
+            {
+                "workspace_key": DEFAULT_WORKSPACE_KEY,
+                "name": DEFAULT_WORKSPACE_NAME,
+                "description": "企业业务领域与本体资产的默认逻辑空间",
+            },
+        )
 
     async def upsert_domain(self, data: dict[str, Any]) -> int:
-        """Create or update a semantic domain while preserving unique domain keys per agent."""
+        """Create or update an enterprise domain, optionally binding a consumer Agent."""
         db = get_management_db()
         domain = SemanticDomain(**data)
+        existing_row: dict[str, Any] | None = None
+        if domain.id:
+            existing = await db.execute_query(
+                "SELECT id FROM semantic_domain WHERE id = :id",
+                {"id": domain.id},
+            )
+            if not existing:
+                raise ValueError(f"语义领域不存在: {domain.id}")
+            workspace_rows = await db.execute_query(
+                "SELECT workspace_id FROM semantic_domain WHERE id = :id",
+                {"id": domain.id},
+            )
+            existing_row = workspace_rows[0] if workspace_rows else None
+        workspace_id = await self._resolve_workspace_id(
+            domain.workspace_id
+            if domain.workspace_id is not None
+            else (existing_row or {}).get("workspace_id")
+        )
         params = {
+            "workspace_id": workspace_id,
             "agent_id": domain.agent_id,
             "datasource_id": domain.datasource_id,
             "domain_key": domain.domain_key,
@@ -154,45 +345,38 @@ class SemanticRuntimeService:
             "status": domain.status,
         }
         if domain.id:
-            existing_by_id = await db.execute_query(
-                "SELECT id FROM semantic_domain WHERE id = :id",
-                {"id": domain.id},
-            )
-            if not existing_by_id:
-                raise ValueError(f"语义领域不存在: {domain.id}")
             duplicate = await db.execute_query(
                 "SELECT id FROM semantic_domain "
-                "WHERE agent_id = :agent_id AND domain_key = :domain_key AND id <> :id",
+                "WHERE workspace_id = :workspace_id AND domain_key = :domain_key AND id <> :id",
                 {**params, "id": domain.id},
             )
             if duplicate:
                 raise ValueError(f"语义领域标识已存在: {domain.domain_key}")
             await db.execute_query(
-                "UPDATE semantic_domain SET agent_id = :agent_id, datasource_id = :datasource_id, "
+                "UPDATE semantic_domain SET workspace_id = :workspace_id, agent_id = :agent_id, "
+                "datasource_id = :datasource_id, "
                 "domain_key = :domain_key, name = :name, description = :description, "
                 "status = :status WHERE id = :id",
                 {**params, "id": domain.id},
             )
+            if domain.agent_id is not None:
+                await self.bind_agent_domain(domain.agent_id, int(domain.id))
             return int(domain.id)
 
-        existing = await db.execute_query(
-            "SELECT id FROM semantic_domain "
-            "WHERE agent_id = :agent_id AND domain_key = :domain_key",
-            {"agent_id": domain.agent_id, "domain_key": domain.domain_key},
-        )
-        if existing:
-            await db.execute_query(
-                "UPDATE semantic_domain SET datasource_id = :datasource_id, name = :name, "
-                "description = :description, status = :status WHERE id = :id",
-                {**params, "id": existing[0]["id"]},
-            )
-            return int(existing[0]["id"])
-        return await db.execute_insert(
+        domain_id = await db.execute_insert(
             "INSERT INTO semantic_domain "
-            "(agent_id, datasource_id, domain_key, name, description, status) "
-            "VALUES (:agent_id, :datasource_id, :domain_key, :name, :description, :status)",
+            "(workspace_id, agent_id, datasource_id, domain_key, name, description, status) "
+            "VALUES (:workspace_id, :agent_id, :datasource_id, :domain_key, :name, "
+            ":description, :status) "
+            "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), "
+            "agent_id = COALESCE(VALUES(agent_id), agent_id), "
+            "datasource_id = VALUES(datasource_id), name = VALUES(name), "
+            "description = VALUES(description), status = VALUES(status)",
             params,
         )
+        if domain.agent_id is not None:
+            await self.bind_agent_domain(domain.agent_id, domain_id)
+        return domain_id
 
     async def delete_domain(self, domain_id: int) -> bool:
         """Delete a semantic domain and all child semantic assets."""
@@ -248,6 +432,10 @@ class SemanticRuntimeService:
             {"id": domain_id},
         )
         await db.execute_query(
+            "DELETE FROM agent_semantic_domain WHERE domain_id = :id",
+            {"id": domain_id},
+        )
+        await db.execute_query(
             "DELETE FROM semantic_domain WHERE id = :id",
             {"id": domain_id},
         )
@@ -271,7 +459,8 @@ class SemanticRuntimeService:
         bundle = await self.export_domain_bundle(domain_id)
         source = bundle["domain"]
         new_domain = {
-            "agent_id": payload.get("agent_id") or source["agent_id"],
+            "workspace_id": payload.get("workspace_id", source.get("workspace_id")),
+            "agent_id": payload.get("agent_id", source.get("agent_id")),
             "datasource_id": payload.get("datasource_id", source.get("datasource_id")),
             "domain_key": payload.get("domain_key") or f"{source['domain_key']}_copy",
             "name": payload.get("name") or f"{source['name']} 副本",
@@ -290,10 +479,12 @@ class SemanticRuntimeService:
         for field in ("id", "created_at", "updated_at"):
             domain.pop(field, None)
         db = get_management_db()
+        workspace_id = await self._resolve_workspace_id(domain.get("workspace_id"))
+        domain["workspace_id"] = workspace_id
         duplicate = await db.execute_query(
             "SELECT id FROM semantic_domain "
-            "WHERE agent_id = :agent_id AND domain_key = :domain_key",
-            {"agent_id": domain.get("agent_id"), "domain_key": domain.get("domain_key")},
+            "WHERE workspace_id = :workspace_id AND domain_key = :domain_key",
+            {"workspace_id": workspace_id, "domain_key": domain.get("domain_key")},
         )
         if duplicate:
             raise ValueError(f"语义层标识已存在: {domain.get('domain_key')}")

@@ -101,7 +101,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="问渠 WenQu · AI报告交付与风险决策平台",
+    title="问渠 WenQu · 企业本体数字孪生与智能决策平台",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -2046,6 +2046,7 @@ from app.api.risk_workflow import router as risk_workflow_router  # noqa: E402
 from app.api.semantic import router as semantic_router  # noqa: E402
 from app.api.system_parameter import router as system_parameter_router  # noqa: E402
 from app.api.user import router as user_router  # noqa: E402
+from app.api.workspace import router as workspace_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["认证"])
 app.include_router(agent_router, prefix="/api/agent", tags=["智能体"])
@@ -2058,6 +2059,7 @@ app.include_router(risk_workflow_router, prefix="/api/risk", tags=["风险与报
 app.include_router(semantic_router, prefix="/api/semantic", tags=["知识召回"])
 app.include_router(system_parameter_router, prefix="/api/system", tags=["系统参数"])
 app.include_router(user_router, prefix="/api/users", tags=["用户管理"])
+app.include_router(workspace_router, prefix="/api/workspaces", tags=["企业空间"])
 
 
 if __name__ == "__main__":

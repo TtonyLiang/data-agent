@@ -20,11 +20,11 @@ for (const tab of ['本体图谱', '对象类型', '关系类型', '动作类型
 
 assert.ok(
   appSource.includes('问渠 WenQu') &&
-    appSource.includes('AI报告交付与风险决策平台') &&
+    appSource.includes('企业本体数字孪生与智能决策平台') &&
+    appSource.includes('企业模型') &&
     appSource.includes('风险交付') &&
-    appSource.includes('本体建模') &&
-    source.includes('<h2>企业本体建模</h2>'),
-  'product branding should present risk delivery as the primary workflow and retain ontology modeling',
+    source.includes('<h2>业务本体与动作</h2>'),
+  'product branding should present enterprise modeling as the platform foundation and retain risk delivery',
 )
 
 assert.ok(
@@ -65,6 +65,26 @@ assert.ok(
 )
 
 assert.ok(
+  source.includes('class="section-heading-note"') &&
+    source.includes('定义实体/业务记录、属性和数据来源') &&
+    source.includes('描述对象之间的业务连接和基数') &&
+    source.includes('定义可执行动作、权限和状态效果') &&
+    source.includes('追踪动作执行结果、决策上下文和状态变化'),
+  'ontology tabs should expose concise contextual descriptions without flattening all toolbar content',
+)
+
+assert.ok(
+  source.includes('label="关系路径"') &&
+    source.includes('class="relation-flow"') &&
+    source.includes('class="relation-endpoint"') &&
+    source.includes('class="relation-arrow"') &&
+    source.includes('label="配置概览"') &&
+    source.includes('class="action-counts"') &&
+    source.includes('class="role-tags"'),
+  'relationship endpoints and action configuration counts should read as structured business information',
+)
+
+assert.ok(
   source.includes('objectPropertyEntries(row.properties)') &&
     source.includes('class="audit-field-list object-property-list object-property-trigger"') &&
     source.includes('class="audit-field-value object-property-value"') &&
@@ -92,6 +112,26 @@ assert.ok(
     source.includes('translateY(6px) scale(0.98)') &&
     source.includes('max-height: min(420px, calc(100vh - 120px))'),
   'object property hover popover should have contrast, motion, and bounded scrolling for large records',
+)
+
+assert.ok(
+  source.includes('role="button" tabindex="0" aria-label="查看完整属性"') &&
+    source.includes('class="object-property-preview-heading"') &&
+    source.includes('class="instance-toolbar-context"') &&
+    source.includes('class="instance-toolbar-actions"') &&
+    source.includes('class="activity-primary-cell"') &&
+    source.includes('compact-audit-list') &&
+    source.includes('compact-state-list'),
+  'object instances and decision activities should provide keyboard-aware previews and compact primary/secondary information layers',
+)
+
+assert.ok(
+  source.includes('.ontology-table :deep(.el-table__body tr:hover > td.el-table__cell)') &&
+    source.includes('.table-action-btn:active') &&
+    source.includes('@media (max-width: 760px)') &&
+    source.includes('overflow-x: auto') &&
+    source.includes('@media (prefers-reduced-motion: reduce)'),
+  'ontology tables should provide row feedback, tactile action states, mobile overflow, and reduced-motion fallbacks',
 )
 
 assert.ok(
@@ -200,16 +240,41 @@ assert.ok(
 )
 
 assert.ok(
-  routerSource.includes("path: '/ontology'") &&
+  routerSource.includes("path: '/enterprise-model'") &&
+    routerSource.includes("path: '/twin-runtime'") &&
+    routerSource.includes("path: '/capability-center'") &&
+    routerSource.includes("path: '/ontology'") &&
     routerSource.includes("path: '/risk-delivery'") &&
-    appSource.includes('index="/ontology"') &&
+    appSource.includes('index="/enterprise-model"') &&
+    appSource.includes('index="/twin-runtime"') &&
+    appSource.includes('index="/capability-center"') &&
     appSource.includes('index="/risk-delivery"'),
-  'risk delivery and ontology workbenches should be routable from primary navigation',
+  'enterprise model, twin runtime, capability publishing, and risk delivery should be routable from primary navigation',
 )
 
 assert.ok(
   source.includes('ResizeObserver') && source.includes('graphSize'),
   'ontology graph should react to container size changes before rendering',
+)
+
+assert.ok(
+  source.includes('这里只画对象类型和业务动作，不是审批流程图') &&
+    source.includes('实体或业务记录，如客户、贷款申请单') &&
+    source.includes('贷款申请单 = 对象') &&
+    source.includes('审批状态 = 状态') &&
+    source.includes('审批贷款申请 = 动作') &&
+    source.includes('对象类型（实体/业务记录）') &&
+    source.includes('业务动作（处理行为）') &&
+    source.includes('事件/状态') &&
+    source.includes('记录发生过什么、现在到哪一步'),
+  'ontology graph should explain the boundary between object types, states, actions, and business process',
+)
+
+assert.ok(
+  source.includes('流程步骤请配置为动作或事件') &&
+    source.includes('动作建议使用动词描述') &&
+    source.includes('const graphTooltip ='),
+  'ontology modeling forms and graph tooltips should guide business-friendly modeling semantics',
 )
 
 assert.ok(

@@ -2,8 +2,8 @@
   <div class="page-shell">
     <div class="page-header">
       <div>
-        <h2>智能体管理</h2>
-        <p>配置问数助手说明、模型绑定、语义领域和可访问数据源。</p>
+        <h2>应用智能体</h2>
+        <p>智能体是企业模型能力的消费者，负责面向具体场景与用户交互。</p>
       </div>
       <div class="header-actions">
         <el-tag effect="plain">共 {{ agents.length }} 个智能体</el-tag>
@@ -20,12 +20,19 @@
         <el-table-column prop="description" label="描述" min-width="220" show-overflow-tooltip />
         <el-table-column prop="chat_model_config_name" label="大语言模型" min-width="160" />
         <el-table-column prop="embedding_model_config_name" label="向量模型" min-width="160" />
-        <el-table-column label="语义领域" min-width="180">
+        <el-table-column label="可用业务领域" min-width="240">
           <template #default="{ row }">
-            <span v-if="row.semantic_domain_name">
-              {{ row.semantic_domain_name }}
-              <code class="inline-code">{{ row.semantic_domain_key }}</code>
-            </span>
+            <div v-if="agentDomainNames(row).length" class="domain-tags">
+              <el-tag
+                v-for="name in agentDomainNames(row).slice(0, 2)"
+                :key="name"
+                size="small"
+                effect="plain"
+              >{{ name }}</el-tag>
+              <span v-if="agentDomainNames(row).length > 2" class="more-count">
+                +{{ agentDomainNames(row).length - 2 }}
+              </span>
+            </div>
             <span v-else class="muted">未绑定</span>
           </template>
         </el-table-column>
@@ -80,12 +87,19 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="语义领域">
-          <el-select v-model="form.semantic_domain_id" clearable placeholder="选择智能体默认语义领域">
+        <el-form-item label="业务领域">
+          <el-select
+            v-model="form.semantic_domain_ids"
+            multiple
+            clearable
+            collapse-tags
+            placeholder="选择该智能体可以消费的企业业务领域"
+            @change="handleDomainSelectionChange"
+          >
             <el-option
               v-if="semanticDomains.length === 0"
               disabled
-              label="暂无语义领域，请先在语义层配置中维护"
+              label="暂无业务领域，请先在企业模型中维护"
               :value="0"
             />
             <el-option
@@ -95,6 +109,22 @@
               :value="domain.id"
             />
           </el-select>
+        </el-form-item>
+        <el-form-item label="默认领域">
+          <el-select
+            v-model="form.semantic_domain_id"
+            clearable
+            :disabled="!form.semantic_domain_ids?.length"
+            placeholder="选择对话和任务默认使用的领域"
+          >
+            <el-option
+              v-for="domain in selectedSemanticDomains"
+              :key="domain.id"
+              :label="`${domain.name} · ${domain.domain_key}`"
+              :value="domain.id"
+            />
+          </el-select>
+          <div class="form-help">默认领域只是运行入口，不改变企业模型资产的归属。</div>
         </el-form-item>
         <el-form-item label="默认问题">
           <el-input
@@ -141,13 +171,13 @@
         </section>
 
         <section class="detail-section">
-          <h4>模型与语义层</h4>
+          <h4>模型与默认领域</h4>
           <dl class="detail-grid">
             <dt>大语言模型</dt>
             <dd>{{ detailAgent.chat_model_config_name || modelConfigLabel(detailAgent.chat_model_config_id, 'chat') || '未绑定' }}</dd>
             <dt>向量模型</dt>
             <dd>{{ detailAgent.embedding_model_config_name || modelConfigLabel(detailAgent.embedding_model_config_id, 'embedding') || '未绑定' }}</dd>
-            <dt>语义领域</dt>
+            <dt>默认领域</dt>
             <dd>
               <span v-if="detailAgent.semantic_domain_name">
                 {{ detailAgent.semantic_domain_name }}
@@ -156,6 +186,14 @@
               <span v-else class="muted">未绑定</span>
             </dd>
           </dl>
+        </section>
+
+        <section class="detail-section">
+          <h4>可消费的业务领域</h4>
+          <div v-if="detailDomainNames.length" class="detail-chip-list">
+            <el-tag v-for="name in detailDomainNames" :key="name" effect="plain">{{ name }}</el-tag>
+          </div>
+          <el-empty v-else description="当前未绑定业务领域" :image-size="72" />
         </section>
 
         <section class="detail-section">
@@ -202,6 +240,7 @@ import { formatDateTime } from '../utils/datetime'
 import {
   createAgent,
   deleteAgent,
+  fetchAgentDomainBinding,
   fetchAgentDatasourceIds,
   fetchAgents,
   fetchAllDatasources,
@@ -209,6 +248,7 @@ import {
   fetchModelConfigs,
   updateAgent,
   type AgentCreateRequest,
+  type AgentDomainBinding,
   type AgentItem,
   type DatasourceItem,
   type ModelConfigItem,
@@ -225,12 +265,15 @@ const showDetailDrawer = ref(false)
 const editingAgentId = ref<number | null>(null)
 const detailAgent = ref<AgentItem | null>(null)
 const detailDatasourceIds = ref<number[]>([])
+const detailDomainIds = ref<number[]>([])
+const agentDomainBindings = ref<Record<number, AgentDomainBinding>>({})
 const form = ref<AgentCreateRequest>({
   name: '',
   description: '',
   chat_model_config_id: null,
   embedding_model_config_id: null,
   semantic_domain_id: null,
+  semantic_domain_ids: [],
   default_questions: [],
   datasource_ids: [],
 })
@@ -240,6 +283,12 @@ const detailDatasourceNames = computed(() => detailDatasourceIds.value
   .filter((item): item is DatasourceItem => !!item)
   .map((item) => `${item.name} · ${item.database_name}`))
 const detailDefaultQuestions = computed(() => normalizeDefaultQuestions(detailAgent.value?.default_questions))
+const selectedSemanticDomains = computed(() => semanticDomains.value.filter((domain) => (
+  form.value.semantic_domain_ids || []
+).includes(domain.id)))
+const detailDomainNames = computed(() => detailDomainIds.value
+  .map((id) => semanticDomains.value.find((domain) => domain.id === id)?.name)
+  .filter((name): name is string => Boolean(name)))
 
 onMounted(async () => {
   await loadDependencies()
@@ -253,6 +302,7 @@ function resetForm() {
     chat_model_config_id: chatModelConfigs.value[0]?.id || null,
     embedding_model_config_id: embeddingModelConfigs.value[0]?.id || null,
     semantic_domain_id: semanticDomains.value[0]?.id || null,
+    semantic_domain_ids: semanticDomains.value[0]?.id ? [semanticDomains.value[0].id] : [],
     default_questions: [],
     datasource_ids: [],
   }
@@ -268,24 +318,56 @@ function openCreate() {
 async function openDetail(agent: AgentItem) {
   detailAgent.value = agent
   showDetailDrawer.value = true
-  detailDatasourceIds.value = await fetchAgentDatasourceIds(agent.id).catch(() => [])
+  const [datasourceIds, binding] = await Promise.all([
+    fetchAgentDatasourceIds(agent.id).catch(() => []),
+    fetchAgentDomainBinding(agent.id).catch(() => fallbackDomainBinding(agent)),
+  ])
+  detailDatasourceIds.value = datasourceIds
+  detailDomainIds.value = binding.domain_ids
+  agentDomainBindings.value[agent.id] = binding
 }
 
 async function openEdit(agent: AgentItem) {
   showDetailDrawer.value = false
   editingAgentId.value = agent.id
-  const datasourceIds = await fetchAgentDatasourceIds(agent.id).catch(() => [])
+  const [datasourceIds, binding] = await Promise.all([
+    fetchAgentDatasourceIds(agent.id).catch(() => []),
+    fetchAgentDomainBinding(agent.id).catch(() => fallbackDomainBinding(agent)),
+  ])
+  agentDomainBindings.value[agent.id] = binding
   form.value = {
     name: agent.name,
     description: agent.description || '',
     chat_model_config_id: agent.chat_model_config_id || null,
     embedding_model_config_id: agent.embedding_model_config_id || null,
-    semantic_domain_id: agent.semantic_domain_id || null,
+    semantic_domain_id: binding.default_domain_id || agent.semantic_domain_id || null,
+    semantic_domain_ids: binding.domain_ids,
     default_questions: normalizeDefaultQuestions(agent.default_questions),
     datasource_ids: datasourceIds,
   }
   defaultQuestionsText.value = normalizeDefaultQuestions(agent.default_questions).join('\n')
   showDialog.value = true
+}
+
+function fallbackDomainBinding(agent: AgentItem): AgentDomainBinding {
+  const defaultId = agent.semantic_domain_id || null
+  return {
+    domain_ids: defaultId ? [defaultId] : [],
+    default_domain_id: defaultId,
+  }
+}
+
+function agentDomainNames(agent: AgentItem) {
+  const binding = agentDomainBindings.value[agent.id] || fallbackDomainBinding(agent)
+  return binding.domain_ids
+    .map((id) => semanticDomains.value.find((domain) => domain.id === id)?.name)
+    .filter((name): name is string => Boolean(name))
+}
+
+function handleDomainSelectionChange(domainIds: number[]) {
+  if (!domainIds.includes(Number(form.value.semantic_domain_id || 0))) {
+    form.value.semantic_domain_id = domainIds[0] || null
+  }
 }
 
 function normalizeDefaultQuestions(value: unknown) {
@@ -339,6 +421,11 @@ async function loadDependencies() {
 async function loadAgents() {
   try {
     agents.value = await fetchAgents()
+    const entries = await Promise.all(agents.value.map(async (agent) => {
+      const binding = await fetchAgentDomainBinding(agent.id).catch(() => fallbackDomainBinding(agent))
+      return [agent.id, binding] as const
+    }))
+    agentDomainBindings.value = Object.fromEntries(entries)
   } catch {
     ElMessage.error('智能体配置加载失败，请确认后端服务已启动')
     agents.value = []
@@ -351,8 +438,14 @@ async function handleSubmit() {
     return
   }
   try {
+    const domainIds = [...new Set((form.value.semantic_domain_ids || []).map(Number).filter(Boolean))]
+    const defaultDomainId = domainIds.includes(Number(form.value.semantic_domain_id || 0))
+      ? Number(form.value.semantic_domain_id)
+      : domainIds[0] || null
     const payload = {
       ...form.value,
+      semantic_domain_id: defaultDomainId,
+      semantic_domain_ids: domainIds,
       default_questions: parseDefaultQuestionsText(),
     }
     const currentEditingId = editingAgentId.value
@@ -379,7 +472,7 @@ async function handleSubmit() {
 async function handleDelete(agent: AgentItem) {
   try {
     await ElMessageBox.confirm(
-      `确定删除智能体「${agent.name}」？知识、会话和语义配置会一并删除，数据源连接会保留。`,
+      `确定删除智能体「${agent.name}」？会话和该智能体的运行配置会删除，企业模型与业务领域资产会保留。`,
       '删除智能体',
       { type: 'warning' },
     )
@@ -449,6 +542,19 @@ async function handleDelete(agent: AgentItem) {
 
 .muted {
   color: var(--wq-muted);
+}
+
+.domain-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.more-count {
+  color: var(--wq-muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 :global(.agent-detail-drawer .el-drawer__header) {

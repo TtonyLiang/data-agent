@@ -2,14 +2,14 @@
   <div class="page-shell">
     <div class="page-header">
       <div>
-        <h2>语义层配置</h2>
-        <p>管理领域本体、指标口径、关系路径、规则和 LogicForm 模板。</p>
+        <h2>语义与数据口径</h2>
+        <p>为业务对象配置指标、规则、查询口径和数据库字段映射。</p>
       </div>
       <div class="header-actions">
         <div class="toolbar-row">
           <el-select
             v-model="domainId"
-            placeholder="选择语义层"
+            placeholder="选择业务领域"
             class="domain-select"
             :disabled="domains.length === 0"
           >
@@ -22,7 +22,7 @@
           </el-select>
           <div class="toolbar-group">
             <el-button :icon="Plus" @click="openCreateDomain">
-              新增
+              新增领域
             </el-button>
             <el-button :icon="EditPen" :disabled="!selectedDomain" @click="openEditDomain">
               编辑
@@ -33,10 +33,10 @@
           </div>
           <div class="toolbar-group toolbar-group-primary">
             <el-button :loading="runtimeLoading" :disabled="!selectedDomain" @click="handleBuildRuntime">
-              构建语义层
+              构建查询运行时
             </el-button>
             <el-button type="primary" :loading="syncLoading" :disabled="!selectedDomain" @click="handleSyncVector">
-              同步向量
+              同步语义向量
             </el-button>
             <el-dropdown @command="handleToolbarCommand">
               <el-button>
@@ -45,9 +45,9 @@
               </el-button>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item command="copy" :disabled="!selectedDomain">复制语义层</el-dropdown-item>
-                  <el-dropdown-item command="import">导入语义层</el-dropdown-item>
-                  <el-dropdown-item command="export" :disabled="!selectedDomain">导出语义层</el-dropdown-item>
+                  <el-dropdown-item command="copy" :disabled="!selectedDomain">复制业务领域</el-dropdown-item>
+                  <el-dropdown-item command="import">导入业务领域</el-dropdown-item>
+                  <el-dropdown-item command="export" :disabled="!selectedDomain">导出业务领域</el-dropdown-item>
                   <el-dropdown-item command="validate" :disabled="!selectedDomain">保存前校验</el-dropdown-item>
                   <el-dropdown-item command="snapshot" :disabled="!selectedDomain">创建快照</el-dropdown-item>
                   <el-dropdown-item command="snapshots" :disabled="!selectedDomain">查看快照</el-dropdown-item>
@@ -61,7 +61,7 @@
 
     <div class="runtime-summary">
       <div class="summary-item">
-        <span>当前语义层</span>
+        <span>当前业务领域</span>
         <strong>{{ selectedDomain?.name || '暂无' }}</strong>
       </div>
       <div class="summary-item">
@@ -87,7 +87,7 @@
     </div>
 
     <div class="knowledge-surface">
-      <el-empty v-if="domains.length === 0" description="暂无语义层，请先新增一套语义层配置" />
+      <el-empty v-if="domains.length === 0" description="暂无业务领域，请先建立企业业务模型" />
       <el-tabs v-else v-model="activeTab">
         <el-tab-pane
           v-for="tab in assetTabs"
@@ -219,7 +219,7 @@
 
     <el-dialog
       v-model="showDomainDialog"
-      :title="domainDialogMode === 'edit' ? '编辑语义层' : '新增语义层'"
+      :title="domainDialogMode === 'edit' ? '编辑业务领域' : '新增业务领域'"
       width="620px"
       class="domain-dialog"
     >
@@ -231,7 +231,7 @@
           <el-input v-model="domainForm.domain_key" placeholder="如 order_analysis" :disabled="domainDialogMode === 'edit'" />
         </el-form-item>
         <el-form-item label="默认数据源">
-          <el-select v-model="domainForm.datasource_id" clearable filterable placeholder="可选，选择语义层默认数据源">
+          <el-select v-model="domainForm.datasource_id" clearable filterable placeholder="可选，选择领域默认数据源">
             <el-option
               v-for="ds in datasources"
               :key="ds.id"
@@ -251,12 +251,12 @@
             v-model="domainForm.description"
             type="textarea"
             :rows="3"
-            placeholder="说明这套语义层适用的业务范围、数据口径和使用边界"
+            placeholder="说明这个业务领域适用的范围、数据口径和使用边界"
           />
         </el-form-item>
       </el-form>
       <div class="domain-form-note">
-        智能体使用哪套语义层，请在“智能体管理”里绑定；这里负责维护可复用的语义层配置。
+        业务领域及其模型是企业资产；智能体只在“应用智能体”中选择需要消费的领域。
       </div>
       <template #footer>
         <el-button @click="showDomainDialog = false">取消</el-button>
@@ -587,7 +587,7 @@
 
     <el-drawer
       v-model="showSnapshotDrawer"
-      title="语义层快照"
+      title="领域语义快照"
       size="620px"
       append-to-body
     >
@@ -1176,7 +1176,7 @@ const domainDialogMode = ref<'create' | 'edit'>('create')
 const editingAssetType = ref('concept')
 const assetDialogMode = ref<'create' | 'edit'>('create')
 const domainForm = ref<SemanticDomainRequest>({
-  agent_id: agentId.value,
+  agent_id: null,
   datasource_id: null,
   domain_key: '',
   name: '',
@@ -1273,7 +1273,7 @@ async function loadDomains() {
   } catch {
     domains.value = []
     domainId.value = null
-    ElMessage.error('语义领域加载失败')
+    ElMessage.error('业务领域加载失败')
   }
   await loadAssets()
 }
@@ -1325,7 +1325,7 @@ async function handleSyncVector() {
 function openCreateDomain() {
   domainDialogMode.value = 'create'
   domainForm.value = {
-    agent_id: defaultDomainAgentId(),
+    agent_id: null,
     datasource_id: datasources.value[0]?.id || null,
     domain_key: '',
     name: '',
@@ -1340,7 +1340,8 @@ function openEditDomain() {
   domainDialogMode.value = 'edit'
   domainForm.value = {
     id: selectedDomain.value.id,
-    agent_id: selectedDomain.value.agent_id || defaultDomainAgentId(),
+    workspace_id: selectedDomain.value.workspace_id || null,
+    agent_id: selectedDomain.value.agent_id || null,
     datasource_id: selectedDomain.value.datasource_id || null,
     domain_key: selectedDomain.value.domain_key,
     name: selectedDomain.value.name,
@@ -1353,7 +1354,7 @@ function openEditDomain() {
 async function handleSaveDomain() {
   const payload: SemanticDomainRequest = {
     ...domainForm.value,
-    agent_id: Number(domainForm.value.agent_id || defaultDomainAgentId()),
+    agent_id: domainForm.value.agent_id ? Number(domainForm.value.agent_id) : null,
     datasource_id: domainForm.value.datasource_id ? Number(domainForm.value.datasource_id) : null,
     domain_key: cleanText(domainForm.value.domain_key),
     name: cleanText(domainForm.value.name),
@@ -1361,26 +1362,26 @@ async function handleSaveDomain() {
     status: domainForm.value.status || 'active',
   }
   if (!payload.name) {
-    ElMessage.warning('请输入语义层名称')
+    ElMessage.warning('请输入业务领域名称')
     return
   }
   if (!payload.domain_key) {
-    ElMessage.warning('请输入语义层标识')
+    ElMessage.warning('请输入业务领域标识')
     return
   }
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(payload.domain_key)) {
-    ElMessage.warning('语义层标识只能使用英文、数字和下划线，且不能以数字开头')
+    ElMessage.warning('业务领域标识只能使用英文、数字和下划线，且不能以数字开头')
     return
   }
   try {
     const result = await upsertSemanticDomain(payload)
-    ElMessage.success(result.message || '语义层已保存')
+    ElMessage.success(result.message || '业务领域已保存')
     showDomainDialog.value = false
     await loadDomains()
     if (result.id) domainId.value = Number(result.id)
     await loadAssets()
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '语义层保存失败')
+    ElMessage.error(error instanceof Error ? error.message : '业务领域保存失败')
   }
 }
 
@@ -1389,17 +1390,17 @@ async function handleDeleteDomain() {
   const domain = selectedDomain.value
   try {
     await ElMessageBox.confirm(
-      `确定删除语义层「${domain.name}」？它下面的对象、关系、指标、规则、映射和模板都会被删除，已绑定该语义层的智能体会被清空绑定。`,
-      '删除语义层',
+      `确定删除业务领域「${domain.name}」？它下面的对象、关系、指标、规则、映射和模板都会被删除，使用该领域的智能体会解除绑定。`,
+      '删除业务领域',
       { type: 'warning' },
     )
     await deleteSemanticDomain(domain.id)
-    ElMessage.success('语义层已删除')
+    ElMessage.success('业务领域已删除')
     domainId.value = null
     await loadDomains()
   } catch (error) {
     if (error === 'cancel' || error === 'close') return
-    ElMessage.error(error instanceof Error ? error.message : '语义层删除失败')
+    ElMessage.error(error instanceof Error ? error.message : '业务领域删除失败')
   }
 }
 
@@ -1424,8 +1425,8 @@ async function handleCopyDomain() {
   const source = selectedDomain.value
   try {
     const { value } = await ElMessageBox.prompt(
-      '请输入新语义层标识，复制后会包含当前语义层的全部资产。',
-      '复制语义层',
+      '请输入新业务领域标识，复制后会包含当前领域的全部语义资产。',
+      '复制业务领域',
       {
         inputValue: `${source.domain_key}_copy`,
         inputPattern: /^[A-Za-z_][A-Za-z0-9_]*$/,
@@ -1436,7 +1437,7 @@ async function handleCopyDomain() {
       domain_key: value,
       name: `${source.name} 副本`,
     })
-    ElMessage.success(result.message || '语义层已复制')
+    ElMessage.success(result.message || '业务领域已复制')
     await loadDomains()
     if (result.id) domainId.value = Number(result.id)
     await loadAssets()
@@ -1457,7 +1458,7 @@ async function handleExportDomain() {
     link.download = `${selectedDomain.value.domain_key}.semantic.json`
     link.click()
     URL.revokeObjectURL(url)
-    ElMessage.success('语义层已导出')
+    ElMessage.success('业务领域已导出')
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '导出失败')
   }
@@ -1473,7 +1474,7 @@ function handleImportDomain() {
     try {
       const text = await file.text()
       const result = await importSemanticDomain(JSON.parse(text))
-      ElMessage.success(result.message || '语义层已导入')
+      ElMessage.success(result.message || '业务领域已导入')
       await loadDomains()
       if (result.id) domainId.value = Number(result.id)
       await loadAssets()

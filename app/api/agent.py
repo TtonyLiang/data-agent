@@ -1,7 +1,7 @@
-"""智能体管理 API —— 智能体的增删改查与关联管理。
+"""智能体管理 API —— 智能体的增删改查与能力消费关联管理。
 
 智能体是问数链路的运行入口。创建时可一次性绑定数据源。
-删除时会级联删除关联的语义层、资产、会话历史等。
+企业业务领域和本体是独立资产，删除智能体只解除消费关系，不删除领域资产。
 """
 
 import json
@@ -11,9 +11,10 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_current_user, require_admin
 from app.db.mysql import get_management_db
-from app.models.agent import AgentCreate
+from app.models.agent import AgentCreate, AgentDomainBindingUpdate
 from app.models.user import PublicUser
 from app.services.datasource_service import get_datasource_service
+from app.services.semantic_runtime import get_semantic_runtime_service
 from app.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,15 @@ async def create_agent(agent: AgentCreate):
     )
     if agent.datasource_ids:
         await get_datasource_service().set_agent_datasources(agent_id, agent.datasource_ids)
+    semantic_service = get_semantic_runtime_service()
+    if agent.semantic_domain_ids is not None:
+        await semantic_service.set_agent_domains(
+            agent_id,
+            agent.semantic_domain_ids,
+            agent.semantic_domain_id,
+        )
+    elif agent.semantic_domain_id is not None:
+        await semantic_service.bind_agent_domain(agent_id, agent.semantic_domain_id)
     logger.info("agent create id=%s name=%s", agent_id, agent.name)
     return {"id": agent_id, "message": "智能体创建成功"}
 
@@ -92,6 +102,15 @@ async def update_agent(agent_id: int, agent: AgentCreate):
         },
     )
     await get_datasource_service().set_agent_datasources(agent_id, agent.datasource_ids)
+    semantic_service = get_semantic_runtime_service()
+    if agent.semantic_domain_ids is not None:
+        await semantic_service.set_agent_domains(
+            agent_id,
+            agent.semantic_domain_ids,
+            agent.semantic_domain_id,
+        )
+    elif agent.semantic_domain_id is not None:
+        await semantic_service.bind_agent_domain(agent_id, agent.semantic_domain_id)
     rows = await db.execute_query(
         _agent_select_sql("WHERE a.id = :id"),
         {"id": agent_id},
@@ -116,68 +135,63 @@ async def get_agent(agent_id: int, current_user: PublicUser = Depends(get_curren
     return {"agent": _public_agent(rows[0])}
 
 
+@router.get("/{agent_id}/domain-ids")
+async def get_agent_domain_ids(
+    agent_id: int,
+    current_user: PublicUser = Depends(get_current_user),
+):
+    """获取智能体可消费的全部企业业务领域及默认领域。"""
+    if not await get_user_service().can_access_agent(current_user, agent_id):
+        raise HTTPException(status_code=403, detail="无权访问该智能体")
+    binding = await get_semantic_runtime_service().get_agent_domain_binding(agent_id)
+    if binding is None:
+        raise HTTPException(status_code=404, detail="智能体不存在")
+    return binding
+
+
+@router.put("/{agent_id}/domain-ids", dependencies=[Depends(require_admin)])
+async def update_agent_domain_ids(agent_id: int, payload: AgentDomainBindingUpdate):
+    """替换智能体消费的领域集合，并同步默认领域指针。"""
+    try:
+        result = await get_semantic_runtime_service().set_agent_domains(
+            agent_id,
+            payload.domain_ids,
+            payload.default_domain_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {**result, "message": "企业业务领域绑定已保存"}
+
+
 @router.delete("/{agent_id}", dependencies=[Depends(require_admin)])
 async def delete_agent(agent_id: int):
-    """删除智能体及其关联的全部语义层资产、会话历史等。
-
-    级联删除顺序(先删子表再删主表):
-    语义资产 → 语义领域 → 数据源绑定 → 知识文档 → 会话历史 → 智能体本身
-    """
+    """删除智能体运行配置，但保留企业领域、本体和决策资产。"""
     db = get_management_db()
-
-    # 第1步:删除风险交付、本体运行时和语义资产(通过 semantic_domain 关联)
-    for table in (
-        "decision_audit_head",
-        "decision_audit_event",
-        "risk_evidence",
-        "risk_issue_review",
-        "risk_report_version",
-        "risk_report",
-        "risk_issue",
-        "ontology_action_run",
-        "ontology_link",
-        "ontology_object",
-        "ontology_release",
-        "ontology_action_type",
-        "ontology_link_type",
-    ):
-        await db.execute_query(
-            f"DELETE FROM {table} WHERE domain_id IN "
-            "(SELECT id FROM semantic_domain WHERE agent_id = :id)",
+    statements = [
+        (
+            "UPDATE semantic_domain SET agent_id = NULL WHERE agent_id = :id",
             {"id": agent_id},
-        )
-    await db.execute_query(
-        "DELETE p FROM ontology_property p JOIN ontology_object_type o "
-        "ON o.id = p.object_type_id JOIN semantic_domain sd ON sd.id = o.domain_id "
-        "WHERE sd.agent_id = :id",
-        {"id": agent_id},
-    )
-    await db.execute_query(
-        "DELETE o FROM ontology_object_type o JOIN semantic_domain sd ON sd.id = o.domain_id "
-        "WHERE sd.agent_id = :id",
-        {"id": agent_id},
-    )
-    for table in (
-        "logic_form_template",
-        "semantic_mapping",
-        "semantic_rule",
-        "semantic_metric",
-        "semantic_relation",
-        "semantic_concept",
-    ):
-        await db.execute_query(
-            f"DELETE FROM {table} WHERE domain_id IN "
-            "(SELECT id FROM semantic_domain WHERE agent_id = :id)",
-            {"id": agent_id},
-        )
-    # 第2步:删除语义领域、绑定、知识文档、会话历史、智能体本身
-    await db.execute_query("DELETE FROM semantic_domain WHERE agent_id = :id", {"id": agent_id})
-    await db.execute_query("DELETE FROM agent_datasource WHERE agent_id = :id", {"id": agent_id})
-    await db.execute_query("DELETE FROM agent_knowledge WHERE agent_id = :id", {"id": agent_id})
-    await db.execute_query("DELETE FROM chat_history WHERE agent_id = :id", {"id": agent_id})
-    await db.execute_query("DELETE FROM agent WHERE id = :id", {"id": agent_id})
+        ),
+        ("UPDATE datasource SET agent_id = NULL WHERE agent_id = :id", {"id": agent_id}),
+        ("DELETE FROM agent_semantic_domain WHERE agent_id = :id", {"id": agent_id}),
+        ("DELETE FROM agent_datasource WHERE agent_id = :id", {"id": agent_id}),
+        ("DELETE FROM agent_table_permission WHERE agent_id = :id", {"id": agent_id}),
+        ("DELETE FROM agent_column_permission WHERE agent_id = :id", {"id": agent_id}),
+        ("DELETE FROM user_agent_permission WHERE agent_id = :id", {"id": agent_id}),
+        ("DELETE FROM prompt_template WHERE agent_id = :id", {"id": agent_id}),
+        ("DELETE FROM agent_knowledge WHERE agent_id = :id", {"id": agent_id}),
+        ("DELETE FROM chat_history WHERE agent_id = :id", {"id": agent_id}),
+        ("DELETE FROM agent_task_checkpoint WHERE agent_id = :id", {"id": agent_id}),
+        ("DELETE FROM user_feedback WHERE agent_id = :id", {"id": agent_id}),
+        ("DELETE FROM agent WHERE id = :id", {"id": agent_id}),
+    ]
+    if hasattr(db, "execute_transaction"):
+        await db.execute_transaction(statements)
+    else:
+        for sql, params in statements:
+            await db.execute_query(sql, params)
 
-    logger.info("agent delete id=%s cascading_complete", agent_id)
+    logger.info("agent delete id=%s domain_assets_preserved=true", agent_id)
     return {"message": "删除成功"}
 
 

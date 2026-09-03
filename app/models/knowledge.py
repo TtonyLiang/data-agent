@@ -4,7 +4,7 @@
 关系/模板)、结构化查询意图(LogicForm)、校验结果与编译产物都在这里定义。
 
 核心概念:
-- ``SemanticDomain``:一个业务领域(例如"贷款风控"),绑定到智能体,作为运行时入口。
+- ``SemanticDomain``:一个业务领域(例如"贷款风控"),归属企业空间并可被多个智能体消费。
 - ``SemanticMetric`` / ``SemanticMapping`` / ``SemanticRelation`` / ``SemanticRule``
   / ``SemanticConcept`` / ``LogicFormTemplate``:语义资产,唯一真相源是管理库,
   运行时由 ``SemanticRuntimeService`` 加载。
@@ -29,20 +29,28 @@ AssetType = Literal["concept", "relation", "metric", "rule", "mapping", "templat
 
 
 class SemanticDomain(BaseModel):
-    """语义领域 —— 一个可被智能体绑定的业务知识域。
+    """语义领域 —— 归属企业空间、可被多个智能体消费的业务知识域。
 
     一个 domain 聚合该业务域下的全部概念、指标、映射、规则、关系和模板,
-    并可选地绑定一个默认数据源(用于资产物理字段校验)。智能体通过
-    ``agent.semantic_domain_id`` 绑定默认语义层。
+    并可选地绑定一个默认数据源(用于资产物理字段校验)。领域通过
+    ``agent_semantic_domain`` 与智能体建立多对多消费关系；
+    ``agent.semantic_domain_id`` 继续表示智能体的默认领域。
     """
 
     id: int | None = None
-    agent_id: int = Field(description="所属智能体,决定该领域归属哪个问数入口")
+    workspace_id: int | None = Field(
+        default=None,
+        description="所属企业空间;为空时由服务归入默认企业空间",
+    )
+    agent_id: int | None = Field(
+        default=None,
+        description="兼容字段:历史创建/归属智能体;领域实际通过关联表供多个智能体消费",
+    )
     datasource_id: int | None = Field(
         default=None,
         description="默认绑定的数据源,用于校验资产中的物理表/字段是否已采集",
     )
-    domain_key: str = Field(description="领域唯一标识(同一 agent 下唯一),用于 API 引用")
+    domain_key: str = Field(description="领域唯一标识(同一企业空间下唯一),用于 API 引用")
     name: str = Field(description="领域展示名称,例如'贷款风控'")
     description: str | None = Field(default="", description="领域业务说明,供配置页展示")
     status: str = Field(default="active", description="状态:active/disabled")

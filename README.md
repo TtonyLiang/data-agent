@@ -1,8 +1,8 @@
-# WenQu Finance & Tax AI Report Delivery & Risk Decision Platform
+# WenQu Ontology-Driven Enterprise Operational Digital Twin & Decision Platform
 
 English | [中文](./README_CN.md)
 
-> An AI report delivery and risk decision platform for finance and tax services. Ontology connects data, metrics, rules, evidence, reviews, and governed actions as the underlying business model.
+> Turn enterprise business definitions and distributed data into a unified model that AI can understand, query, evaluate, act on, and trace. Finance/tax, lending, and other vertical agents consume this platform as shared infrastructure.
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)
@@ -22,7 +22,7 @@ English | [中文](./README_CN.md)
 - [Quick Start](#quick-start)
 - [Detailed Documentation](#detailed-documentation)
   - [Core Workflow](#1-core-workflow)
-  - [Enterprise Ontology and Query Semantics](#2-enterprise-ontology-and-query-semantics)
+  - [Enterprise Business Model](#2-enterprise-business-model)
   - [Deep Analysis (Phase 3)](#3-deep-analysis-phase-3)
   - [Security](#4-security)
   - [Streaming & Frontend](#5-streaming--frontend)
@@ -40,34 +40,54 @@ English | [中文](./README_CN.md)
 
 ## Product Focus
 
-WenQu is converging on a concrete customer outcome: help finance and tax service teams turn governed data into reviewable risk issues, evidence-backed report versions, and auditable decisions. Customers buy faster, more consistent, and traceable delivery. They do not need to buy or operate a generic ontology modeling platform as the final product.
+WenQu aims to become an enterprise **intelligence hub and decision engine**. It connects business experts' understanding of the company with data from databases, APIs, files, and business events to build an operational digital twin that AI agents can consume through governed capabilities.
 
-Ontology remains a core platform capability. It provides the shared object, relationship, state, action, permission, and version model used by AI querying, reports, workflows, and applications.
+This is not a 3D simulation or a copy of a database. The target platform has three core parts:
 
-The target delivery loop is:
+1. **Enterprise Model Center** unifies objects, relationships, metrics, rules, states, actions, data mappings, permissions, and versions. Query semantics and Ontology modeling become one product model.
+2. **Data Processing and Twin Runtime** maps physical records to identified business objects and maintains their current state, provenance, and eventually their state history.
+3. **Capability Publishing Center** exposes object queries, metric computation, decisions, and governed actions to agents and applications through stable contracts.
 
 ```text
-Data / governed query -> Risk issue -> Evidence -> Human review
--> Report version -> Decision action -> Audit
+Databases / APIs / files / business events
+        -> Enterprise model and twin runtime
+        -> Query / Decision / Action Capability
+        -> Finance & tax agent / lending agent / business applications
+        -> Feedback and decision audit
 ```
 
-### Capability Boundary as of 2026-09-01
+Finance/tax report delivery, lending risk, and conversational querying are vertical applications and validation scenarios, not the final boundary of the platform. Chat currently demonstrates and validates the foundation rather than defining the product roadmap.
+
+### Capability Boundary as of 2026-09-03
 
 | Status | Scope |
 |--------|-------|
-| **Implemented foundation** | Governed AI querying, semantic assets, LogicForm validation and deterministic SQL compilation, analytical reports, persistent tasks, and the generic Ontology CRUD/release/action-audit prototype |
-| **Implemented technical slice** | Risk issues, evidence links, assigned review with self-review prevention, immutable report versions, and a hash-chained audit across reports and Ontology actions |
-| **Requires business validation** | Real finance/tax rules, materiality thresholds, evidence sufficiency, reviewer roles, formal report templates, UAT, and paid-pilot value |
+| **Implemented foundation** | Query-semantic assets, Ontology object/link/action modeling, LogicForm and deterministic SQL, object instances, release/audit prototypes, and demonstrable conversational analysis/reporting |
+| **Implemented technical slice** | Object queries, the first Query Capability, governed Action tools, plus a lending-domain risk/evidence/review/report/decision-audit loop |
+| **Implemented P0 compatibility skeleton** | A default enterprise space and domain ownership model, Agent-domain many-to-many binding, a unified Enterprise Model entry, and pages that surface existing twin-runtime and capability APIs |
+| **Future work** | Production incremental sync/CDC, identity resolution, state history, data quality and lineage, formal capability release governance, reusable Decision Capabilities, and reliable external-system writeback |
 
 The loan-risk domain is currently used only to validate the technical workflow. Its sample data, thresholds, rules, and conclusions are synthetic and must not be treated as real lending, finance, tax, accounting, audit, or compliance advice.
 
-See the [risk report delivery roadmap](docs/risk-report-delivery-roadmap.md) for the staged validation plan.
+See [Current Business Direction, Product Flow, and Data Lineage](docs/product-business-flow.md) for the operating model and the [Ontology Product Roadmap](docs/ontology-product-roadmap.md) for platform evolution.
 
 ---
 
 ## Features
 
-### Risk Report Delivery Loop (Loan Technical Slice Implemented)
+### Enterprise Model Center
+
+Model objects, properties, relationships, events, states, and actions together with concepts, metrics, rules, physical mappings, and LogicForm query contracts. Query Semantics and Ontology Modeling are no longer treated as independent product assets. Their storage can remain compatible during migration, but domain ownership, stable object keys, releases, and the user entry point are unified.
+
+### Data Processing and Twin Runtime
+
+Map database records into Ontology object instances while keeping source properties separate from local action overlays. Read-only object synchronization and instance queries already exist through page/API triggers, and P0 provides a unified runtime entry. Scheduled incremental sync, CDC, cross-system identity resolution, complete state history, and production data-quality governance remain future work.
+
+### Capability Publishing Center
+
+Expose the model as standard capabilities for agents and applications. `Query Capability` handles read-only object queries and metrics, `Action Capability` handles governed side effects, and future `Decision Capability` contracts will handle rule/model evaluation. Object query, a first Query Capability, and Action tools already exist; P0 centralizes discovery and invocation without claiming a production capability gateway.
+
+### Risk Report Delivery Loop (Vertical Technical Slice)
 
 The loan technical slice now connects structured risk issues, traceable evidence, human review, versioned reports, controlled Ontology actions, and hash-chained audit through migrations, APIs, a workbench, synthetic demo assets, and automated replay. Real finance/tax rules, roles, and report templates still require internal business validation.
 
@@ -75,7 +95,7 @@ Completed query results in Chat can be converted directly into risk issues. The 
 
 ### Business Ontology Foundation
 
-Model the business through object types, properties, relationships, states, and governed actions. Validate and publish model versions, manage instances and permissions, and retain runtime audit records for shared use by data, AI agents, reports, and applications. This is an extensible platform foundation, not the customer-facing outcome by itself.
+Model the business through object types, properties, relationships, states, and governed actions. Validate and publish model versions, manage instances and permissions, and retain runtime audit records for shared use by data, AI agents, reports, and applications. Ontology is an enterprise asset, not private configuration owned by one Agent.
 
 ### Governed AI Data Querying
 
@@ -91,7 +111,7 @@ SQL results are automatically fed into a Python sandbox for statistical analysis
 
 ### Multi-Agent / Multi-Datasource / Multi-Model
 
-Create multiple agents, each binding different datasources, LLMs, and embedding models. Data isolation and independent permissions between agents.
+Create multiple agents with different models, datasources, and authorized domains. The target relationship is asset-first: a published business domain can be reused by multiple agents and applications, while one agent can consume multiple authorized domains. A compatibility layer preserves existing agent-scoped query behavior during migration.
 
 ### Security
 
@@ -117,7 +137,7 @@ Prompt templates can be overridden per agent, model, and semantic domain. System
 
 ![System Architecture](docs/images/architecture-en.png)
 
-The current technical foundation combines an Ontology modeling workbench, an intelligent querying interface, a FastAPI backend, LangGraph workflows, Ontology/query-semantic runtimes, and external dependencies (LLM, MySQL, Milvus). The risk report delivery slice builds on this foundation rather than replacing the existing querying and generic modeling capabilities.
+The current foundation combines Ontology/query-semantic assets, datasources and schema metadata, an object-instance runtime, typed capability APIs, conversational querying, a FastAPI backend, LangGraph workflows, and external dependencies (LLM, MySQL, Milvus). P0 adds an enterprise-space/domain compatibility skeleton plus unified Enterprise Model, Twin Runtime, and Capability Center entries. These visible entries must not be confused with a production twin runtime or capability gateway.
 
 ### Query Execution Flow
 
@@ -125,11 +145,11 @@ The current technical foundation combines an Ontology modeling workbench, an int
 
 Full pipeline: User question → Intent Recognition → Semantic Enhancement → Knowledge Recall → Schema Recall → LogicForm Generation → Semantic Validation → SQL Compilation → Semantic Consistency Check → SQL Execution → Analysis Plan → Python Generation → Python Analysis → Report Generation.
 
-### Enterprise Ontology and Query Semantics
+### Enterprise Business Model
 
 ![Enterprise Ontology and Query Semantics](docs/images/er-diagram-en.png)
 
-Ontology provides the underlying object, relationship, state, and action model. Query semantics add concepts, metrics, rules, mappings, and templates that connect that business model to physical data and compilable queries.
+The Enterprise Business Model puts two complementary asset types under the same domain and release boundary: Ontology defines objects, links, states, and actions; query semantics add concepts, metrics, rules, mappings, and templates that connect the model to physical data and compilable queries. A unified product entry does not require an immediate rewrite of every underlying table.
 
 ---
 
@@ -221,7 +241,14 @@ uv run python examples/douyin_ecommerce/seed_douyin_ecommerce.py
 
 ### 6. Verify
 
-Open `http://localhost:4399`, register an account, get authorized for an agent in Agent Management, then ask a question in the Chat page:
+Open `http://localhost:4399` with an administrator account and inspect:
+
+- `/enterprise-model` for query-semantic and Ontology assets under one domain.
+- `/twin-runtime` for object types, instance counts, and manual paginated synchronization.
+- `/capability-center` for current object-query, Query Capability, and Action contracts.
+- `/agent` to bind one or more business domains to an application agent and choose its default domain.
+
+Then ask a question in Chat using an agent bound to the domain:
 
 ```
 What are the top 3 application regions by loan count, and how many applications did each have?
@@ -289,9 +316,22 @@ flowchart TD
     Q --> END
 ```
 
-### 2. Enterprise Ontology and Query Semantics
+### 2. Enterprise Business Model
 
-Ontology is WenQu's underlying business model: objects, properties, relationships, states, and actions describe the relevant business context. Query semantics connect that model to metrics, physical fields, and compilable queries so data answers can enter evidence, review, report, and governed-action workflows.
+The Enterprise Business Model is the unified product boundary for Ontology and query semantics. Ontology defines objects, properties, relationships, events, states, and actions; query semantics define concepts, metrics, rules, physical mappings, and compilable queries. They are linked by the same enterprise space, business domain, stable `object_key`, and published version so agents and applications consume one business definition.
+
+```text
+Enterprise space
+  -> Business domain
+      -> Enterprise model + data mappings + releases + capabilities
+          -> Multiple authorized agents / business applications
+```
+
+- The **enterprise space** is the ownership, security, and governance boundary for a company and its platform assets.
+- A **business domain** is a manageable scope that can be modeled, released, and reused independently, such as Customer, Finance & Tax, Lending, or Risk.
+- An **Agent** consumes published capabilities; it is no longer the sole owner of Ontology and semantic assets.
+
+P0 uses a default enterprise space, domain ownership, and Agent-domain many-to-many bindings to preserve existing data. Multi-tenant isolation, formal domain ownership, approval, and cross-domain dependency governance remain future work.
 
 #### Enterprise Ontology Runtime Model
 
@@ -513,11 +553,14 @@ sequenceDiagram
 
 | Page | Route | Function |
 |------|-------|----------|
-| Chat | `/` | Main query interface with analysis pipeline, SQL, result table, and report display |
-| Agent Management | `/agent` | Create/edit/delete agents, bind datasources, models, and semantic domains |
+| Chat | `/` | Agent capability demonstration with query pipeline, SQL, result table, and reports |
+| Enterprise Model | `/enterprise-model` | Unified entry for query semantics and Ontology assets organized by enterprise space and domain |
+| Twin Runtime | `/twin-runtime` | View object types, instances, and current manual paginated synchronization; not a background scheduler |
+| Capability Center | `/capability-center` | Discover existing object query, Query Capability, and Action Capability contracts |
+| Agent Management | `/agent` | Create/edit/delete agents and bind models, datasources, and one or more business domains |
 | Model Config | `/model-config` | Manage LLM and embedding model configurations, test connectivity |
 | Datasource | `/datasource` | Datasource connection management, table schema collection, field details |
-| Knowledge | `/knowledge` | Semantic layer configuration: concepts, relations, metrics, rules, mappings, templates |
+| Risk Delivery | `/risk-delivery` | Vertical finance/tax and lending validation: risk, evidence, review, reports, and audit |
 | System Parameters | `/system-parameter` | System parameters, Prompt templates, user management |
 | Login | `/login` | User login |
 | Register | `/register` | User registration |
@@ -533,7 +576,8 @@ The backend provides REST APIs in the following categories:
 | Health | `/health` | Service health check |
 | Chat | `/api/chat` | Sync/streaming queries, SQL confirmation, session management |
 | Auth | `/api/auth` | Register, login, current user |
-| Agent | `/api/agent` | Agent CRUD, datasource binding |
+| Enterprise Workspace | `/api/workspaces` | Default workspace and its business-domain list |
+| Agent | `/api/agent` | Agent CRUD, datasource binding, and Agent-domain many-to-many binding |
 | Datasource | `/api/datasource` | Datasource CRUD, connectivity test, schema collection |
 | Semantic | `/api/semantic` | Domain/asset management, snapshot versioning, import/export, vector sync |
 | Model Config | `/api/model-config` | Model CRUD, connectivity test |
@@ -640,13 +684,16 @@ Stores system configuration, metadata, and session history:
 
 | Category | Tables | Description |
 |----------|--------|-------------|
-| Agent | `agent` | Agent configuration, model and semantic domain bindings |
+| Enterprise Workspace | `enterprise_workspace` | Top-level asset ownership; P0 seeds one default workspace |
+| Business Domain | `semantic_domain` | Domain boundary for models, mappings, and capabilities, including `workspace_id` |
+| Agent | `agent` | Agent configuration with a backward-compatible default-domain field |
 | Model | `model_config` | LLM and embedding model configurations |
 | Datasource | `datasource` | Database connection info |
 | Association | `agent_datasource` | Agent ↔ Datasource many-to-many |
+| Association | `agent_semantic_domain` | Agent ↔ Business Domain many-to-many consumption |
 | Permissions | `agent_table_permission`, `agent_column_permission` | Table/column access control |
 | Metadata | `meta_table`, `meta_column` | Collected table schemas |
-| Semantic Layer | `semantic_domain`, `semantic_domain_snapshot` | Domains and version snapshots |
+| Semantic Layer | `semantic_domain_snapshot` | Domain version snapshots |
 | Semantic Layer | `semantic_concept`, `semantic_relation`, `semantic_metric` | Concepts, relations, metrics |
 | Semantic Layer | `semantic_rule`, `semantic_mapping`, `logic_form_template` | Rules, mappings, templates |
 | Prompt | `prompt_template` | Prompt templates |
@@ -807,16 +854,17 @@ Example queries:
 
 ## Roadmap
 
-The product roadmap is maintained in [Risk Report Delivery Roadmap](docs/risk-report-delivery-roadmap.md), dated 2026-09-01.
+The platform roadmap is maintained in the [Ontology Product Roadmap](docs/ontology-product-roadmap.md), dated 2026-09-03. The [Risk Report Delivery Roadmap](docs/risk-report-delivery-roadmap.md) remains a vertical finance/tax and lending validation plan rather than the overall product roadmap.
 
 | Phase | Goal | Acceptance gate |
 |-------|------|-----------------|
-| Loan technical slice | Implement the full risk/evidence/review/report/action/audit contract with synthetic loan cases | At least 10 end-to-end cases; evidence, review, report-version, and audit linkage complete for every case |
-| Internal finance/tax workflow selection | Select one high-frequency internal delivery process and replace demo assumptions with owned business definitions | One signed decision canvas, at least 20 historical cases, baseline metrics, initial governed rules, and one report template |
-| Historical-case shadow run | Run the system alongside the existing expert process without replacing professional judgment | At least 30 cases across two rounds, 100% human review, at least 95% evidence traceability, and at least 30% preparation-time reduction |
-| First paid pilot | Sell a bounded report-delivery outcome to one customer | One paid scope, at least four delivery batches, 100% audit completeness, and an explicit renew/expand/stop decision |
+| P0 platform skeleton | Add default enterprise-space ownership, Agent-domain many-to-many consumption, and the three unified product entries | Existing demo data migrates compatibly; Enterprise Model, Twin Runtime, and Capability Center are visible without breaking current querying |
+| P1 Enterprise Model Center | Govern objects, links, metrics, rules, mappings, actions, and releases as one model | One real domain can be modeled, mapping-tested, published, diffed, and rolled back |
+| P2 Twin Runtime | Add incremental sync, identity resolution, current/history state, quality, and lineage | Real data updates reliably; conflicts, bad records, and provenance are traceable |
+| P3 Capability Publishing Center | Formally publish and govern Query / Decision / Action contracts | External agents call by version and permission with stable schemas, audit, limits, and failure contracts |
+| P4 vertical validation | Validate platform value in real finance/tax, lending, or other domains | At least one domain completes a historical shadow run with measured accuracy, efficiency, and traceability |
 
-Cross-cutting engineering work such as SQL AST validation, Prompt versioning, datasource expansion, permission audit, deployment, and CI/CD continues in support of these product phases rather than as a separate product narrative.
+Chat remains a demonstration and interface-validation surface. Complex conversational optimization, general multi-agent orchestration, and long-term agent memory are not near-term priorities.
 
 ---
 

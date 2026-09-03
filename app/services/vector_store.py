@@ -1,18 +1,18 @@
 """向量存储服务 —— Milvus 本地模式的语义资产向量索引。
 
 VectorStore 负责:
-1. ``ensure_collection``:按 agent_id 创建独立的 Milvus collection。
+1. ``ensure_collection``:按 agent_id + domain_id 创建独立的 Milvus collection。
 2. ``insert``:批量插入语义资产向量(概念/指标/规则/模板)。
 3. ``search``:向量相似度检索,返回超过阈值的结果。
 4. ``delete_by_source``:按 source_type + source_id 删除单条向量。
 5. ``delete_collection``:删除整个 collection(智能体删除时)。
 
-每个 agent 拥有独立的 collection(``dq_knowledge_{agent_id}``),避免跨 agent 数据污染。
+每个 Agent 的每个领域使用独立 collection，避免共享领域和多领域之间相互污染。
 向量维度和相似度阈值由系统配置决定(embedding_dimension / rag_score_threshold)。
 """
 
-from dataclasses import dataclass, field
 import logging
+from dataclasses import dataclass, field
 
 from pymilvus import DataType, MilvusClient
 
@@ -25,11 +25,11 @@ logger = logging.getLogger(__name__)
 class VectorRecord:
     """单条向量记录 —— 用于插入时的数据载体。"""
 
-    content: str             # 向量化的文本内容(语义资产的 name + description)
-    vector: list[float]      # embedding 向量
-    source_type: str         # 来源类型:semantic_concept/semantic_metric/semantic_rule/logic_form_template
-    source_id: int           # 来源资产 id
-    agent_id: int            # 所属智能体 id
+    content: str  # 向量化的文本内容(语义资产的 name + description)
+    vector: list[float]  # embedding 向量
+    source_type: str  # semantic_concept/semantic_metric/semantic_rule/logic_form_template
+    source_id: int  # 来源资产 id
+    agent_id: int  # 所属智能体 id
     metadata: dict = field(default_factory=dict)  # 扩展元数据
 
 
@@ -54,13 +54,15 @@ class VectorStore:
         self._top_k = s.rag_top_k
         self._score_threshold = s.rag_score_threshold
 
-    def _collection_name(self, agent_id: int) -> str:
-        """每个 agent 独立一个 collection,避免跨 agent 数据污染。"""
-        return f"dq_knowledge_{agent_id}"
+    def _collection_name(self, agent_id: int, domain_id: int | None = None) -> str:
+        """按 Agent 与领域隔离语义资产；domain 为空时指向历史 collection。"""
+        if domain_id is None:
+            return f"dq_knowledge_{agent_id}"
+        return f"dq_knowledge_{agent_id}_domain_{domain_id}"
 
-    def ensure_collection(self, agent_id: int):
-        """确保 agent 的 collection 存在,不存在时自动创建(含向量索引)。"""
-        name = self._collection_name(agent_id)
+    def ensure_collection(self, agent_id: int, domain_id: int | None = None):
+        """确保 Agent-领域 collection 存在,不存在时自动创建。"""
+        name = self._collection_name(agent_id, domain_id)
         if self._client.has_collection(name):
             return
         schema = MilvusClient.create_schema(auto_id=True)
@@ -79,14 +81,21 @@ class VectorStore:
             schema=schema,
             index_params=index_params,
         )
-        logger.info("vector store collection created agent_id=%s", agent_id)
+        logger.info(
+            "vector store collection created agent_id=%s domain_id=%s", agent_id, domain_id
+        )
 
-    def insert(self, agent_id: int, records: list[VectorRecord]):
+    def insert(
+        self,
+        agent_id: int,
+        records: list[VectorRecord],
+        domain_id: int | None = None,
+    ):
         """批量插入向量记录,自动确保 collection 存在。"""
         if not records:
             return
-        self.ensure_collection(agent_id)
-        name = self._collection_name(agent_id)
+        self.ensure_collection(agent_id, domain_id)
+        name = self._collection_name(agent_id, domain_id)
         data = [
             {
                 "vector": r.vector,
@@ -99,16 +108,40 @@ class VectorStore:
             for r in records
         ]
         self._client.insert(collection_name=name, data=data)
-        logger.info("vector store insert agent_id=%s count=%s", agent_id, len(records))
+        logger.info(
+            "vector store insert agent_id=%s domain_id=%s count=%s",
+            agent_id,
+            domain_id,
+            len(records),
+        )
 
     def search(
-        self, agent_id: int, query_vector: list[float], top_k: int | None = None
+        self,
+        agent_id: int,
+        query_vector: list[float],
+        top_k: int | None = None,
+        *,
+        domain_id: int | None = None,
     ) -> list[SearchResult]:
         """向量相似度检索,返回分数超过阈值的结果。"""
-        name = self._collection_name(agent_id)
+        name = self._collection_name(agent_id, domain_id)
         if not self._client.has_collection(name):
-            logger.info("vector store search agent_id=%s result=empty_reason=no_collection", agent_id)
-            return []
+            legacy_name = self._collection_name(agent_id)
+            if domain_id is not None and self._client.has_collection(legacy_name):
+                name = legacy_name
+                logger.info(
+                    "vector store search using legacy collection agent_id=%s domain_id=%s",
+                    agent_id,
+                    domain_id,
+                )
+            else:
+                logger.info(
+                    "vector store search agent_id=%s domain_id=%s "
+                    "result=empty_reason=no_collection",
+                    agent_id,
+                    domain_id,
+                )
+                return []
         self._client.load_collection(name)
         top_k = top_k or self._top_k
         results = self._client.search(
@@ -133,8 +166,9 @@ class VectorStore:
                 )
             )
         logger.info(
-            "vector store search agent_id=%s top_k=%s hits=%s top_score=%s",
+            "vector store search agent_id=%s domain_id=%s top_k=%s hits=%s top_score=%s",
             agent_id,
+            domain_id,
             top_k,
             len(out),
             f"{out[0].score:.4f}" if out else "N/A",
@@ -150,18 +184,27 @@ class VectorStore:
             collection_name=name,
             filter=f'source_type == "{source_type}" and source_id == {source_id}',
         )
-        logger.info("vector store delete_by_source agent_id=%s type=%s id=%s", agent_id, source_type, source_id)
+        logger.info(
+            "vector store delete_by_source agent_id=%s type=%s id=%s",
+            agent_id,
+            source_type,
+            source_id,
+        )
 
-    def delete_collection(self, agent_id: int):
-        """删除 agent 的整个 collection(智能体删除时调用)。"""
-        name = self._collection_name(agent_id)
+    def delete_collection(self, agent_id: int, domain_id: int | None = None):
+        """删除 Agent-领域 collection；domain 为空时删除历史 collection。"""
+        name = self._collection_name(agent_id, domain_id)
         if self._client.has_collection(name):
             self._client.drop_collection(name)
-            logger.info("vector store collection dropped agent_id=%s", agent_id)
+            logger.info(
+                "vector store collection dropped agent_id=%s domain_id=%s",
+                agent_id,
+                domain_id,
+            )
 
-    def count(self, agent_id: int) -> int:
-        """返回 agent collection 中的向量总数。"""
-        name = self._collection_name(agent_id)
+    def count(self, agent_id: int, domain_id: int | None = None) -> int:
+        """返回 Agent-领域 collection 中的向量总数。"""
+        name = self._collection_name(agent_id, domain_id)
         if not self._client.has_collection(name):
             return 0
         return self._client.get_collection_stats(name).get("row_count", 0)

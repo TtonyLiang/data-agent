@@ -10,9 +10,9 @@ V1 保留 WenQu 当前的 FastAPI + MySQL + Vue 运行时。Ontology 的对象�
 
 | 项目 | 许可证 | 公开活跃度（检索时） | 能复用什么 | 决策 |
 |---|---|---:|---|---|
-| [LinkML](https://github.com/linkml/linkml) | Apache-2.0 | 603 stars，2026-08-28 推送 | YAML linked-data schema，生成 JSON Schema、Pydantic、SQL、SHACL、OWL，并可做 CI 校验 | 优先做 S2 schema source-of-truth PoC |
-| [OpenMetadata](https://github.com/open-metadata/OpenMetadata) | Apache-2.0 | 15,022 stars，2026-08-28 推送 | Glossary、指标、Ownership、血缘、策略、连接器、MCP context | S3 作为治理侧车候选 |
-| [DataHub](https://github.com/datahub-project/datahub) | Apache-2.0 | 12,608 stars，2026-08-28 推送 | 技术元数据、Glossary、Lineage、MetadataChangeEvent、130+ connectors | S3 与 OpenMetadata 二选一 |
+| [LinkML](https://github.com/linkml/linkml) | Apache-2.0 | 603 stars，2026-08-28 推送 | YAML linked-data schema，生成 JSON Schema、Pydantic、SQL、SHACL、OWL，并可做 CI 校验 | P1 企业模型中心做 schema source-of-truth PoC |
+| [OpenMetadata](https://github.com/open-metadata/OpenMetadata) | Apache-2.0 | 15,022 stars，2026-08-28 推送 | Glossary、指标、Ownership、血缘、策略、连接器、MCP context | P2 孪生运行时作为治理侧车候选 |
+| [DataHub](https://github.com/datahub-project/datahub) | Apache-2.0 | 12,608 stars，2026-08-28 推送 | 技术元数据、Glossary、Lineage、MetadataChangeEvent、130+ connectors | P2 与 OpenMetadata 二选一 |
 | [TerminusDB](https://github.com/TerminusDB/terminusdb) | Apache-2.0 | 3,399 stars，2026-08-10 推送 | JSON-LD、revision、diff、branch、time-travel、REST/GraphQL | 借鉴版本治理；需要强版本化时 sidecar |
 | [TypeDB](https://github.com/typedb/typedb) | MPL-2.0 | 4,430 stars，2026-08-28 推送 | 强类型 entity/relation/attribute、继承、事务和多跳 TypeQL | 图查询瓶颈验证后 benchmark，不替换 V1 |
 | [Ontop](https://github.com/ontop/ontop) | Apache-2.0 | 930 stars，2026-07-13 推送 | R2RML 虚拟知识图谱、SPARQL 到关系库 SQL | 需要标准 RDF 出口时 sidecar |

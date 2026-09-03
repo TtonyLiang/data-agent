@@ -2,8 +2,8 @@
   <div class="ontology-page" v-loading="loading">
     <header class="page-toolbar">
       <div class="title-group">
-        <h2>企业本体建模</h2>
-        <p v-if="currentDomain">{{ currentDomain.name }} · {{ currentDomain.domain_key }}</p>
+        <h2>业务本体与动作</h2>
+        <p v-if="currentDomain">{{ currentDomain.name }} · 定义业务对象、关系、状态和可执行动作</p>
       </div>
       <div class="toolbar-actions">
         <el-select v-model="domainId" class="domain-select" placeholder="选择领域">
@@ -45,6 +45,23 @@
       <el-tabs v-model="activeTab" class="workspace-tabs" @tab-change="handleTabChange">
         <el-tab-pane label="本体图谱" name="graph">
           <section class="graph-panel">
+            <div class="graph-guide" role="note" aria-label="本体图谱阅读提示">
+              <div class="graph-guide-heading">
+                <strong>怎么看这张图</strong>
+                <span>这里只画对象类型和业务动作，不是审批流程图</span>
+              </div>
+              <div class="graph-guide-items">
+                <span><b>对象</b>实体或业务记录，如客户、贷款申请单</span>
+                <span><b>关系</b>对象之间怎么连接</span>
+                <span><b>动作</b>对对象执行的处理，如审批、催收</span>
+                <span><b>事件/状态</b>记录发生过什么、现在到哪一步</span>
+              </div>
+              <div class="graph-guide-example">
+                <span class="guide-object">贷款申请单 = 对象</span>
+                <span class="guide-state">审批状态 = 状态</span>
+                <span class="guide-action">审批贷款申请 = 动作</span>
+              </div>
+            </div>
             <div ref="graphElement" class="ontology-graph" />
             <el-empty
               v-if="objectTypes.length === 0"
@@ -57,9 +74,12 @@
         <el-tab-pane label="对象类型" name="objects">
           <section class="table-section">
             <div class="section-toolbar">
-              <div>
-                <strong>对象类型</strong>
-                <span>{{ objectTypes.length }} 项</span>
+              <div class="section-heading">
+                <div class="section-heading-main">
+                  <strong>对象类型</strong>
+                  <span class="section-count">{{ objectTypes.length }} 项</span>
+                </div>
+                <span class="section-heading-note">定义实体/业务记录、属性和数据来源</span>
               </div>
               <el-button v-if="canManage" type="primary" :icon="Plus" @click="openObjectTypeDialog()">
                 新建对象
@@ -69,12 +89,18 @@
               <el-table-column type="expand" width="42">
                 <template #default="{ row }">
                   <div class="property-grid">
-                    <div v-for="property in row.properties" :key="property.property_key" class="property-row">
-                      <code>{{ property.property_key }}</code>
-                      <span>{{ property.name }}</span>
-                      <el-tag size="small" effect="plain">{{ typeLabel(property.data_type) }}</el-tag>
-                      <el-tag v-if="property.property_key === row.primary_property" size="small" type="warning">主属性</el-tag>
-                      <el-tag v-if="property.required" size="small" type="danger" effect="plain">必填</el-tag>
+                    <div class="property-grid-heading">
+                      <strong>属性定义</strong>
+                      <span>{{ row.properties.length }} 项</span>
+                    </div>
+                    <div class="property-grid-body">
+                      <div v-for="property in row.properties" :key="property.property_key" class="property-row">
+                        <code>{{ property.property_key }}</code>
+                        <span>{{ property.name }}</span>
+                        <el-tag size="small" effect="plain">{{ typeLabel(property.data_type) }}</el-tag>
+                        <el-tag v-if="property.property_key === row.primary_property" size="small" type="warning">主属性</el-tag>
+                        <el-tag v-if="property.required" size="small" type="danger" effect="plain">必填</el-tag>
+                      </div>
                     </div>
                   </div>
                 </template>
@@ -135,7 +161,13 @@
         <el-tab-pane label="关系类型" name="relations">
           <section class="table-section">
             <div class="section-toolbar">
-              <div><strong>关系类型</strong><span>{{ linkTypes.length }} 项</span></div>
+              <div class="section-heading">
+                <div class="section-heading-main">
+                  <strong>关系类型</strong>
+                  <span class="section-count">{{ linkTypes.length }} 项</span>
+                </div>
+                <span class="section-heading-note">描述对象之间的业务连接和基数</span>
+              </div>
               <el-button v-if="canManage" type="primary" :icon="Plus" @click="openLinkTypeDialog()">新建关系</el-button>
             </div>
             <el-table class="ontology-table" :data="linkTypes" height="100%">
@@ -144,12 +176,20 @@
                   <div class="primary-cell"><strong>{{ row.name }}</strong><code>{{ row.link_key }}</code></div>
                 </template>
               </el-table-column>
-              <el-table-column label="起点" min-width="150">
-                <template #default="{ row }"><code>{{ row.source_object_key }}</code></template>
-              </el-table-column>
-              <el-table-column width="70" align="center"><template #default><ArrowRight /></template></el-table-column>
-              <el-table-column label="终点" min-width="150">
-                <template #default="{ row }"><code>{{ row.target_object_key }}</code></template>
+              <el-table-column label="关系路径" min-width="380">
+                <template #default="{ row }">
+                  <div class="relation-flow">
+                    <div class="relation-endpoint">
+                      <span>起点</span>
+                      <code>{{ row.source_object_key }}</code>
+                    </div>
+                    <el-icon class="relation-arrow"><ArrowRight /></el-icon>
+                    <div class="relation-endpoint">
+                      <span>终点</span>
+                      <code>{{ row.target_object_key }}</code>
+                    </div>
+                  </div>
+                </template>
               </el-table-column>
               <el-table-column label="基数" width="120">
                 <template #default="{ row }">{{ cardinalityLabel(row.cardinality) }}</template>
@@ -174,7 +214,13 @@
         <el-tab-pane label="动作类型" name="actions">
           <section class="table-section">
             <div class="section-toolbar">
-              <div><strong>业务动作</strong><span>{{ actionTypes.length }} 项</span></div>
+              <div class="section-heading">
+                <div class="section-heading-main">
+                  <strong>业务动作</strong>
+                  <span class="section-count">{{ actionTypes.length }} 项</span>
+                </div>
+                <span class="section-heading-note">定义可执行动作、权限和状态效果</span>
+              </div>
               <el-button v-if="canManage" type="primary" :icon="Plus" @click="openActionTypeDialog()">新建动作</el-button>
             </div>
             <el-table class="ontology-table" :data="actionTypes" height="100%">
@@ -186,12 +232,21 @@
               <el-table-column label="目标对象" min-width="140">
                 <template #default="{ row }"><code>{{ row.target_object_key }}</code></template>
               </el-table-column>
-              <el-table-column label="参数 / 条件 / 效果" width="170">
-                <template #default="{ row }">{{ row.parameters.length }} / {{ row.preconditions.length }} / {{ row.effects.length }}</template>
+              <el-table-column label="配置概览" width="194">
+                <template #default="{ row }">
+                  <div class="action-counts" aria-label="动作组成">
+                    <span><b>{{ row.parameters.length }}</b><small>参数</small></span>
+                    <span><b>{{ row.preconditions.length }}</b><small>条件</small></span>
+                    <span><b>{{ row.effects.length }}</b><small>效果</small></span>
+                  </div>
+                </template>
               </el-table-column>
               <el-table-column label="授权角色" min-width="140">
                 <template #default="{ row }">
-                  <el-tag v-for="role in row.allowed_roles" :key="role" size="small" effect="plain">{{ role }}</el-tag>
+                  <div v-if="row.allowed_roles?.length" class="role-tags">
+                    <el-tag v-for="role in row.allowed_roles" :key="role" size="small" effect="plain">{{ role }}</el-tag>
+                  </div>
+                  <span v-else class="muted">未配置</span>
                 </template>
               </el-table-column>
               <el-table-column label="审批要求" width="128" align="center" header-align="center">
@@ -233,13 +288,19 @@
         <el-tab-pane label="对象实例" name="instances">
           <section class="table-section instance-table-section">
             <div class="section-toolbar instance-toolbar">
-              <div class="instance-filter">
-                <strong>业务对象</strong>
-                <el-select v-model="instanceTypeId" placeholder="选择对象类型" @change="handleInstanceTypeChange">
-                  <el-option v-for="item in objectTypes" :key="item.id" :label="item.name" :value="item.id" />
-                </el-select>
+              <div class="instance-toolbar-context">
+                <div class="section-heading-main">
+                  <strong>对象实例</strong>
+                  <span class="section-count">{{ instanceTotalLabel }}</span>
+                </div>
+                <div class="instance-filter">
+                  <span class="toolbar-label">业务对象</span>
+                  <el-select v-model="instanceTypeId" placeholder="选择对象类型" @change="handleInstanceTypeChange">
+                    <el-option v-for="item in objectTypes" :key="item.id" :label="item.name" :value="item.id" />
+                  </el-select>
+                </div>
               </div>
-              <div>
+              <div class="instance-toolbar-actions">
                 <el-button :icon="Refresh" :loading="syncing" :disabled="!instanceTypeId" @click="syncAndLoadInstances(true)">刷新</el-button>
                 <el-button v-if="canManage" :icon="Connection" @click="openLinkInstanceDialog">建立关系</el-button>
                 <el-button v-if="canManage" type="primary" :icon="Plus" @click="openObjectInstanceDialog()">新建实例</el-button>
@@ -281,7 +342,11 @@
                     transition="object-property-popover-fade"
                     popper-class="object-property-tooltip"
                   >
-                    <div class="audit-field-list object-property-list object-property-trigger">
+                    <div class="audit-field-list object-property-list object-property-trigger" role="button" tabindex="0" aria-label="查看完整属性">
+                      <div class="object-property-preview-heading">
+                        <span>关键属性</span>
+                        <small>{{ objectPropertyEntries(row.properties).length }} 项</small>
+                      </div>
                       <div v-for="entry in objectPropertyPreview(row.properties)" :key="entry.key" class="audit-field-row">
                         <span :class="['audit-field-key', `tone-${entry.tone}`]">{{ entry.key }}</span>
                         <span class="audit-field-value object-property-value">{{ formatStateValue(entry.value, entry.key) }}</span>
@@ -339,7 +404,13 @@
         <el-tab-pane label="决策活动" name="activity">
           <section class="table-section">
             <div class="section-toolbar">
-              <div><strong>动作与决策审计</strong><span>{{ actionRuns.length }} 条</span></div>
+              <div class="section-heading">
+                <div class="section-heading-main">
+                  <strong>动作与决策审计</strong>
+                  <span class="section-count">{{ actionRuns.length }} 条</span>
+                </div>
+                <span class="section-heading-note">追踪动作执行结果、决策上下文和状态变化</span>
+              </div>
               <el-button :icon="Refresh" @click="loadActivity">刷新</el-button>
             </div>
             <el-table class="ontology-table" :data="actionRuns" height="100%">
@@ -348,14 +419,20 @@
                   <el-tag :type="runStatusType(row.status)">{{ runStatusLabel(row.status) }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="action_name" label="动作" min-width="160" />
-              <el-table-column prop="target_name" label="目标对象" min-width="160" />
+              <el-table-column label="动作 / 目标" min-width="260">
+                <template #default="{ row }">
+                  <div class="activity-primary-cell">
+                    <strong>{{ row.action_name }}</strong>
+                    <span>{{ row.target_name || '未指定目标' }}</span>
+                  </div>
+                </template>
+              </el-table-column>
               <el-table-column label="执行人" width="130">
                 <template #default="{ row }">{{ row.user_name || row.username || '-' }}</template>
               </el-table-column>
               <el-table-column label="决策上下文" min-width="320">
                 <template #default="{ row }">
-                  <div v-if="decisionContextEntries(row.decision_context).length" class="audit-field-list">
+                  <div v-if="decisionContextEntries(row.decision_context).length" class="audit-field-list compact-audit-list">
                     <div v-for="entry in decisionContextEntries(row.decision_context)" :key="entry.key" class="audit-field-row">
                       <span :class="['audit-field-key', `tone-${entry.tone}`]">{{ entry.key }}</span>
                         <span class="audit-field-value">{{ formatStateValue(entry.value, entry.key) }}</span>
@@ -366,7 +443,7 @@
               </el-table-column>
               <el-table-column label="状态变化" min-width="460">
                 <template #default="{ row }">
-                  <div v-if="stateChangeEntries(row.before_state, row.after_state).length" class="state-change-list">
+                  <div v-if="stateChangeEntries(row.before_state, row.after_state).length" class="state-change-list compact-state-list">
                     <div v-for="change in stateChangeEntries(row.before_state, row.after_state)" :key="change.key" class="state-change-row">
                       <span :class="['audit-field-key', `tone-${change.tone}`]">{{ change.key }}</span>
                       <div class="state-change-values">
@@ -395,7 +472,10 @@
           <el-form-item label="业务名称" required><el-input v-model="objectTypeForm.name" /></el-form-item>
           <el-form-item label="状态"><el-select v-model="objectTypeForm.status"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item>
         </div>
-        <el-form-item label="业务定义"><el-input v-model="objectTypeForm.description" type="textarea" :rows="2" /></el-form-item>
+        <el-form-item label="业务定义">
+          <el-input v-model="objectTypeForm.description" type="textarea" :rows="2" />
+          <span class="form-help">填写对象代表什么，例如“贷款申请单”；流程步骤请配置为动作或事件。</span>
+        </el-form-item>
         <div class="form-grid two">
           <el-form-item label="主属性" required><el-select v-model="objectTypeForm.primary_property"><el-option v-for="p in objectTypeForm.properties" :key="p.property_key" :label="p.name || p.property_key" :value="p.property_key" /></el-select></el-form-item>
           <el-form-item label="显示属性"><el-select v-model="objectTypeForm.display_property" clearable><el-option v-for="p in objectTypeForm.properties" :key="p.property_key" :label="p.name || p.property_key" :value="p.property_key" /></el-select></el-form-item>
@@ -442,7 +522,10 @@
     <el-dialog v-model="actionTypeDialog" :title="actionTypeForm.id ? '编辑动作类型' : '新建动作类型'" width="960px">
       <el-form :model="actionTypeForm" label-position="top">
         <div class="form-grid three"><el-form-item label="动作标识" required><el-input v-model="actionTypeForm.action_key" /></el-form-item><el-form-item label="动作名称" required><el-input v-model="actionTypeForm.name" /></el-form-item><el-form-item label="目标对象" required><el-select v-model="actionTypeForm.target_object_key"><el-option v-for="item in objectTypes" :key="item.id" :label="item.name" :value="item.object_key" /></el-select></el-form-item></div>
-        <el-form-item label="业务定义"><el-input v-model="actionTypeForm.description" type="textarea" :rows="2" /></el-form-item>
+        <el-form-item label="业务定义">
+          <el-input v-model="actionTypeForm.description" type="textarea" :rows="2" />
+          <span class="form-help">动作建议使用动词描述，例如“审批申请”“发起催收”。</span>
+        </el-form-item>
         <div class="form-grid three"><el-form-item label="授权角色"><el-select v-model="actionTypeForm.allowed_roles" multiple><el-option label="管理员" value="admin" /><el-option label="业务用户" value="user" /></el-select></el-form-item><el-form-item label="状态"><el-select v-model="actionTypeForm.status"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item><el-form-item label="审批单号要求"><el-switch v-model="actionTypeForm.requires_approval" active-text="需要审批单号" inactive-text="不要求审批单号" /></el-form-item></div>
         <div class="subsection-title"><strong>动作参数</strong><el-button text type="primary" :icon="Plus" @click="addActionParameter">添加参数</el-button></div>
         <div class="builder-list"><div v-for="(parameter, index) in actionTypeForm.parameters" :key="index" class="builder-row parameter-builder"><el-input v-model="parameter.parameter_key" placeholder="参数标识" /><el-input v-model="parameter.name" placeholder="业务名称" /><el-select v-model="parameter.data_type"><el-option v-for="item in propertyTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select><el-input v-model="parameter.options_text" placeholder="选项，逗号分隔" /><el-checkbox v-model="parameter.required">必填</el-checkbox><el-button text type="danger" :icon="Delete" @click="actionTypeForm.parameters.splice(index, 1)" /></div></div>
@@ -850,18 +933,18 @@ function renderGraph() {
   const width = element.clientWidth
   const height = element.clientHeight
   if (!width || !height) return
-  const sizeChanged = graphSize.width > 0 && (graphSize.width !== width || graphSize.height !== height)
-  if (sizeChanged && graph) {
-    graph.dispose()
-    graph = null
-  }
-  graph ||= echarts.init(graphElement.value)
+  graph ||= echarts.init(element)
   graph.resize({ width, height })
-  const nodes = objectTypes.value.map((item) => ({ id: item.object_key, name: item.name, value: `${item.object_key}\n${item.properties.length} 个属性`, symbolSize: 78, category: 0 }))
-  actionTypes.value.forEach((item) => nodes.push({ id: `action:${item.action_key}`, name: item.name, value: item.action_key, symbolSize: 58, category: 1 } as any))
+  const nodes = objectTypes.value.map((item) => ({ id: item.object_key, name: item.name, value: `对象类型 · ${item.object_key}\n${item.properties.length} 个属性`, symbolSize: 78, category: 0 }))
+  actionTypes.value.forEach((item) => nodes.push({ id: `action:${item.action_key}`, name: item.name, value: `业务动作 · ${item.action_key}`, symbolSize: 58, category: 1 } as any))
   const edges: any[] = linkTypes.value.map((item) => ({ source: item.source_object_key, target: item.target_object_key, name: item.name }))
   actionTypes.value.forEach((item) => edges.push({ source: `action:${item.action_key}`, target: item.target_object_key, name: '作用于', lineStyle: { type: 'dashed' } }))
-  graph.setOption({ tooltip: { formatter: (p: any) => p.dataType === 'edge' ? p.data.name : `${p.data.name}<br/>${p.data.value}` }, legend: [{ data: ['业务对象', '业务动作'], bottom: 12 }], series: [{ type: 'graph', layout: 'force', roam: true, draggable: true, top: 24, right: 24, bottom: 60, left: 24, categories: [{ name: '业务对象', itemStyle: { color: '#167c5a' } }, { name: '业务动作', itemStyle: { color: '#c36b18' } }], data: nodes, links: edges, label: { show: true, color: '#182230', fontSize: 13, position: 'bottom' }, edgeLabel: { show: true, formatter: (params: any) => params.data?.name || '', fontSize: 11, color: '#475467' }, lineStyle: { color: '#98a2b3', width: 1.5, curveness: 0.1 }, force: { initLayout: 'circular', repulsion: 360, edgeLength: 170, gravity: 0.08 }, emphasis: { focus: 'adjacency', lineStyle: { width: 3 } } }] }, true)
+  const graphTooltip = (p: any) => {
+    if (p.dataType === 'edge') return p.data.name
+    const kind = p.data.category === 0 ? '对象类型（实体/业务记录）' : '业务动作（处理行为）'
+    return `${p.data.name}<br/>${kind}<br/>${String(p.data.value || '').replace('\n', '<br/>')}`
+  }
+  graph.setOption({ tooltip: { formatter: graphTooltip }, legend: [{ data: ['对象（实体/记录）', '动作（处理行为）'], bottom: 12 }], series: [{ type: 'graph', layout: 'force', roam: true, draggable: true, top: 24, right: 24, bottom: 60, left: 24, categories: [{ name: '对象（实体/记录）', itemStyle: { color: '#167c5a' } }, { name: '动作（处理行为）', itemStyle: { color: '#c36b18' } }], data: nodes, links: edges, label: { show: true, color: '#182230', fontSize: 13, position: 'bottom' }, edgeLabel: { show: true, formatter: (params: any) => params.data?.name || '', fontSize: 11, color: '#475467' }, lineStyle: { color: '#98a2b3', width: 1.5, curveness: 0.1 }, force: { initLayout: 'circular', repulsion: 360, edgeLength: 170, gravity: 0.08 }, emphasis: { focus: 'adjacency', lineStyle: { width: 3 } } }] }, true)
   graphSize = { width, height }
 }
 
@@ -1022,7 +1105,18 @@ onBeforeUnmount(() => {
 .file-input { display: none; }
 .title-group { min-width: 0; }.title-group h2 { color: var(--wq-text); font-size: 22px; line-height: 1.25; }.title-group p { margin-top: 8px; color: var(--wq-muted); font-size: 14px; }.toolbar-actions { justify-content: flex-end; gap: 8px; flex-wrap: wrap; }.domain-select { width: 210px; }
 .metric-strip { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 1px; margin: 14px 0 8px; background: var(--wq-border); border: 1px solid var(--wq-border); border-radius: 7px; overflow: hidden; }.metric-item { position: relative; min-height: 72px; padding: 13px 16px; background: var(--wq-surface); }.metric-item span { display: block; color: var(--wq-muted); font-size: 12px; }.metric-item strong { display: block; margin-top: 3px; font-size: 23px; font-weight: 680; }.metric-item .el-icon { position: absolute; right: 14px; top: 22px; color: #98a2b3; font-size: 24px; }
-.workspace-tabs { min-width: 0; min-height: 0; flex: 1; }.workspace-tabs :deep(.el-tabs__header) { margin: 0; }.workspace-tabs :deep(.el-tabs__content) { min-width: 0; height: calc(100% - 40px); }.workspace-tabs :deep(.el-tab-pane) { min-width: 0; height: 100%; }.graph-panel { position: relative; min-width: 0; height: 100%; min-height: 0; overflow: hidden; background: #fff; border-bottom: 1px solid var(--wq-border); }.ontology-graph { width: 100%; height: 100%; }.graph-empty { position: absolute; inset: 0; background: #fff; }
+.workspace-tabs { min-width: 0; min-height: 0; flex: 1; }.workspace-tabs :deep(.el-tabs__header) { margin: 0; }.workspace-tabs :deep(.el-tabs__content) { min-width: 0; height: calc(100% - 40px); }.workspace-tabs :deep(.el-tab-pane) { min-width: 0; height: 100%; }.graph-panel { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; height: 100%; min-height: 0; overflow: hidden; background: #fff; border-bottom: 1px solid var(--wq-border); }.ontology-graph { width: 100%; height: 100%; min-height: 0; }.graph-empty { position: absolute; inset: 0; background: #fff; }
+.graph-guide { display: grid; gap: 8px; padding: 12px 16px 11px; border-bottom: 1px solid #dbe4ef; background: linear-gradient(90deg, #f5f9ff 0%, #fbfdff 100%); color: var(--wq-muted); font-size: 12px; line-height: 1.45; }
+.graph-guide-heading { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.graph-guide-heading strong { color: var(--wq-text); font-size: 13px; font-weight: 700; }
+.graph-guide-heading span { color: var(--wq-muted); }
+.graph-guide-items, .graph-guide-example { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.graph-guide-items > span { white-space: nowrap; }
+.graph-guide-items b { color: var(--wq-text); font-weight: 700; }
+.graph-guide-example > span { display: inline-flex; align-items: center; min-height: 23px; padding: 0 7px; border: 1px solid #d0d5dd; border-radius: 5px; background: #fff; color: var(--wq-text); font-size: 11px; white-space: nowrap; }
+.graph-guide-example .guide-object { border-color: #a6e4c9; color: #067647; background: #effaf4; }
+.graph-guide-example .guide-state { border-color: #b2ddff; color: #175cd3; background: #eff8ff; }
+.graph-guide-example .guide-action { border-color: #f7c58b; color: #b54708; background: #fff7ed; }
 .table-section { height: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: var(--wq-surface); }.instance-table-section { grid-template-rows: auto minmax(0, 1fr) auto; }.section-toolbar { height: auto; min-height: 54px; justify-content: space-between; border-bottom: 1px solid var(--wq-border); }.section-toolbar > div { display: flex; align-items: baseline; gap: 8px; }.section-toolbar span { color: var(--wq-muted); font-size: 12px; }.instance-filter { gap: 12px !important; }.instance-filter .el-select { width: 190px; }.ontology-table, .instance-table { width: 100%; min-height: 0; height: 100%; }
 .sync-status-cell, .object-source-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }.sync-status-cell small { color: var(--wq-muted); font-size: 11px; white-space: nowrap; }.muted { color: var(--wq-muted); }.source-tags { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }.instance-pagination { position: relative; z-index: 2; min-height: 62px; display: flex; align-items: center; justify-content: flex-end; gap: 18px; padding: 8px 16px 14px; border-top: 1px solid var(--wq-border); background: var(--wq-surface); }.instance-pagination > span { color: var(--wq-muted); font-size: 12px; white-space: nowrap; }.source-query-input :deep(textarea) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; }
 .table-actions { display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 0; flex-wrap: nowrap; white-space: nowrap; }
@@ -1056,6 +1150,108 @@ onBeforeUnmount(() => {
 :global(.object-property-popover-fade-enter-active), :global(.object-property-popover-fade-leave-active) { transition: opacity 160ms ease, transform 160ms cubic-bezier(0.22, 1, 0.36, 1); transform-origin: top left; }:global(.object-property-popover-fade-enter-from), :global(.object-property-popover-fade-leave-to) { opacity: 0; transform: translateY(6px) scale(0.98); }
 .form-grid { display: grid; gap: 14px; }.form-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }.form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }.subsection-title { justify-content: space-between; min-height: 40px; margin-top: 4px; border-bottom: 1px solid var(--wq-border); }.builder-list { display: grid; gap: 7px; margin: 9px 0 14px; }.builder-row { display: grid; align-items: center; gap: 7px; padding: 7px; background: #f7f9fc; border: 1px solid var(--wq-border); border-radius: 6px; }.property-builder { grid-template-columns: 1.2fr 1.2fr 110px 62px 62px 32px; }.parameter-builder { grid-template-columns: 1fr 1fr 105px 1.2fr 62px 32px; }.condition-builder { grid-template-columns: 1fr 110px 1fr 1.2fr 32px; }.effect-builder { grid-template-columns: 1fr 2fr 32px; }
 .validation-result section { margin-top: 18px; }.validation-result h4 { margin-bottom: 8px; }.validation-item { display: grid; grid-template-columns: 130px 1fr; gap: 10px; margin-bottom: 7px; padding: 10px; border-left: 3px solid; background: #f8fafc; }.validation-item.error { border-color: var(--wq-danger); }.validation-item.warning { border-color: var(--wq-warning); }
+.form-help { display: block; margin-top: 5px; color: var(--wq-muted); font-size: 12px; line-height: 1.45; }
 @media (max-width: 1100px) { .page-toolbar { align-items: flex-start; }.toolbar-actions { max-width: 60%; }.metric-strip { grid-template-columns: repeat(3, 1fr); }.form-grid.three { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 760px) { .ontology-page { padding-inline: 16px; padding-bottom: 16px; overflow: auto; }.page-toolbar { flex-direction: column; }.toolbar-actions { max-width: none; justify-content: flex-start; }.domain-select { width: 100%; }.metric-strip { grid-template-columns: repeat(2, 1fr); }.form-grid.two, .form-grid.three { grid-template-columns: 1fr; }.property-builder, .parameter-builder, .condition-builder, .effect-builder { grid-template-columns: 1fr; }.section-toolbar { flex-wrap: wrap; } }
+
+/* Dense workbench surfaces use hierarchy, not more decoration, to separate scan paths. */
+.section-toolbar { gap: 16px; padding: 8px 16px; background: var(--wq-surface); }
+.section-toolbar > .section-heading { display: flex; align-items: flex-start; flex-direction: column; gap: 3px; min-width: 0; }
+.section-heading-main { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
+.section-heading-main strong { color: var(--wq-text); font-size: 14px; font-weight: 680; }
+.section-count { color: var(--wq-primary-strong) !important; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px !important; font-weight: 650; }
+.section-heading-note { color: var(--wq-muted) !important; font-size: 11px !important; line-height: 1.4; }
+.section-toolbar > .el-button { flex: 0 0 auto; }
+.toolbar-label { color: var(--wq-muted); font-size: 12px; white-space: nowrap; }
+.instance-toolbar-context { display: flex !important; align-items: center !important; gap: 22px !important; min-width: 0; }
+.instance-filter { gap: 8px !important; }
+.instance-filter .el-select { width: 190px; }
+.instance-toolbar-actions { display: flex !important; align-items: center !important; gap: 8px !important; flex-wrap: wrap; }
+
+.ontology-table :deep(.el-table__header-wrapper th.el-table__cell),
+.instance-table :deep(.el-table__header-wrapper th.el-table__cell) {
+  color: #475467;
+  background: #f5f7fa;
+  font-size: 12px;
+  font-weight: 680;
+}
+.ontology-table :deep(.el-table__body tr),
+.instance-table :deep(.el-table__body tr) { transition: background-color 160ms ease; }
+.ontology-table :deep(.el-table__body tr:hover > td.el-table__cell),
+.instance-table :deep(.el-table__body tr:hover > td.el-table__cell) { background: #f5f9ff !important; }
+.ontology-table :deep(.el-table__body tr:hover .primary-cell strong),
+.instance-table :deep(.el-table__body tr:hover .primary-cell strong) { color: var(--wq-primary-strong); }
+.ontology-table :deep(.el-table__body td.el-table__cell),
+.instance-table :deep(.el-table__body td.el-table__cell) { padding: 11px 0; }
+.table-action-btn { border: 1px solid transparent; transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, transform 150ms ease; }
+.table-action-btn:hover { border-color: #b2ddff; }
+.table-action-btn:active { transform: scale(0.96); }
+.table-action-btn.is-danger:hover { border-color: #fecdca; }
+
+.property-grid { gap: 0; padding: 14px 58px 16px; border-top: 1px solid #e4e7ec; }
+.property-grid-heading { display: flex; align-items: baseline; gap: 8px; color: var(--wq-text); font-size: 12px; }
+.property-grid-heading span { color: var(--wq-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.property-grid-body { display: grid; gap: 6px; margin-top: 10px; }
+.property-row { min-height: 32px; padding: 3px 0; }
+
+.relation-flow { display: grid; grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr); align-items: center; gap: 8px; min-width: 320px; }
+.relation-endpoint { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.relation-endpoint > span { color: var(--wq-muted); font-size: 10px; line-height: 1; }
+.relation-endpoint code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.relation-arrow { justify-self: center; color: var(--wq-primary); font-size: 17px; }
+.action-counts { display: flex; align-items: stretch; gap: 10px; }
+.action-counts > span { display: inline-flex; align-items: baseline; gap: 4px; min-width: 42px; padding: 3px 6px; border-left: 2px solid #cbd5e1; background: #f8fafc; }
+.action-counts b { color: var(--wq-text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.action-counts small { color: var(--wq-muted); font-size: 10px; }
+.role-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.approval-tag { font-weight: 650; }
+
+.object-property-list { position: relative; gap: 5px; padding: 8px 10px; border-color: #d6e4f5; background: #f8fbff; }
+.object-property-preview-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding-bottom: 2px; color: #344054; font-size: 11px; font-weight: 680; }
+.object-property-preview-heading small { color: var(--wq-primary-strong); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.object-property-trigger:focus-visible { outline: 2px solid var(--wq-primary); outline-offset: 2px; }
+.object-property-more { padding-top: 1px; font-weight: 650; }
+.object-property-tooltip-heading { min-height: 42px; background: #eef4fb; }
+.object-property-tooltip-heading span::after { content: ' · 悬浮查看'; color: #667085; font-size: 10px; font-weight: 500; }
+.object-property-tooltip-list .audit-field-row { min-height: 34px; }
+
+.activity-primary-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.activity-primary-cell strong { color: var(--wq-text); font-weight: 680; }
+.activity-primary-cell span { overflow: hidden; color: var(--wq-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.compact-audit-list, .compact-state-list { gap: 5px; padding: 2px 0; }
+.compact-audit-list .audit-field-row, .compact-state-list .state-change-row { gap: 7px; }
+.compact-audit-list .audit-field-value, .compact-state-list .state-value { font-size: 12px; }
+.ontology-table :deep(.el-table__body-wrapper), .instance-table :deep(.el-table__body-wrapper) { scrollbar-color: #cbd5e1 transparent; scrollbar-width: thin; }
+
+@media (max-width: 960px) {
+  .section-heading-note { display: none; }
+  .instance-toolbar-context { gap: 14px !important; }
+  .relation-flow { min-width: 280px; }
+}
+
+@media (max-width: 760px) {
+  .workspace-tabs :deep(.el-tabs__nav-wrap) { overflow-x: auto; }
+  .workspace-tabs :deep(.el-tabs__nav) { min-width: max-content; }
+  .section-toolbar { align-items: flex-start; padding: 10px 12px; }
+  .section-toolbar > .section-heading { flex: 1 1 100%; }
+  .section-toolbar > .el-button { margin-left: auto; }
+  .instance-toolbar-context { width: 100%; align-items: flex-start !important; flex-direction: column; gap: 8px !important; }
+  .instance-filter { width: 100%; }
+  .instance-filter .el-select { width: min(100%, 260px); }
+  .instance-toolbar-actions { width: 100%; justify-content: flex-end; }
+  .ontology-table :deep(.el-table__body-wrapper), .instance-table :deep(.el-table__body-wrapper) { overflow-x: auto; }
+  .ontology-table :deep(.el-table__inner-wrapper), .instance-table :deep(.el-table__inner-wrapper) { min-width: 760px; }
+  .property-grid { padding-inline: 20px; }
+  .property-row { grid-template-columns: minmax(110px, 1fr) minmax(120px, 1fr) 70px 60px 50px; gap: 6px; }
+  .relation-flow { min-width: 250px; }
+  .action-counts { gap: 5px; }
+  .action-counts > span { min-width: 36px; padding-inline: 4px; }
+  .object-property-tooltip-list { min-width: min(300px, calc(100vw - 40px)); max-width: calc(100vw - 40px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ontology-table :deep(.el-table__body tr), .instance-table :deep(.el-table__body tr), .table-action-btn, .object-property-trigger { transition: none; }
+  .object-property-trigger:hover, .table-action-btn:active { transform: none; }
+  :global(.object-property-popover-fade-enter-active), :global(.object-property-popover-fade-leave-active) { transition: none; }
+}
 </style>

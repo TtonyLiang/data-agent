@@ -33,23 +33,27 @@
       </div>
     </header>
 
-    <el-alert
-      v-if="pageError"
-      class="page-error"
-      type="error"
-      :title="pageError"
-      show-icon
-      :closable="false"
-    />
+    <div v-if="pageError" class="page-error-row">
+      <el-alert
+        class="page-error"
+        type="error"
+        :title="pageError"
+        show-icon
+        :closable="false"
+      />
+      <el-button class="page-retry-button" :icon="Refresh" @click="retryPageLoad">重试</el-button>
+    </div>
 
     <el-empty
       v-if="!domainLoading && domains.length === 0"
       description="暂无可用领域，请先完成领域和本体配置"
-    />
+    >
+      <el-button type="primary" :icon="Refresh" @click="loadDomains">重新加载</el-button>
+    </el-empty>
 
     <template v-else-if="domainId">
       <section class="metric-strip" aria-label="风险交付指标">
-        <div v-for="metric in metrics" :key="metric.label" :class="['metric-item', `tone-${metric.tone}`]">
+        <div v-for="metric in metrics" :key="metric.label" :class="['metric-item', `tone-${metric.tone}`, metric.value > 0 ? 'has-value' : 'is-empty']">
           <span>{{ metric.label }}</span>
           <strong>{{ metric.value }}</strong>
           <el-icon><component :is="metric.icon" /></el-icon>
@@ -61,10 +65,13 @@
           <section class="table-section" v-loading="riskLoading">
             <div class="section-toolbar risk-toolbar">
               <div class="section-heading">
-                <strong>风险事项</strong>
-                <span>{{ filteredRiskIssues.length }} / {{ riskIssues.length }} 项</span>
+                <div class="section-heading-copy">
+                  <strong>风险事项</strong>
+                  <span>按严重度和状态优先处理，点击行查看详情</span>
+                </div>
+                <em>{{ filteredRiskIssues.length }} / {{ riskIssues.length }} 项</em>
               </div>
-              <div class="section-actions">
+              <div class="section-actions filter-group">
                 <el-select v-model="riskStatusFilter" class="filter-select" aria-label="风险状态筛选">
                   <el-option label="全部状态" value="all" />
                   <el-option v-for="item in riskStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
@@ -95,6 +102,13 @@
               empty-text="暂无风险事项"
               @row-click="openRiskDetail"
             >
+              <template #empty>
+                <div class="table-empty">
+                  <el-empty :image-size="58" description="暂无风险事项">
+                    <el-button type="primary" :icon="Plus" @click="openRiskDialog">新建风险事项</el-button>
+                  </el-empty>
+                </div>
+              </template>
               <el-table-column label="风险事项" min-width="260">
                 <template #default="{ row }">
                   <div :class="['primary-cell', 'risk-title-cell', severityClass(textField(row, 'severity'))]">
@@ -156,8 +170,11 @@
           <section class="table-section" v-loading="reportLoading">
             <div class="section-toolbar">
               <div class="section-heading">
-                <strong>报告交付</strong>
-                <span>{{ reports.length }} 份</span>
+                <div class="section-heading-copy">
+                  <strong>报告交付</strong>
+                  <span>以不可变版本记录风险结论和交付状态</span>
+                </div>
+                <em>{{ reports.length }} 份</em>
               </div>
               <el-button type="primary" :icon="Plus" @click="openReportDialog">新建报告并创建 V1</el-button>
             </div>
@@ -171,7 +188,14 @@
               :closable="false"
             />
 
-            <el-table class="workbench-table" :data="reports" row-key="id" height="100%" empty-text="暂无报告">
+            <el-table class="workbench-table report-table" :data="reports" row-key="id" height="100%" empty-text="暂无报告" :row-class-name="reportRowClassName" @row-click="openReportVersions">
+              <template #empty>
+                <div class="table-empty">
+                  <el-empty :image-size="58" description="暂无报告">
+                    <el-button type="primary" :icon="Plus" @click="openReportDialog">新建报告并创建 V1</el-button>
+                  </el-empty>
+                </div>
+              </template>
               <el-table-column label="报告" min-width="270">
                 <template #default="{ row }">
                   <div class="primary-cell report-title-cell">
@@ -206,7 +230,7 @@
                 <template #default="{ row }">
                   <div class="table-actions">
                     <el-tooltip content="查看版本" placement="top">
-                      <el-button class="table-action-btn is-view" text :icon="View" aria-label="查看报告版本" @click="openReportVersions(row)" />
+                      <el-button class="table-action-btn is-view" text :icon="View" aria-label="查看报告版本" @click.stop="openReportVersions(row)" />
                     </el-tooltip>
                     <el-tooltip content="创建新版本" placement="top">
                       <el-button
@@ -216,7 +240,7 @@
                         :icon="DocumentAdd"
                         aria-label="创建报告新版本"
                         :disabled="isFinalReport(row)"
-                        @click="openVersionDialog(row)"
+                        @click.stop="openVersionDialog(row)"
                       />
                     </el-tooltip>
                     <el-tooltip v-if="canFinalize" content="定稿" placement="top">
@@ -227,7 +251,7 @@
                         :icon="CircleCheck"
                         aria-label="定稿报告"
                         :disabled="isFinalReport(row)"
-                        @click="handleFinalizeReport(row)"
+                        @click.stop="handleFinalizeReport(row)"
                       />
                     </el-tooltip>
                   </div>
@@ -241,8 +265,11 @@
           <section class="table-section audit-section" v-loading="auditLoading">
             <div class="section-toolbar">
               <div class="section-heading">
-                <strong>决策审计事件</strong>
-                <span>{{ auditEvents.length }} 条</span>
+                <div class="section-heading-copy">
+                  <strong>决策审计事件</strong>
+                  <span>记录关键业务动作，哈希字段用于技术追溯</span>
+                </div>
+                <em>{{ auditEvents.length }} 条</em>
               </div>
               <el-button
                 :icon="CircleCheck"
@@ -271,7 +298,14 @@
               @close="auditVerifyResult = null"
             />
 
-            <el-table class="workbench-table" :data="auditEvents" row-key="id" height="100%" empty-text="暂无审计事件">
+            <el-table class="workbench-table audit-table" :data="auditEvents" row-key="id" height="100%" empty-text="暂无审计事件">
+              <template #empty>
+                <div class="table-empty">
+                  <el-empty :image-size="58" description="暂无审计事件">
+                    <span class="empty-note">完成风险创建、证据添加或人工复核后，这里会保留可追溯记录</span>
+                  </el-empty>
+                </div>
+              </template>
               <el-table-column label="事件类型" min-width="180">
                 <template #default="{ row }">
                   <div :class="['primary-cell', 'audit-event-cell', auditEventClass(textField(row, 'event_type', 'type'))]">
@@ -312,6 +346,7 @@
 
     <el-drawer
       v-model="riskDetailDrawer"
+      class="risk-detail-panel"
       :title="`风险事项 · ${selectedIssueTitle}`"
       size="780px"
       append-to-body
@@ -588,6 +623,7 @@
         </div>
         <el-form-item label="V1 快照（JSON）" required>
           <el-input v-model="reportForm.snapshot_json" type="textarea" :rows="6" spellcheck="false" placeholder='如 {"stage":"system_detected","change_summary":"初始版本","review_status":"pending"}' />
+          <p class="form-help">技术追溯信息，普通阅读者无需填写或查看；用于记录版本快照。</p>
         </el-form-item>
         <el-form-item label="V1 报告正文（Markdown）" required>
           <el-input v-model="reportForm.markdown" type="textarea" :rows="8" spellcheck="false" placeholder="# 风险复核报告\n\n## 系统识别\n\n- ..." />
@@ -619,6 +655,7 @@
         </el-form-item>
         <el-form-item label="版本快照（JSON）" required>
           <el-input v-model="versionForm.snapshot_json" type="textarea" :rows="6" spellcheck="false" placeholder='如 {"stage":"human_reviewed","change_summary":"写入人工复核结果"}' />
+          <p class="form-help">技术追溯信息，普通阅读者无需填写或查看；用于记录本次版本变化。</p>
         </el-form-item>
         <el-form-item label="报告正文（Markdown）" required>
           <el-input v-model="versionForm.markdown" type="textarea" :rows="8" spellcheck="false" placeholder="# 风险复核报告\n\n## 人工复核结果\n\n- ..." />
@@ -632,6 +669,7 @@
 
     <el-drawer
       v-model="versionDrawer"
+      class="version-drawer-panel"
       :title="`报告版本 · ${selectedReportTitle}`"
       size="620px"
       append-to-body
@@ -644,32 +682,195 @@
           show-icon
           :closable="false"
         />
-        <template v-else-if="reportVersions.length">
-          <article v-for="version in reportVersions" :key="recordKey(version)" class="version-record">
+        <template v-else-if="reportVersionViews.length">
+          <article
+            v-for="{ version, issues, markdownBlocks, issueOverviewLabel, fallbackSummary } in reportVersionViews"
+            :key="recordKey(version)"
+            class="version-record"
+          >
             <div class="version-heading">
               <div>
                 <strong>V{{ numberField(version, 'version', 'version_no') || 1 }}</strong>
-                <el-tag type="info" size="small" effect="plain">不可变版本</el-tag>
+                <el-tag v-if="isCurrentReportVersion(version)" type="primary" size="small" effect="plain">当前版本</el-tag>
+                <el-tag v-else type="info" size="small" effect="plain">不可变版本</el-tag>
               </div>
               <span>{{ formatTime(field(version, 'created_at')) }}</span>
             </div>
-            <dl class="version-meta">
-              <div><dt>Ontology release</dt><dd>{{ releaseLabel(version) }}</dd></div>
-              <div><dt>创建人</dt><dd>{{ textFieldOr(version, '-', 'creator_name', 'created_by_name', 'created_by') }}</dd></div>
-              <div><dt>快照哈希</dt><dd><code>{{ shortHash(field(version, 'snapshot_hash', 'content_hash'), 24) }}</code></dd></div>
-            </dl>
-            <section class="version-section">
-              <h4>版本摘要</h4>
-              <p>{{ snapshotSummary(version) }}</p>
+            <section class="report-reading-panel" aria-label="业务阅读版">
+              <div class="report-reading-kicker">业务阅读版</div>
+              <div class="report-overview-grid">
+                <div>
+                  <span>报告状态</span>
+                  <strong>{{ reportStatusLabel(textField(selectedReport, 'status') || textField(version, 'status')) }}</strong>
+                </div>
+                <div>
+                  <span>报告期间</span>
+                  <strong>{{ reportPeriodLabel(selectedReport || version) }}</strong>
+                </div>
+                <div>
+                  <span>风险事项</span>
+                  <strong>{{ issues.length }} 项</strong>
+                </div>
+                <div>
+                  <span>{{ isCurrentReportVersion(version) ? '当前版本' : '版本号' }}</span>
+                  <strong>V{{ numberField(version, 'version', 'version_no') || 1 }}</strong>
+                </div>
+              </div>
+
+              <section class="version-section report-overview-section">
+                <div class="version-section-heading">
+                  <h4>风险概览</h4>
+                  <span>{{ issueOverviewLabel }}</span>
+                </div>
+                <div v-if="issues.length" class="report-issue-list">
+                  <article v-for="issue in issues" :key="recordKey(issue)" class="report-issue-summary">
+                    <div class="report-issue-heading">
+                      <strong>{{ reportIssueTitle(issue) }}</strong>
+                      <div class="report-issue-tags">
+                        <el-tag
+                          :type="reportIssueSnapshotTagType(issue)"
+                          size="small"
+                          effect="plain"
+                          class="snapshot-source-tag"
+                        >
+                          {{ reportIssueSnapshotLabel(issue) }}
+                        </el-tag>
+                        <el-tag
+                          :class="['severity-tag', severityClass(reportIssueSeverity(issue) || 'low')]"
+                          :type="severityType(reportIssueSeverity(issue))"
+                          size="small"
+                          effect="plain"
+                        >
+                          {{ reportIssueSeverityLabel(issue) }}
+                        </el-tag>
+                        <el-tag
+                          :class="['status-tag', riskStatusClass(reportIssueStatus(issue) || 'open')]"
+                          :type="riskStatusType(reportIssueStatus(issue))"
+                          size="small"
+                          effect="plain"
+                        >
+                          {{ reportIssueStatusLabel(issue) }}
+                        </el-tag>
+                      </div>
+                    </div>
+                    <p v-if="reportIssueSnapshotNote(issue)" class="report-issue-snapshot-note">
+                      {{ reportIssueSnapshotNote(issue) }}
+                    </p>
+                    <div class="report-issue-facts">
+                      <div><span>关联对象</span><strong>{{ reportIssueObjectLabel(issue) }}</strong></div>
+                      <div><span>检测值</span><strong>{{ reportIssueDetectedValue(issue) }}</strong></div>
+                      <div><span>证据</span><strong>{{ reportIssueEvidenceSummary(issue) }}</strong></div>
+                      <div><span>复核结论</span><strong>{{ reportIssueReviewSummary(issue) }}</strong></div>
+                    </div>
+                  </article>
+                </div>
+                <p v-else class="version-empty-copy">{{ fallbackSummary }}</p>
+              </section>
+
+              <section class="version-section report-body-section">
+                <div class="version-section-heading">
+                  <h4>报告正文</h4>
+                  <span>面向业务阅读，技术字段已收纳到下方追溯区</span>
+                </div>
+                <div v-if="markdownBlocks.length" class="report-markdown-body">
+                  <div
+                    v-for="(block, index) in markdownBlocks"
+                    :key="`version-report-${recordKey(version)}-${index}`"
+                    :class="['report-md-block', `report-md-${block.type}`]"
+                  >
+                    <h2 v-if="block.type === 'heading'">{{ stripInlineMarkdown(block.text) }}</h2>
+                    <h3 v-else-if="block.type === 'subheading'">{{ stripInlineMarkdown(block.text) }}</h3>
+                    <p v-else-if="block.type === 'paragraph'">
+                      <template
+                        v-for="(part, partIndex) in inlineMarkdownParts(block.text)"
+                        :key="`version-paragraph-${index}-${partIndex}`"
+                      >
+                        <strong v-if="part.type === 'bold'">{{ part.text }}</strong>
+                        <code v-else-if="part.type === 'code'">{{ part.text }}</code>
+                        <span v-else>{{ part.text }}</span>
+                      </template>
+                    </p>
+                    <ol v-else-if="block.type === 'list' && block.ordered">
+                      <li v-for="(item, itemIndex) in block.items" :key="`version-list-${index}-${itemIndex}`">
+                        <template
+                          v-for="(part, partIndex) in inlineMarkdownParts(item)"
+                          :key="`version-list-part-${index}-${itemIndex}-${partIndex}`"
+                        >
+                          <strong v-if="part.type === 'bold'">{{ part.text }}</strong>
+                          <code v-else-if="part.type === 'code'">{{ part.text }}</code>
+                          <span v-else>{{ part.text }}</span>
+                        </template>
+                      </li>
+                    </ol>
+                    <ul v-else-if="block.type === 'list'">
+                      <li v-for="(item, itemIndex) in block.items" :key="`version-list-${index}-${itemIndex}`">
+                        <template
+                          v-for="(part, partIndex) in inlineMarkdownParts(item)"
+                          :key="`version-list-part-${index}-${itemIndex}-${partIndex}`"
+                        >
+                          <strong v-if="part.type === 'bold'">{{ part.text }}</strong>
+                          <code v-else-if="part.type === 'code'">{{ part.text }}</code>
+                          <span v-else>{{ part.text }}</span>
+                        </template>
+                      </li>
+                    </ul>
+                    <div v-else-if="block.type === 'table'" class="report-data-table-wrap">
+                      <table class="report-data-table">
+                        <thead>
+                          <tr>
+                            <th v-for="column in block.columns" :key="column">{{ stripInlineMarkdown(column) }}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="(row, rowIndex) in block.rows" :key="`version-table-row-${index}-${rowIndex}`">
+                            <td v-for="(cell, cellIndex) in row" :key="`version-table-cell-${index}-${rowIndex}-${cellIndex}`">
+                              <template
+                                v-for="(part, partIndex) in inlineMarkdownParts(cell)"
+                                :key="`version-table-part-${index}-${rowIndex}-${cellIndex}-${partIndex}`"
+                              >
+                                <strong v-if="part.type === 'bold'">{{ part.text }}</strong>
+                                <code v-else-if="part.type === 'code'">{{ part.text }}</code>
+                                <span v-else>{{ part.text }}</span>
+                              </template>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <pre v-else-if="block.type === 'code'"><code>{{ block.text }}</code></pre>
+                  </div>
+                </div>
+                <p v-else class="version-empty-copy">{{ fallbackSummary }}</p>
+              </section>
             </section>
-            <section class="version-section">
-              <h4>快照摘要</h4>
-              <pre>{{ formatSnapshot(field(version, 'snapshot_json', 'snapshot')) }}</pre>
-            </section>
-            <section class="version-section">
-              <h4>报告正文</h4>
-              <pre>{{ textFieldOr(version, '暂无报告正文', 'markdown', 'content_markdown') }}</pre>
-            </section>
+
+            <el-collapse class="technical-trace-collapse" @change="handleTechnicalTraceChange(version, $event)">
+              <el-collapse-item name="technical" title="技术追溯（原始 JSON、哈希与版本字段）">
+                <template v-if="isTechnicalTraceExpanded(version)">
+                  <dl class="version-meta">
+                    <div><dt>Ontology release</dt><dd>{{ releaseLabel(version) }}</dd></div>
+                    <div><dt>创建人</dt><dd>{{ textFieldOr(version, '-', 'creator_name', 'created_by_name', 'created_by') }}</dd></div>
+                    <div><dt>快照哈希</dt><dd><code>{{ shortHash(field(version, 'snapshot_hash', 'content_hash'), 24) }}</code></dd></div>
+                  </dl>
+                  <section class="version-section technical-section">
+                    <h4>版本摘要</h4>
+                    <p>{{ snapshotSummary(version) }}</p>
+                  </section>
+                  <section class="version-section technical-section">
+                    <h4>原始 snapshot JSON</h4>
+                    <pre>{{ formatSnapshot(field(version, 'snapshot_json', 'snapshot')) }}</pre>
+                  </section>
+                  <section class="version-section technical-section">
+                    <h4>原始 Markdown</h4>
+                    <pre>{{ textFieldOr(version, '暂无报告正文', 'markdown', 'content_markdown') }}</pre>
+                  </section>
+                  <section class="version-section technical-section">
+                    <h4>技术字段</h4>
+                    <pre>{{ formatTechnicalFields(version) }}</pre>
+                  </section>
+                </template>
+              </el-collapse-item>
+            </el-collapse>
           </article>
         </template>
         <el-empty v-else description="暂无报告版本" />
@@ -760,6 +961,7 @@ const savingReport = ref(false)
 const savingVersion = ref(false)
 const versionsLoading = ref(false)
 const versionsError = ref('')
+const expandedTechnicalVersionKeys = ref<string[]>([])
 const auditVerifying = ref(false)
 const auditVerifyResult = ref<UnknownRecord | null>(null)
 const selectedIssue = ref<RiskIssue | null>(null)
@@ -792,6 +994,16 @@ const selectedIssueTitle = computed(() => selectedIssue.value ? textFieldOr(sele
 const selectedReportTitle = computed(() => selectedReport.value ? textFieldOr(selectedReport.value, '报告', 'title', 'name') : '报告')
 const reviewActionOptions = computed(() => availableReviewActions(textField(selectedIssue.value, 'status')))
 const canFinalize = computed(() => isAdmin())
+const reportVersionViews = computed(() => reportVersions.value.map((version) => {
+  const issues = reportVersionIssues(version)
+  return {
+    version,
+    issues,
+    markdownBlocks: reportVersionMarkdownBlocks(version),
+    issueOverviewLabel: reportIssueOverviewLabel(issues),
+    fallbackSummary: reportVersionFallbackSummary(version, issues),
+  }
+}))
 
 const filteredRiskIssues = computed(() => riskIssues.value.filter((item) => {
   const statusMatches = riskStatusFilter.value === 'all' || textField(item, 'status') === riskStatusFilter.value
@@ -1037,6 +1249,10 @@ function riskRowClassName({ row }: { row: RiskIssue }) {
   return severityClass(textField(row, 'severity'))
 }
 
+function reportRowClassName({ row }: { row: RiskReport }) {
+  return isFinalReport(row) ? 'is-finalized' : 'is-editable'
+}
+
 function objectOptionLabel(item: OntologyObject) {
   return `${item.display_name} · ${item.object_type_name}`
 }
@@ -1157,7 +1373,22 @@ function displayKeyLabel(key: string) {
     overdue_bucket: '逾期阶段',
     loan_no: '贷款编号',
     current_status: '当前状态',
+    approval_rate: '审批通过率',
+    application_count: '申请笔数',
+    application_region: '申请区域',
+    disbursement_amount: '放款金额',
+    outstanding_balance: '贷款余额',
+    m1_plus_rate: 'M1+逾期率',
+    mob: '贷款账龄',
+    dpd: '逾期天数',
+    vintage: '放款批次',
+    pd: '违约概率',
     dti: '负债收入比',
+    writeoff_amount: '核销金额',
+    collection_recovery_rate: '催收回收率',
+    region: '区域',
+    evidence_count: '证据数量',
+    review_count: '复核次数',
     risk_grade: '风险等级',
     model_pd: '模型违约概率',
     max_dpd_12m: '近 12 月最大逾期天数',
@@ -1180,16 +1411,34 @@ function displayKeyLabel(key: string) {
     unit: '单位',
     阈值: '阈值条件',
     命中结果: '命中结果',
+  } as Record<string, string>)[key] || ({
+    approvalRate: '审批通过率',
+    applicationCount: '申请笔数',
+    applicationRegion: '申请区域',
+    disbursementAmount: '放款金额',
+    outstandingBalance: '贷款余额',
+    m1PlusRate: 'M1+逾期率',
+    mob: '贷款账龄',
+    dpd: '逾期天数',
+    vintage: '放款批次',
+    pd: '违约概率',
+    dti: '负债收入比',
+    writeoffAmount: '核销金额',
+    collectionRecoveryRate: '催收回收率',
+    evidenceCount: '证据数量',
+    reviewCount: '复核次数',
   } as Record<string, string>)[key] || readableKey(key)
 }
 
 function formatBusinessValue(key: string, value: unknown) {
+  const normalizedKey = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)
   if (typeof value === 'boolean') return value ? '是' : '否'
   if (typeof value === 'string' && isDateTimeValue(value)) return formatDateTime(value)
   if (typeof value === 'number') {
-    if (['dti', 'model_pd'].includes(key)) return `${formatNumber(value * 100)}%`
-    if (['remaining_principal', 'balance', 'amount'].some((token) => key.includes(token))) return `¥${formatNumber(value)}`
-    if (key.includes('days')) return `${formatNumber(value)} 天`
+    if (['dti', 'model_pd', 'approval_rate', 'm1_plus_rate', 'pd', 'collection_recovery_rate'].includes(normalizedKey)) return `${formatNumber(value * 100)}%`
+    if (['remaining_principal', 'balance', 'amount'].some((token) => normalizedKey.includes(token))) return `¥${formatNumber(value)}`
+    if (['dpd', 'mob'].includes(normalizedKey)) return `${formatNumber(value)} ${normalizedKey === 'mob' ? '个月' : '天'}`
+    if (normalizedKey.includes('days')) return `${formatNumber(value)} 天`
     return formatNumber(value)
   }
   return String(value)
@@ -1212,7 +1461,7 @@ function thresholdLabel(threshold: UnknownRecord) {
   return `${metric ? `${displayKeyLabel(metric)} ` : ''}${operator} ${formatBusinessValue(metric, value)}`
 }
 
-function reportPeriodLabel(row: RiskReport) {
+function reportPeriodLabel(row: unknown) {
   const start = textField(row, 'period_start', 'start_date')
   const end = textField(row, 'period_end', 'end_date')
   return start || end ? `${start || '-'} 至 ${end || '-'}` : textFieldOr(row, '-', 'period_label')
@@ -1229,15 +1478,383 @@ function isFinalReport(row: RiskReport) {
   return ['final', 'finalized'].includes(textField(row, 'status'))
 }
 
+function isCurrentReportVersion(version: unknown) {
+  const versionNumber = numberField(version, 'version', 'version_no')
+  const currentVersion = numberField(selectedReport.value, 'current_version')
+  return versionNumber > 0 && currentVersion > 0 && versionNumber === currentVersion
+}
+
 function formatSnapshot(value: unknown) {
   if (value === undefined || value === null || value === '') return '暂无快照摘要'
   if (typeof value === 'string') return value
   try { return JSON.stringify(value, null, 2) } catch { return String(value) }
 }
 
+function snapshotSummaryValue(version: unknown) {
+  const snapshot = reportVersionSnapshot(version)
+  const contextValue = field(snapshot, 'context')
+  const context = asRecord(contextValue)
+  return textField(snapshot, 'change_summary', 'changeSummary', 'summary', 'stage')
+    || (typeof contextValue === 'string' ? contextValue : '')
+    || textField(context, 'change_summary', 'changeSummary', 'summary', 'stage')
+}
+
 function snapshotSummary(version: unknown) {
-  const snapshot = asRecord(field(version, 'snapshot_json', 'snapshot'))
-  return textFieldOr(snapshot, '当前版本已绑定风险事项、证据与 Ontology release 快照', 'change_summary', 'summary', 'stage')
+  return snapshotSummaryValue(version) || '当前版本已绑定风险事项、证据与 Ontology release 快照'
+}
+
+type VersionMarkdownBlock =
+  | { type: 'heading' | 'subheading' | 'paragraph' | 'code'; text: string }
+  | { type: 'list'; ordered: boolean; items: string[] }
+  | { type: 'table'; columns: string[]; rows: string[][] }
+
+function reportVersionSnapshot(version: unknown) {
+  return asRecord(field(version, 'snapshot_json', 'snapshot'))
+}
+
+function reportVersionMarkdown(version: unknown) {
+  return textField(version, 'markdown', 'content_markdown', 'body')
+}
+
+function reportVersionIssueIds(version: unknown) {
+  const snapshot = reportVersionSnapshot(version)
+  const versionRaw = field(version, 'issue_ids', 'issueIds')
+  const snapshotRaw = field(snapshot, 'issue_ids', 'issueIds')
+  const versionIds = normalizeList<unknown>(versionRaw, 'items')
+    .map((value) => Number(typeof value === 'object' && value !== null ? field(value, 'id', 'issue_id') : value))
+    .filter((value) => Number.isFinite(value) && value > 0)
+  if (versionIds.length) return versionIds
+  return normalizeList<unknown>(snapshotRaw, 'items')
+    .map((value) => Number(typeof value === 'object' && value !== null ? field(value, 'id', 'issue_id') : value))
+    .filter((value) => Number.isFinite(value) && value > 0)
+}
+
+const REPORT_ISSUE_SNAPSHOT_STATE = '__report_snapshot_state'
+const REPORT_ISSUE_REFERENCE_KEYS = new Set(['id', 'issue_id', 'issueId'])
+type ReportIssueSnapshotState = 'snapshot' | 'live_supplement' | 'missing'
+
+function withReportIssueSnapshotState(issue: UnknownRecord, state: ReportIssueSnapshotState): UnknownRecord {
+  return { ...issue, [REPORT_ISSUE_SNAPSHOT_STATE]: state }
+}
+
+function hasSnapshotIssueDetails(issue: UnknownRecord) {
+  return Object.keys(issue).some((key) => !REPORT_ISSUE_REFERENCE_KEYS.has(key))
+}
+
+function reportVersionIssues(version: unknown): UnknownRecord[] {
+  const snapshot = reportVersionSnapshot(version)
+  const rawIssues = field(snapshot, 'issues', 'risk_issues', 'riskIssues')
+  const rawIssueList = normalizeList<unknown>(rawIssues, 'items')
+  const liveById = new Map(riskIssues.value.map((issue) => [issueId(issue), asRecord(issue)]))
+  const issueIds = new Set(reportVersionIssueIds(version))
+  const result: UnknownRecord[] = []
+  const seenIds = new Set<number>()
+  const seenKeys = new Set<string>()
+
+  const pushIssue = (issue: UnknownRecord) => {
+    const id = numberField(issue, 'id', 'issue_id', 'issueId')
+    const key = recordKey(issue)
+    if ((id && seenIds.has(id)) || (!id && seenKeys.has(key))) return
+    if (id) seenIds.add(id)
+    else seenKeys.add(key)
+    result.push(issue)
+  }
+
+  rawIssueList.forEach((rawIssue) => {
+    const rawRecord = asRecord(rawIssue)
+    const nestedIssue = asRecord(field(rawRecord, 'issue'))
+    const snapshotIssue: UnknownRecord = { ...nestedIssue, ...rawRecord }
+    delete snapshotIssue.issue
+    const scalarId = Number(rawIssue)
+    const id = numberField(snapshotIssue, 'id', 'issue_id', 'issueId') || (Number.isFinite(scalarId) && scalarId > 0 ? scalarId : 0)
+    if (id && !numberField(snapshotIssue, 'id', 'issue_id', 'issueId')) snapshotIssue.issue_id = id
+    if (id) issueIds.add(id)
+    if (!Object.keys(snapshotIssue).length) return
+    if (hasSnapshotIssueDetails(snapshotIssue)) {
+      pushIssue(withReportIssueSnapshotState(snapshotIssue, 'snapshot'))
+      return
+    }
+    const liveIssue = id ? liveById.get(id) : undefined
+    pushIssue(liveIssue
+      ? withReportIssueSnapshotState({ ...liveIssue, ...snapshotIssue }, 'live_supplement')
+      : withReportIssueSnapshotState(snapshotIssue, 'missing'))
+  })
+
+  issueIds.forEach((id) => {
+    if (seenIds.has(id)) return
+    const snapshotIssue = { issue_id: id }
+    const liveIssue = liveById.get(id)
+    pushIssue(liveIssue
+      ? withReportIssueSnapshotState({ ...liveIssue, ...snapshotIssue }, 'live_supplement')
+      : withReportIssueSnapshotState(snapshotIssue, 'missing'))
+  })
+  return result
+}
+
+function reportIssueSnapshotState(issue: unknown): ReportIssueSnapshotState {
+  const state = textField(issue, REPORT_ISSUE_SNAPSHOT_STATE)
+  if (state === 'live_supplement' || state === 'missing') return state
+  return 'snapshot'
+}
+
+function reportIssueSnapshotLabel(issue: unknown) {
+  const state = reportIssueSnapshotState(issue)
+  if (state === 'live_supplement') return '未固化信息'
+  if (state === 'missing') return '快照缺失'
+  return '当前快照'
+}
+
+function reportIssueSnapshotTagType(issue: unknown) {
+  const state = reportIssueSnapshotState(issue)
+  if (state === 'live_supplement') return 'warning'
+  if (state === 'missing') return 'danger'
+  return 'info'
+}
+
+function reportIssueSnapshotNote(issue: unknown) {
+  const state = reportIssueSnapshotState(issue)
+  if (state === 'live_supplement') return '该事项在此版本中仅固化了 ID，以下详情来自当前风险数据，不属于不可变报告快照。'
+  if (state === 'missing') return '该事项在此版本中仅固化了 ID，当前也无法获取对应详情。'
+  return ''
+}
+
+function reportIssueTitle(issue: unknown) {
+  const id = numberField(issue, 'id', 'issue_id', 'issueId')
+  return textFieldOr(issue, id ? `风险事项 #${id}` : '未命名风险事项', 'title', 'name', 'issue_title', 'issueTitle')
+}
+
+function reportIssueSeverity(issue: unknown) {
+  return textField(issue, 'severity', 'risk_severity', 'riskSeverity')
+}
+
+function reportIssueSeverityLabel(issue: unknown) {
+  const value = reportIssueSeverity(issue)
+  return value ? severityLabel(value) : '未标注'
+}
+
+function reportIssueStatus(issue: unknown) {
+  return textField(issue, 'status', 'risk_status', 'riskStatus')
+}
+
+function reportIssueStatusLabel(issue: unknown) {
+  const value = reportIssueStatus(issue)
+  return value ? riskStatusLabel(value) : '未标注'
+}
+
+function reportIssueObjectLabel(issue: unknown) {
+  return textField(issue, 'object_name', 'subject_name', 'objectName', 'subjectName')
+    || objectLabelById(field(issue, 'object_id', 'subject_object_id', 'objectId', 'subjectObjectId'))
+    || textFieldOr(issue, '-', 'subject_type', 'object_type', 'subjectType', 'objectType')
+}
+
+function reportIssueDetectedValue(issue: unknown) {
+  return riskDetectedValueSummary(field(issue, 'detected_value', 'detectedValue', 'value'))
+}
+
+function reportIssueEvidenceSummary(issue: unknown) {
+  const explicit = textField(issue, 'evidence_summary', 'evidenceSummary')
+  if (explicit) return explicit
+  const evidence = normalizeList<UnknownRecord>(field(issue, 'evidence', 'evidences'), 'items')
+  const countValue = field(issue, 'evidence_count', 'evidenceCount')
+  const count = countValue === undefined ? evidence.length : Number(countValue)
+  const firstTitle = evidence.length ? textFieldOr(evidence[0], '', 'title', 'name') : ''
+  if (count > 0) return `${count} 条${firstTitle ? ` · ${firstTitle}` : ''}`
+  return '暂无证据记录'
+}
+
+function reportIssueReviewSummary(issue: unknown) {
+  const explicit = textField(issue, 'review_summary', 'reviewSummary', 'last_review_comment', 'lastReviewComment')
+  if (explicit) return explicit
+  const reviews = normalizeList<UnknownRecord>(field(issue, 'reviews', 'review_records', 'reviewRecords'), 'items')
+  const latest = reviews[reviews.length - 1]
+  if (latest) {
+    const action = reviewDecisionLabel(textField(latest, 'review_action', 'action', 'decision'))
+    const comment = textField(latest, 'comment', 'review_comment', 'reviewComment')
+    return comment ? `${action}：${comment}` : action
+  }
+  const status = textField(issue, 'status', 'risk_status', 'riskStatus')
+  return status ? `当前状态：${riskStatusLabel(status)}` : '暂无复核记录'
+}
+
+function reportIssueOverviewLabel(issues: UnknownRecord[]) {
+  if (!issues.length) return '暂无纳入的风险事项'
+  const highSeverityCount = issues.filter((issue) => ['high', 'critical'].includes(textField(issue, 'severity', 'risk_severity', 'riskSeverity'))).length
+  return `共 ${issues.length} 项${highSeverityCount ? ` · 高/重大 ${highSeverityCount} 项` : ''}`
+}
+
+function reportVersionFallbackSummary(version: unknown, issues = reportVersionIssues(version)) {
+  const snapshot = reportVersionSnapshot(version)
+  const context = asRecord(field(snapshot, 'context'))
+  const changeSummary = snapshotSummaryValue(version)
+    || textField(snapshot, 'executive_summary', 'executiveSummary')
+    || textField(context, 'executive_summary', 'executiveSummary')
+  const issueNames = issues
+    .slice(0, 3)
+    .map((issue) => reportIssueTitle(issue))
+    .join('、')
+  const issueSummary = issues.length
+    ? `本版本纳入 ${issues.length} 个风险事项${issueNames ? `：${issueNames}${issues.length > 3 ? '等' : ''}` : ''}。`
+    : '当前版本已记录风险事项和版本快照。'
+  return [changeSummary, issueSummary].filter(Boolean).join(' ')
+}
+
+function reportVersionMarkdownBlocks(version: unknown): VersionMarkdownBlock[] {
+  const markdown = reportVersionMarkdown(version)
+  if (!markdown) return []
+
+  const blocks: VersionMarkdownBlock[] = []
+  const lines = markdown.split(/\r?\n/)
+  let paragraph: string[] = []
+  let listItems: string[] = []
+  let listOrdered: boolean | null = null
+  let codeLines: string[] = []
+  let inCode = false
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return
+    blocks.push({ type: 'paragraph', text: paragraph.join(' ').trim() })
+    paragraph = []
+  }
+  const flushList = () => {
+    if (!listItems.length) return
+    blocks.push({ type: 'list', ordered: Boolean(listOrdered), items: [...listItems] })
+    listItems = []
+    listOrdered = null
+  }
+  const flushCode = () => {
+    if (!codeLines.length) return
+    blocks.push({ type: 'code', text: codeLines.join('\n') })
+    codeLines = []
+  }
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex].trimEnd()
+    const trimmed = line.trim()
+    if (trimmed.startsWith('```')) {
+      if (inCode) {
+        inCode = false
+        flushCode()
+      } else {
+        flushParagraph()
+        flushList()
+        inCode = true
+        codeLines = []
+      }
+      continue
+    }
+    if (inCode) {
+      codeLines.push(line)
+      continue
+    }
+    if (!trimmed) {
+      flushParagraph()
+      flushList()
+      continue
+    }
+    if (isVersionMarkdownTableLine(trimmed)) {
+      const tableLines = collectVersionMarkdownTableLines(lines, lineIndex)
+      const table = parseVersionMarkdownTable(tableLines)
+      if (table) {
+        flushParagraph()
+        flushList()
+        blocks.push(table)
+        lineIndex += tableLines.length - 1
+        continue
+      }
+    }
+    if (trimmed.startsWith('### ')) {
+      flushParagraph()
+      flushList()
+      blocks.push({ type: 'subheading', text: trimmed.replace(/^###\s+/, '') })
+    } else if (trimmed.startsWith('## ') || trimmed.startsWith('# ')) {
+      flushParagraph()
+      flushList()
+      blocks.push({ type: 'heading', text: trimmed.replace(/^#{1,2}\s+/, '') })
+    } else if (/^[-*]\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed)) {
+      flushParagraph()
+      const ordered = /^\d+\.\s+/.test(trimmed)
+      if (listItems.length && listOrdered !== ordered) flushList()
+      listOrdered = ordered
+      listItems.push(trimmed.replace(/^[-*]\s+/, '').replace(/^\d+\.\s+/, ''))
+    } else {
+      flushList()
+      paragraph.push(trimmed)
+    }
+  }
+  flushParagraph()
+  flushList()
+  if (inCode) flushCode()
+  return blocks.length ? blocks : [{ type: 'paragraph', text: markdown }]
+}
+
+type InlineReportPart = { type: 'text' | 'bold' | 'code'; text: string }
+
+function inlineMarkdownParts(text: string): InlineReportPart[] {
+  const parts: InlineReportPart[] = []
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/g
+  let cursor = 0
+  for (const match of text.matchAll(pattern)) {
+    const index = match.index ?? 0
+    if (index > cursor) parts.push({ type: 'text', text: text.slice(cursor, index) })
+    const raw = match[0]
+    parts.push(raw.startsWith('**')
+      ? { type: 'bold', text: raw.slice(2, -2) }
+      : { type: 'code', text: raw.slice(1, -1) })
+    cursor = index + raw.length
+  }
+  if (cursor < text.length) parts.push({ type: 'text', text: text.slice(cursor) })
+  return parts.length ? parts : [{ type: 'text', text }]
+}
+
+function stripInlineMarkdown(text: string) {
+  return inlineMarkdownParts(text).map((part) => part.text).join('')
+}
+
+function isVersionMarkdownTableLine(line: string) {
+  return line.startsWith('|') && line.endsWith('|')
+}
+
+function collectVersionMarkdownTableLines(lines: string[], start: number) {
+  const tableLines: string[] = []
+  for (let index = start; index < lines.length; index += 1) {
+    const line = lines[index].trim()
+    if (!isVersionMarkdownTableLine(line)) break
+    tableLines.push(line)
+  }
+  return tableLines
+}
+
+function parseVersionMarkdownTable(lines: string[]): Extract<VersionMarkdownBlock, { type: 'table' }> | null {
+  if (lines.length < 2) return null
+  const columns = splitVersionMarkdownTableRow(lines[0])
+  const bodyLines = lines.slice(1).filter((line) => !/^\|\s*[-:|\s]+\s*\|$/.test(line))
+  const rows = bodyLines.map(splitVersionMarkdownTableRow).filter((row) => row.length)
+  if (!columns.length || !rows.length) return null
+  return { type: 'table', columns, rows }
+}
+
+function splitVersionMarkdownTableRow(line: string) {
+  return line.replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim())
+}
+
+function formatTechnicalFields(version: unknown) {
+  const technicalFields = Object.fromEntries(
+    Object.entries(asRecord(version)).filter(([key]) => !['snapshot_json', 'snapshot', 'markdown', 'content_markdown', 'body'].includes(key)),
+  )
+  return Object.keys(technicalFields).length ? formatSnapshot(technicalFields) : '暂无技术字段'
+}
+
+function isTechnicalTraceExpanded(version: unknown) {
+  return expandedTechnicalVersionKeys.value.includes(recordKey(version))
+}
+
+function handleTechnicalTraceChange(version: unknown, activeNames: unknown) {
+  const names = Array.isArray(activeNames) ? activeNames : [activeNames]
+  const key = recordKey(version)
+  const keys = new Set(expandedTechnicalVersionKeys.value)
+  if (names.some((name) => String(name) === 'technical')) keys.add(key)
+  else keys.delete(key)
+  expandedTechnicalVersionKeys.value = [...keys]
 }
 
 function evidenceItems(id: number) {
@@ -1336,6 +1953,11 @@ async function refreshWorkspace() {
   } finally {
     if (domainId.value === id) workspaceLoading.value = false
   }
+}
+
+async function retryPageLoad() {
+  if (domainId.value) return refreshWorkspace()
+  return loadDomains()
 }
 
 async function loadIssueDetail(row: RiskIssue, force = false) {
@@ -1603,6 +2225,7 @@ async function loadReportVersions(row: RiskReport) {
 async function openReportVersions(row: RiskReport) {
   selectedReport.value = row
   reportVersions.value = []
+  expandedTechnicalVersionKeys.value = []
   versionDrawer.value = true
   await loadReportVersions(row)
 }
@@ -1641,6 +2264,13 @@ onMounted(loadDomains)
 
 <style scoped>
 .risk-delivery-page {
+  --risk-ink: #182230;
+  --risk-body: #344054;
+  --risk-muted: #667085;
+  --risk-line: #e4e7ec;
+  --risk-soft: #f7f9fc;
+  --risk-accent: #175cd3;
+  --risk-shadow: 0 8px 22px rgba(16, 24, 40, 0.08);
   width: 100%;
   max-width: var(--wq-page-max-width);
   height: 100%;
@@ -1666,12 +2296,14 @@ onMounted(loadDomains)
 }
 
 .title-group { min-width: 0; }
-.title-group h2 { color: var(--wq-text); font-size: 22px; line-height: 1.25; }
+.title-group h2 { color: var(--wq-text); font-size: 23px; line-height: 1.25; letter-spacing: 0; }
 .title-group p { margin-top: 8px; color: var(--wq-muted); font-size: 14px; }
 .toolbar-actions, .section-toolbar, .section-actions, .detail-heading, .record-line, .version-heading { display: flex; align-items: center; }
 .toolbar-actions { justify-content: flex-end; gap: 8px; }
 .domain-select { width: 230px; }
-.page-error { margin-top: 12px; }
+.page-error-row { display: flex; align-items: stretch; gap: 10px; margin-top: 12px; }
+.page-error { flex: 1; margin-top: 0; }
+.page-retry-button { flex: 0 0 auto; min-width: 72px; }
 
 .metric-strip {
   display: grid;
@@ -1684,10 +2316,12 @@ onMounted(loadDomains)
   overflow: hidden;
 }
 
-.metric-item { position: relative; min-height: 72px; padding: 13px 16px; background: var(--wq-surface); border-top: 3px solid transparent; }
+.metric-item { position: relative; min-height: 76px; padding: 13px 16px; background: var(--wq-surface); border-top: 3px solid transparent; transition: background-color 160ms ease; }
 .metric-item span { display: block; color: var(--wq-muted); font-size: 12px; }
-.metric-item strong { display: block; margin-top: 3px; color: #182230; font-size: 24px; font-weight: 700; }
+.metric-item strong { display: block; margin-top: 3px; color: var(--risk-ink); font-size: 25px; font-weight: 720; line-height: 1.1; }
 .metric-item .el-icon { position: absolute; right: 14px; top: 22px; color: #98a2b3; font-size: 24px; }
+.metric-item.has-value { background: #fcfdff; }
+.metric-item.is-empty strong, .metric-item.is-empty .el-icon { color: #98a2b3; }
 .metric-item.tone-danger { border-top-color: #f04438; }
 .metric-item.tone-danger strong, .metric-item.tone-danger .el-icon { color: #b42318; }
 .metric-item.tone-warning { border-top-color: #f79009; }
@@ -1702,6 +2336,9 @@ onMounted(loadDomains)
 .workspace-tabs :deep(.el-tabs__header) { margin: 0; }
 .workspace-tabs :deep(.el-tabs__content) { min-width: 0; height: calc(100% - 40px); }
 .workspace-tabs :deep(.el-tab-pane) { min-width: 0; height: 100%; }
+.workspace-tabs :deep(.el-tabs__item) { height: 42px; color: #475467; font-weight: 600; }
+.workspace-tabs :deep(.el-tabs__item.is-active) { color: var(--risk-accent); }
+.workspace-tabs :deep(.el-tabs__active-bar) { height: 2px; }
 
 .table-section {
   height: 100%;
@@ -1715,22 +2352,33 @@ onMounted(loadDomains)
 .table-section:not(:has(.section-error)):not(:has(.audit-result)) { grid-template-rows: auto minmax(0, 1fr); }
 .audit-section:has(.audit-result):not(:has(.section-error)) { grid-template-rows: auto auto minmax(0, 1fr); }
 .audit-section:has(.audit-result):has(.section-error) { grid-template-rows: auto auto auto minmax(0, 1fr); }
-.section-toolbar { min-height: 58px; justify-content: space-between; gap: 14px; padding: 0 2px; border-bottom: 1px solid var(--wq-border); }
-.section-heading { display: flex; align-items: baseline; gap: 8px; }
-.section-heading strong { color: #182230; font-size: 15px; }
-.section-heading span { color: var(--wq-muted); font-size: 12px; }
+.section-toolbar { min-height: 66px; justify-content: space-between; gap: 18px; padding: 0 2px; border-bottom: 1px solid var(--wq-border); }
+.section-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.section-heading-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.section-heading strong { color: var(--risk-ink); font-size: 15px; }
+.section-heading span { color: var(--wq-muted); font-size: 11px; line-height: 1.45; }
+.section-heading em { display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px; color: #475467; background: var(--risk-soft); border: 1px solid #d0d5dd; border-radius: 5px; font-size: 11px; font-style: normal; white-space: nowrap; }
 .section-actions { justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.filter-group { padding: 5px; background: var(--risk-soft); border: 1px solid var(--risk-line); border-radius: 7px; }
 .filter-select { width: 138px; }
 .section-error, .audit-result { margin: 10px 0; }
 .workbench-table { width: 100%; min-height: 0; height: 100%; }
+.workbench-table :deep(.el-table__header-wrapper th.el-table__cell) { height: 42px; color: #475467; background: #f8fafc; border-bottom-color: #dfe4ec; font-size: 12px; font-weight: 700; }
+.workbench-table :deep(.el-table__body-wrapper td.el-table__cell) { min-height: 72px; border-bottom-color: #eaecf0; }
+.workbench-table :deep(.el-table__body tr > td.el-table__cell) { transition: background-color 160ms ease, box-shadow 160ms ease; }
+.workbench-table :deep(.el-table__body tr:last-child > td.el-table__cell) { border-bottom: 0; }
 .workbench-table :deep(.el-table__body tr.severity-critical > td.el-table__cell) { background: #fffafa; }
 .workbench-table :deep(.el-table__body tr.severity-high > td.el-table__cell) { background: #fffdf5; }
 .risk-issues-table :deep(.el-table__body tr) { cursor: pointer; }
-.risk-issues-table :deep(.el-table__body tr > td.el-table__cell) { transition: background-color 140ms ease; }
-.risk-issues-table :deep(.el-table__body tr:hover > td.el-table__cell) { background: #eff8ff; }
+.risk-issues-table :deep(.el-table__body tr:hover > td.el-table__cell), .report-table :deep(.el-table__body tr:hover > td.el-table__cell) { background: #eff8ff; box-shadow: inset 0 1px 0 #b2ddff, inset 0 -1px 0 #b2ddff; }
+.risk-issues-table :deep(.el-table__body tr:active > td.el-table__cell), .report-table :deep(.el-table__body tr:active > td.el-table__cell) { background: #e0f2fe; }
+.report-table :deep(.el-table__body tr) { cursor: pointer; }
+.report-table :deep(.el-table__body tr.is-finalized) { background: #fbfefc; }
+.report-table :deep(.el-table__body tr.is-editable) { background: #fcfdff; }
+.audit-table :deep(.el-table__body tr:hover > td.el-table__cell) { background: #f8fafc; }
 
 .primary-cell, .secondary-cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.primary-cell strong { color: #182230; font-weight: 650; line-height: 1.45; }
+.primary-cell strong { color: var(--risk-ink); font-weight: 680; line-height: 1.45; }
 .secondary-cell span { color: #475467; }
 .primary-meta { display: flex; align-items: center; min-width: 0; }
 code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
@@ -1782,15 +2430,18 @@ code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospa
 .table-action-btn.is-finalize { color: #067647; background: #ecfdf3; }
 .table-action-btn.is-finalize:hover { color: #05603a; background: #d1fadf; }
 .table-action-btn.is-view { color: #475467; background: #f2f4f7; }
+.table-empty { display: flex; min-height: 240px; align-items: center; justify-content: center; }
+.table-empty :deep(.el-empty) { padding: 28px 0; }
+.empty-note { display: block; max-width: 360px; color: #98a2b3; font-size: 12px; line-height: 1.6; }
 
 .risk-detail-drawer { min-height: 260px; padding-bottom: 20px; }
-.risk-detail-overview { padding: 2px 0 20px; border-bottom: 1px solid var(--wq-border); }
+.risk-detail-overview { padding: 2px 0 22px; border-bottom: 1px solid var(--wq-border); }
 .risk-detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .risk-detail-heading .risk-title-cell { flex: 1; min-width: 0; }
 .risk-detail-heading .risk-title-cell strong { display: block; color: #182230; font-size: 17px; line-height: 1.45; }
 .risk-detail-heading .risk-title-cell code { display: block; margin-top: 4px; }
 .risk-detail-tags { display: flex; flex: 0 0 auto; gap: 6px; }
-.risk-detail-description { margin: 14px 0 0; color: #475467; font-size: 13px; line-height: 1.7; }
+.risk-detail-description { margin: 14px 0 0; padding: 11px 12px; color: #475467; background: #f8fafc; border-left: 3px solid #b2ddff; font-size: 13px; line-height: 1.7; }
 .risk-detail-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; margin-top: 18px; border-top: 1px solid #eaecf0; border-left: 1px solid #eaecf0; }
 .risk-detail-facts > div { min-width: 0; padding: 10px 12px; border-right: 1px solid #eaecf0; border-bottom: 1px solid #eaecf0; }
 .risk-detail-facts dt { color: #98a2b3; font-size: 11px; }
@@ -1802,11 +2453,15 @@ code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospa
 .detail-heading > div { display: flex; align-items: baseline; gap: 7px; }
 .detail-heading strong { color: #182230; font-size: 14px; }
 .detail-heading span { color: #667085; font-size: 12px; }
+.detail-heading > div > strong { letter-spacing: 0; }
 .detail-action { font-weight: 600; }
 .detail-action.is-evidence { --el-button-text-color: #027a48; --el-button-bg-color: #ecfdf3; --el-button-border-color: #abefc6; --el-button-hover-text-color: #05603a; --el-button-hover-bg-color: #d1fadf; }
 .detail-action.is-review { --el-button-text-color: #175cd3; --el-button-bg-color: #eff8ff; --el-button-border-color: #b2ddff; --el-button-hover-text-color: #004eeb; --el-button-hover-bg-color: #d1e9ff; }
 .detail-list { min-width: 0; margin-top: 8px; border-top: 1px solid #dfe4ec; }
-.detail-record { min-width: 0; padding: 13px 0; border-bottom: 1px solid #dfe4ec; }
+.detail-record { min-width: 0; padding: 14px 12px; border-bottom: 1px solid #dfe4ec; background: #fcfdff; }
+.detail-record:first-child { border-top: 1px solid #dfe4ec; }
+.evidence-record { border-left: 3px solid #12b76a; }
+.review-record { border-left: 3px solid #f79009; }
 .record-line { justify-content: space-between; gap: 10px; }
 .record-line strong { color: #344054; font-size: 13px; }
 .detail-record p { margin: 5px 0; color: #667085; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
@@ -1846,6 +2501,51 @@ code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospa
 .version-heading > div { display: flex; align-items: center; gap: 8px; }
 .version-heading > div strong { font-size: 18px; }
 .version-heading > span { color: var(--wq-muted); font-size: 12px; }
+.report-reading-panel { margin-top: 14px; padding: 14px; background: #fcfdff; border: 1px solid #dfe4ec; border-radius: 8px; }
+.report-reading-kicker { color: var(--risk-accent); font-size: 11px; font-weight: 750; letter-spacing: .04em; }
+.report-overview-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin-top: 10px; background: var(--wq-border); border: 1px solid var(--wq-border); border-radius: 6px; overflow: hidden; }
+.report-overview-grid > div { min-width: 0; padding: 10px 11px; background: #fff; }
+.report-overview-grid span, .report-issue-facts span { display: block; color: #98a2b3; font-size: 11px; line-height: 1.45; }
+.report-overview-grid strong { display: block; margin-top: 3px; color: var(--risk-ink); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.report-overview-section { padding-top: 14px; }
+.version-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.version-section-heading h4 { margin: 0; color: #344054; font-size: 14px; }
+.version-section-heading span { color: #98a2b3; font-size: 11px; line-height: 1.5; text-align: right; }
+.report-issue-list { display: grid; gap: 9px; margin-top: 9px; }
+.report-issue-summary { min-width: 0; padding: 11px 12px; background: #fff; border: 1px solid #eaecf0; border-left: 3px solid #f79009; border-radius: 6px; }
+.report-issue-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.report-issue-heading > strong { min-width: 0; color: #182230; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.report-issue-tags { display: flex; flex: 0 0 auto; justify-content: flex-end; gap: 5px; flex-wrap: wrap; }
+.snapshot-source-tag { font-weight: 650; }
+.report-issue-snapshot-note { margin: 8px 0 0; padding: 7px 9px; color: #b54708; background: #fffaeb; border-left: 3px solid #fdb022; font-size: 11px; line-height: 1.55; }
+.report-issue-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin-top: 9px; padding-top: 9px; border-top: 1px solid #f0f2f5; }
+.report-issue-facts > div { min-width: 0; }
+.report-issue-facts strong { display: block; margin-top: 2px; color: #475467; font-size: 12px; font-weight: 600; line-height: 1.55; overflow-wrap: anywhere; }
+.version-empty-copy { margin: 9px 0 0; color: #667085; font-size: 13px; line-height: 1.75; }
+.report-body-section { padding: 16px 0 0; }
+.report-markdown-body { margin-top: 10px; }
+.report-md-block + .report-md-block { margin-top: 11px; }
+.report-md-heading h2 { margin: 0; padding-top: 4px; color: var(--risk-accent); font-size: 17px; line-height: 1.5; }
+.report-md-subheading h3 { margin: 0; color: #344054; font-size: 14px; line-height: 1.5; }
+.report-md-paragraph p { margin: 0; color: #344054; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.report-md-paragraph code, .report-md-list code, .report-md-table code { padding: 1px 4px; color: #175cd3; background: #eff8ff; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.report-md-list { color: #344054; font-size: 13px; line-height: 1.8; }
+.report-md-list ul, .report-md-list ol { margin: 0; padding-left: 21px; }
+.report-md-list ul { list-style: disc; }
+.report-md-list ol { list-style: decimal; }
+.report-md-list li + li { margin-top: 3px; }
+.report-md-code pre { margin: 0; padding: 10px 12px; overflow: auto; color: #344054; background: #f8fafc; border: 1px solid #eaecf0; border-left: 3px solid #84adff; border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.report-md-code code { color: #475467; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.65; }
+.report-data-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid #eaecf0; border-radius: 5px; }
+.report-data-table { width: 100%; min-width: 420px; border-collapse: collapse; color: #344054; font-size: 12px; }
+.report-data-table th { color: #475467; background: #f8fafc; font-weight: 700; text-align: left; }
+.report-data-table th, .report-data-table td { padding: 8px 10px; border-bottom: 1px solid #eaecf0; vertical-align: top; line-height: 1.55; }
+.report-data-table tr:last-child td { border-bottom: 0; }
+.technical-trace-collapse { margin-top: 13px; border-top: 1px solid #eaecf0; border-bottom: 1px solid #eaecf0; }
+.technical-trace-collapse :deep(.el-collapse-item__header) { height: 42px; color: #667085; font-size: 12px; font-weight: 650; }
+.technical-trace-collapse :deep(.el-collapse-item__wrap) { border-bottom: 0; }
+.technical-trace-collapse :deep(.el-collapse-item__content) { padding-bottom: 12px; }
+.technical-section { padding-top: 11px; }
 .version-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin: 14px 0; background: var(--wq-border); border: 1px solid var(--wq-border); border-radius: 6px; overflow: hidden; }
 .version-meta > div { min-width: 0; padding: 9px 10px; background: #f8fafc; }
 .version-meta dt { color: var(--wq-muted); font-size: 11px; }
@@ -1854,6 +2554,7 @@ code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospa
 .version-section h4 { margin: 0 0 6px; color: #344054; font-size: 13px; }
 .version-section p, .version-section pre { margin: 0; color: #475467; font-size: 13px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .version-section pre { padding: 10px; background: #f8fafc; border-left: 3px solid #84adff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.form-help { margin: 5px 0 0; color: #98a2b3; font-size: 11px; line-height: 1.5; }
 
 @media (max-width: 1100px) {
   .page-toolbar { align-items: flex-start; }
@@ -1865,19 +2566,31 @@ code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospa
 
 @media (max-width: 760px) {
   .risk-delivery-page { height: auto; min-height: 100%; padding-inline: 16px; padding-bottom: 16px; overflow: auto; }
+  .page-error-row { flex-direction: column; }
   .page-toolbar { flex-direction: column; align-items: stretch; }
   .toolbar-actions { justify-content: flex-start; }
   .domain-select { width: min(100%, 320px); }
   .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .workspace-tabs { min-height: 680px; }
   .section-toolbar { align-items: flex-start; flex-direction: column; padding: 10px 0; }
+  .section-heading { width: 100%; justify-content: space-between; }
   .section-actions { width: 100%; max-width: none; justify-content: flex-start; }
-  .filter-select { width: calc(50% - 4px); }
+  .filter-group { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .filter-select { width: auto; min-width: 0; }
+  .section-actions > .el-button { width: 100%; }
+  .table-section { overflow: auto; }
+  .workbench-table { min-width: 920px; }
+  .report-table { min-width: 980px; }
+  .audit-table { min-width: 940px; }
   .evidence-summary { grid-template-columns: 1fr; }
   .evidence-summary-item { max-width: 100%; padding-left: 0; border-left: 0; }
   .risk-detail-facts { grid-template-columns: 1fr; }
   .risk-detail-heading { flex-direction: column; }
   .form-grid.two, .form-grid.three { grid-template-columns: 1fr; }
+  .report-overview-grid, .report-issue-facts { grid-template-columns: 1fr; }
+  .report-issue-heading, .version-section-heading { flex-direction: column; align-items: flex-start; }
+  .version-section-heading span { text-align: left; }
   .version-meta { grid-template-columns: 1fr; }
+  :deep(.risk-detail-panel), :deep(.version-drawer-panel) { width: 100% !important; }
 }
 </style>
