@@ -57,7 +57,7 @@ async def list_all_domains(_: PublicUser = Depends(require_admin)):
 
 @router.post("/domains")
 async def upsert_domain(payload: SemanticDomain, _: PublicUser = Depends(require_admin)):
-    """创建或更新企业业务领域。同一企业空间内 domain_key 唯一。"""
+    """创建或更新公司内部业务领域；domain_key 在当前单公司模型库内唯一。"""
     svc = get_semantic_runtime_service()
     try:
         domain_id = await svc.upsert_domain(

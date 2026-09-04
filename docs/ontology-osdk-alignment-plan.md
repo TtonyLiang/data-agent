@@ -1,14 +1,16 @@
-# DataQueryAgent Ontology / OSDK 对齐与增量改造计划
+# 问渠 WenQu Ontology / OSDK 对齐与增量改造计划
 
-> 文档基准日期：2026-09-03
+> 文档基准日期：2026-09-04
 >
 > 文档状态：增量开发中的架构与功能计划；作为当前实现和后续验收基线
 >
-> 当前范围：L0 Enterprise Space / Business Domain、L1 Enterprise Model、L2 Semantic Mapping / Twin Runtime、L3 Query / Decision / Action Capability
+> 当前范围：L0 Company Internal Governance / Business Domain、L1 Enterprise Model、L2 Semantic Mapping / Twin Runtime、L3 Query / Decision / Action Capability
 >
 > 后续范围：L4 MCP Hub、L5 Governance
 
-本文把“企业业务理解和数据转化为 AI 可消费底座”的目标，与 Palantir 官方 Ontology SDK（OSDK）的职责边界进行对照，并落实为 `dataqueryAgent` 的增量改造计划。平台定位是 Ontology 驱动的企业运营数字孪生与智能决策平台；财税、贷款和智能问数是垂直验证场景。
+> 作用域说明：本文是 OSDK/能力契约的技术附录。平台方向、阶段状态、优先级和最终验收以 [Ontology 产品路线图](./ontology-product-roadmap.md) 为准；本文的 P0–P4 只说明技术拆解，不单独维护进度。
+
+本文把“公司业务理解和数据转化为 AI 可消费底座”的目标，与 Palantir 官方 Ontology SDK（OSDK）的职责边界进行对照，并落实为 `dataqueryAgent` 的增量改造计划。平台定位是公司内部使用的 Ontology 驱动企业运营数字孪生与智能决策平台；财税、贷款和智能问数是垂直验证场景。
 
 本文采用的官方参考：
 
@@ -22,14 +24,14 @@
 
 ### 1.1 总体判断
 
-本项目不需要推翻已有问数、SQL 编译、报告和 Ontology 业务功能。改造采用增量方式：先把企业模型、孪生运行时和能力发布中心做扎实，再让不同垂直 Agent 按授权消费这些能力。
+本项目不需要推翻已有问数、SQL 编译、报告和 Ontology 业务功能。改造采用增量方式：先把企业模型、孪生运行时和能力发布中心做扎实，再让内置验证 Agent 和外部第三方 Agent 按统一契约消费这些能力。
 
 ```text
 保留现有：
 前端、对话、LLM、LangGraph、LogicForm、确定性 SQL 编译、SQL 安全、权限、脱敏、报告
 
 新增或重组：
-企业空间/业务领域 → 统一企业模型 → 语义映射/孪生状态 → 能力契约 → 现有执行器
+公司内部治理/业务领域 → 统一企业模型 → 语义映射/孪生状态 → 能力契约 → 现有执行器
 
 后续扩展：
 Decision Capability、持续孪生、统一能力出口、完整人工确认、影子运行、灰度发布和治理
@@ -39,12 +41,12 @@ Decision Capability、持续孪生、统一能力出口、完整人工确认、�
 
 | 本项目概念 | 对齐后的职责 |
 |---|---|
-| Enterprise Space | 企业资产、安全和治理的顶层归属，不由 Agent 替代 |
+| Company Internal Governance | 公司内部用户、角色、数据和业务领域的治理边界；不扩展为多租户 |
 | Business Domain | 可独立建模、映射、发布和复用的业务范围 |
 | Enterprise Model / Ontology Model | 定义对象、属性、关系、事件、状态、指标、规则和行为契约 |
 | Semantic Mapping | 把标准语义绑定到现有表、字段、编码、指标和查询路径 |
 | Twin Runtime | 把源数据转换为有身份、有状态、有来源的对象实例并持续更新 |
-| Generated OSDK / Typed Client | 面向应用和 Agent 的类型化访问层；不是对象建模层 |
+| Generated OSDK / Typed Client | 面向第三方 Agent 和业务应用的类型化访问层；不是对象建模层 |
 | Query Capability | 校验并执行只读查询、过滤、关联、聚合和指标计算 |
 | Decision Capability | 基于受控规则或模型返回判断、原因、置信度和建议，不直接等同于写操作 |
 | Action Capability | 创建、修改、审批等有业务副作用的写入操作 |
@@ -55,13 +57,13 @@ Decision Capability、持续孪生、统一能力出口、完整人工确认、�
 
 当前 `dataqueryAgent` 的优先级是：
 
-1. 把企业模型从 Agent 私有配置调整为企业空间/业务领域资产，Agent 通过多对多关系消费。
+1. 把企业模型从 Agent 私有配置调整为公司内部业务领域资产，Agent 仅通过消费绑定访问。
 2. 把查询语义和 Ontology 对象建立稳定关联，并在产品上统一为企业模型中心。
 3. 将现有对象同步演进为可观测、可增量、可追溯的孪生运行时。
 4. 把已有 LogicForm / 确定性 SQL 编译提升为标准 Query Capability，并保留 Action 的写入边界。
-5. 逐步建设 Decision Capability 和统一发布治理，让外部 Agent 先选择标准业务能力，再调用现有执行器。
+5. 逐步建设 Decision Capability 和统一发布治理，让外部 Agent 直接选择标准业务能力，再调用现有执行器，不要求先创建本项目 Agent。
 
-P0 只提供默认企业空间、领域归属、Agent-领域多对多和三个统一页面入口；它不是完整多租户、CDC 或生产级能力网关。
+P0 只提供公司内部业务领域归属、内置验证 Agent 兼容绑定和三个统一页面入口；它不是多租户体系、CDC 或生产级能力网关。
 
 ### 1.4 当前第一版 Query Capability 执行口径
 
@@ -80,7 +82,7 @@ capability key + 业务参数
 
 - 沿用现有 SQL 安全校验、数据源/表列权限和结果脱敏，不另起一套安全链路。
 - 只允许受控的单条只读查询；Query Capability 不调用 `execute_action()`，也不写入对象或外部系统。
-- 独立 Query Capability API 要求当前语义域的 `datasource_id` 非空且数据源属于该域所属 Agent；缺失时返回 400，跨 Agent 时返回 403，避免回退到默认 `business DB`。
+- 当前独立 Query Capability 仍通过内置验证 Agent 做 `datasource_id` 兼容校验；正式第三方调用应改为 `domain_id + release_id + caller context`，不要求外部调用方创建内部 Agent。
 - `execution.status` 取 `validation_blocked`、`security_blocked`、`permission_blocked`、`database_error` 或 `succeeded`；校验阻断时 `attempted=false`，进入 SQL 执行节点后 `attempted=true`，只有 `succeeded` 才设置 `executed=true`。
 - 结果返回 `executed_sql`（SQL 执行节点规范化后的实际语句；未实际执行或失败时可能为空）和 `execution_trace`，其中保留服务端 `trace_id`、`domain_id`、`datasource_id`、Query Capability 及 Ontology `release`。
 - 现有 Chat 图的 SQL 确认开关和 HITL 门禁继续保留；独立 `ontology_query_capability` 第一版不进入该确认门禁，而是按简化流程直接执行只读 SQL。本版本不新增完整的 capability 级人工确认、影子运行或发布治理。
@@ -112,7 +114,7 @@ L1-L3 阶段先承诺可验证的只读问数收益：
 查询结果能够解释来源和使用的语义资产
 ```
 
-L4-L5 的多 Agent 统一调用、集中审计、版本治理和持续发布属于后续收益，不作为当前第一阶段的交付承诺。
+L4-L5 的跨应用统一调用、集中审计、版本治理和持续发布属于后续收益，不作为当前第一阶段的交付承诺。
 
 ### 2.3 建议的业务验收指标
 
@@ -143,7 +145,7 @@ Ontology Model
              ↓
 Typed Capability Facade（本项目的 OSDK-like 适配层）
              ↓
-DataQueryAgent / Report / Risk Workflow
+内置验证 Agent / Report / Risk Workflow / 外部 Agent
 ```
 
 本项目现有的 `app/models/ontology.py` 和 `app/services/ontology_service.py` 已经承担了部分 Ontology Model 与运行时职责；它们不需要被 OSDK 概念替换。
@@ -164,7 +166,7 @@ DataQueryAgent / Report / Risk Workflow
 
 ### 3.3 Semantic Mapping 不是大模型临时猜字段
 
-语义映射的作用是预先声明：标准对象、属性、指标和关系如何落到物理数据。运行时 Agent 应消费已经定义的映射和能力，不应每次根据问题临时猜表名、字段名或 JOIN 路径。
+语义映射的作用是预先声明：标准对象、属性、指标和关系如何落到物理数据。运行时的内置验证 Agent 或外部 Agent 都应消费已经定义的映射和能力，不应每次根据问题临时猜表名、字段名或 JOIN 路径。
 
 本项目现有的 `semantic_mapping`、`semantic_relation`、`semantic_metric` 和已采集 schema 已经具备这类基础能力，但目前它们与 Ontology 对象类型之间仍是松散并列关系，需要增加稳定的桥接语义。
 
@@ -182,8 +184,8 @@ DataQueryAgent / Report / Risk Workflow
 | 关系类型和关系实例 | `ontology_link_type`、`ontology_link` | L1/L2 | 已有关系模型与实例 |
 | 动作类型和动作执行 | `ontology_action_type`、`execute_action()` | L3 Action | 已有写入原型，边界较清晰 |
 | 发布快照 | `ontology_release`、`publish_domain()` | L5 前置能力 | 已有原型，运行绑定仍需完善 |
-| Agent 本体上下文 | `build_agent_context()`、`ontology_evidence.py` | Agent 适配 | 已有上下文压缩和召回 |
-| Agent 工具 | `app/agent/ontology_tools.py` | L3/L4 前置 | 已有对象查询、只读 Query Capability 和 Action 工具 |
+| 内置验证 Agent 本体上下文 | `build_agent_context()`、`ontology_evidence.py` | Agent 适配 | 已有上下文压缩和召回；仅作为参考客户端 |
+| Agent/应用能力工具 | `app/agent/ontology_tools.py` | L3/L4 前置 | 已有对象查询、只读 Query Capability 和 Action 工具，后续抽离调用方身份 |
 | Schema 召回 | `app/agent/nodes/schema_recall.py` | L2 适配 | 仍以物理 schema 召回为主 |
 | 持久任务和动作路由 | `app/agent/graph.py`、`app/agent/react.py` | 横向运行时 | 可继续复用 |
 
@@ -377,12 +379,12 @@ ActionCapabilityExecutor
 | 功能点 | 现有复用 | 增量工作 | 验收标准 |
 |---|---|---|---|
 | Query Capability 契约 | `LogicForm`、`LogicFormTemplate`、`SemanticMetric` | 定义 capability key、目标对象、支持指标/维度、输入槽位、输出结构和执行策略 | 每个高频查询都有稳定 capability key |
-| 查询能力注册表 | 现有语义领域资产 | 第一版可从现有模板和指标组合生成内存注册表，暂不强制新增数据库表 | Agent 能按 capability key 找到可执行查询 |
+| 查询能力注册表 | 现有语义领域资产 | 第一版可从现有模板和指标组合生成内存注册表，暂不强制新增数据库表 | 内置或外部 Agent 能按 capability key 找到可执行查询 |
 | Query Capability 执行器 | `compile_logic_form()`、`lf_to_sql_compile_node`、`sql_execute_node` | 增加 facade，统一调用 capability/LogicForm 校验、确定性编译和现有简化只读执行链路 | 成功调用返回真实只读结果和 `executed=true`；阻断或失败返回明确状态，且不改变既有 SQL 安全、权限和脱敏行为 |
 | 只读查询工具 | `ontology_query_objects`、现有 SQL 执行流程 | 新增独立的 `ontology_query_capability` 执行入口；对象实例查询工具继续保留 | Query 工具校验通过后执行只读 SQL，不能修改对象，未知参数被拒绝 |
 | 结果契约 | `CompiledQuery`、`execution_trace` | 增加 capability、对象、指标、来源、口径和 warnings 字段 | 前端和审计可以解释一次查询用了什么能力 |
 
-### 7.3 P4：让 Agent 按语义消费能力
+### 7.3 内置/外部 Agent 按语义消费能力
 
 | 功能点 | 现有复用 | 增量工作 | 验收标准 |
 |---|---|---|---|
@@ -392,7 +394,7 @@ ActionCapabilityExecutor
 | 语义校验扩展 | `validate_logic_form()` | 校验对象范围、指标支持的维度、关系路径和 capability 参数 | 不支持的组合在 SQL 执行前被阻断 |
 | 旧链路兜底 | `nl2sql_fallback.py` | 明确只有语义未命中或编译失败才进入兜底，并记录原因 | 新链路失败不影响现有可用问数能力 |
 
-### 7.4 P1：把 L2 映射从“召回提示”提升为“执行依据”
+### 7.4 L2 映射治理：从召回提示到执行依据
 
 | 功能点 | 现有复用 | 增量工作 | 验收标准 |
 |---|---|---|---|
@@ -402,7 +404,7 @@ ActionCapabilityExecutor
 | Schema 召回定位 | `schema_recall.py` | Ontology/mapping 命中优先，文本 schema 召回作为补充和验证 | 本体已明确映射时不因表名相似度被替换 |
 | 数据质量提示 | `schema_scope`、执行 trace | 记录缺失映射、字段冲突、无数据和过期信息 | 用户看到可理解的限制说明，不是裸 SQL 错误 |
 
-### 7.5 P3：统一 Agent 工具和应用访问层
+### 7.5 能力发布与应用访问层
 
 `ontology_query_capability` 的最小可执行闭环已经具备；应用访问层标准化、扩展错误模型和跨应用复用归入 P3。
 
@@ -412,12 +414,12 @@ ActionCapabilityExecutor
 | `ontology_query_objects` | 保留为对象实例搜索工具，不承担指标查询 |
 | `ontology_execute_action` | 保留为写入 Action 工具，权限、审批和版本校验不交给模型 |
 | `agent-context` 扩展 | 同时返回 object types、link types、query capabilities 和按角色过滤的 actions |
-| Typed facade | 为 Chat、Agent、报告和风险流程提供统一调用入口 |
+| Typed facade | 为内置验证 Agent、外部 Agent、报告和风险流程提供统一调用入口 |
 | 统一错误模型 | 区分语义不匹配、无数据、权限不足、参数错误、执行失败和系统错误 |
 
-独立 Query Capability API 在进入工具执行前校验 `datasource_id` 非空且属于当前领域所属 Agent；执行结果使用 `validation_blocked`、`security_blocked`、`permission_blocked`、`database_error` 和 `succeeded` 区分阶段，成功时才返回 `executed=true`，并保留 `executed_sql`、`trace_id`、领域/数据源及 Ontology `release` 信息。
+独立 Query Capability API 在进入工具执行前校验 `datasource_id` 非空，并通过当前兼容层确认数据边界；执行结果使用 `validation_blocked`、`security_blocked`、`permission_blocked`、`database_error` 和 `succeeded` 区分阶段，成功时才返回 `executed=true`，并保留 `executed_sql`、`trace_id`、领域/数据源及 Ontology `release` 信息。正式外部调用应逐步改为调用方上下文授权。
 
-### 7.6 P4：影子运行和切流控制
+### 7.6 影子运行和切流控制
 
 这是第一版执行闭环稳定后的后续控制能力，不是当前 Query Capability 能否执行的前置条件：
 
@@ -425,10 +427,10 @@ ActionCapabilityExecutor
 - 比较对象、指标、维度、过滤、SQL、结果摘要和执行耗时。
 - 记录差异原因，而不是只记录成功或失败。
 - 先对低风险只读问题开启新路径。
-- 提供按 Agent、语义域和 capability 的开关。
+- 提供按验证客户端、语义域和 capability 的开关。
 - 保留旧路径回退，直到新路径达到验收指标。
 
-### 7.7 P1-P4：测试和评估
+### 7.7 测试和评估
 
 新增一组以业务问题为中心的语义测试集，每条测试至少包含：
 
@@ -454,7 +456,7 @@ ActionCapabilityExecutor
 - Action Capability 是否仍通过角色、审批和版本校验。
 - 新旧路径结果差异是否可解释。
 
-### 7.8 P3：写入 Action 扩展
+### 7.8 写入 Action 扩展
 
 已有 Action 原型不需要在第一轮重写。后续只做边界增强：
 
@@ -466,12 +468,12 @@ ActionCapabilityExecutor
 
 ## 8. 分阶段开发计划
 
-### P0：资产主从关系与统一入口
+### P0：企业模型与统一入口
 
-状态：2026-09-03 第一版兼容骨架已实现。
+状态：2026-09-04 第一版兼容骨架已实现。
 
-- 建立默认企业空间和业务领域归属。
-- 将 Agent 与领域调整为多对多消费关系，同时保留旧默认领域兼容。
+- 以业务领域作为公司内部模型边界，保留旧兼容容器字段。
+- 保留内置验证 Agent 与领域的消费绑定，逐步降低对 Agent 的运行时依赖。
 - 在产品上提供企业模型、孪生运行和能力发布中心入口。
 - 复用已有对象同步和能力 API，不把页面入口描述为生产级运行时或网关。
 
@@ -502,30 +504,30 @@ ActionCapabilityExecutor
 - 收敛 Action Capability 的审批、幂等、外部写回、重试和补偿。
 - 统一输入输出 Schema、错误、权限、调用审计、限流和运行指标。
 
-完成标准：外部 Agent/应用可以按领域、版本和权限稳定调用 Query / Decision / Action，越权和失败均在服务层阻断并留痕。
+完成标准：外部 Agent/应用不创建内部 Agent 即可按领域、版本和调用方权限稳定调用 Query / Decision / Action，越权和失败均在服务层阻断并留痕。
 
-### P4：垂直 Agent 与业务验证
+### P4：第三方 Agent 与业务验证
 
-- Agent 只组合和消费已发布能力，不复制企业模型或直接猜物理字段。
-- 先保持现有对话体验够演示，再用真实业务问题做影子运行。
+- 内置验证 Agent 和第三方 Agent 都只组合和消费已发布能力，不复制企业模型或直接猜物理字段。
+- 先保持现有对话体验够调试，再用真实业务问题做影子运行。
 - 比较系统与人工结果，记录差异、证据、处理动作和最终反馈。
 
 完成标准：至少一个真实领域量化证明准确率、效率和可追溯性改善，再决定扩大 Agent 和场景范围。
 
 ## 9. 当前代码入口与下一步边界
 
-P0 已按兼容方式增加以下入口，不推翻原有 SQL、报告和 Agent 运行链路：
+P0 已按兼容方式增加以下入口，不推翻原有 SQL、报告和内置验证 Agent 运行链路：
 
 | 模块 | 当前作用 |
 |---|---|
-| `enterprise_workspace` / `/api/workspaces` | 默认企业空间与领域列表 |
-| `semantic_domain.workspace_id` | 业务领域归属 |
-| `agent_semantic_domain` / `/api/agent/{agent_id}/domain-ids` | Agent-领域多对多消费关系和默认领域兼容 |
+| `enterprise_workspace` / `/api/workspaces` | 单公司内部历史兼容容器，不是产品入口 |
+| `semantic_domain` | 公司内部业务领域和模型边界 |
+| `agent_semantic_domain` / `/api/agent/{agent_id}/domain-ids` | 内置验证 Agent 的消费绑定和默认领域兼容 |
 | `/enterprise-model` | 查询语义与 Ontology 的统一产品入口 |
 | `/twin-runtime` | 复用现有对象实例和手动分页同步能力 |
 | `/capability-center` | 聚合已有对象查询、Query Capability 和 Action 工具 |
 
-P1-P3 的开发应继续复用现有 `SemanticRuntimeService`、Ontology 服务、LogicForm/确定性 SQL、权限脱敏和 Action 执行器，重点新增发布治理、持续数据运行和稳定能力契约。近期明确不做复杂组织树、通用多 Agent 编排、长期记忆或大规模对话体验重构。
+P1-P3 的开发应继续复用现有 `SemanticRuntimeService`、Ontology 服务、LogicForm/确定性 SQL、权限脱敏和 Action 执行器，重点新增与 Agent 无关的能力契约、调用方授权、发布治理和持续数据运行。近期明确不做多企业空间、租户、复杂多 Agent 编排、长期记忆或大规模对话体验重构。
 
 ## 10. 后续能力验收清单
 
@@ -580,4 +582,4 @@ P1-P3 的开发应继续复用现有 `SemanticRuntimeService`、Ontology 服务�
 
 对外和对内统一使用以下表述：
 
-> `dataqueryAgent` 是 Ontology 驱动的企业运营数字孪生与智能决策平台。平台以企业空间和业务领域管理企业模型与数据资产，通过孪生运行时维护业务对象状态，再以 Query / Decision / Action Capability 向不同垂直 Agent 和应用提供可复用、可治理、可追溯的标准能力。当前已具备建模、问数、对象查询、第一版 Query Capability、Action 和审计技术基础；持续增量同步、身份解析、正式能力发布治理和通用 Decision Capability 按 P1-P3 逐步补齐。
+> `dataqueryAgent` 是公司内部使用的 Ontology 驱动企业运营数字孪生与智能决策平台。平台以业务领域管理企业模型与数据资产，通过孪生运行时维护业务对象状态，再以 Query / Decision / Action Capability 向本项目验证 Agent、第三方 Agent 和业务应用提供可复用、可治理、可追溯的标准能力。当前已具备建模、问数、对象查询、第一版 Query Capability、Action 和审计技术基础；持续增量同步、身份解析、正式能力发布治理和通用 Decision Capability 按 P1-P3 逐步补齐。

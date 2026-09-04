@@ -113,17 +113,17 @@ CREATE TABLE IF NOT EXISTS meta_column (
     INDEX idx_table_id (table_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='元数据-字段';
 
--- 企业空间: 当前阶段仅作为领域/本体资产的逻辑容器，不承担完整多租户隔离
+-- 单公司内部模型根容器: 仅为历史兼容保留，不承担多租户/多企业能力
 CREATE TABLE IF NOT EXISTS enterprise_workspace (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    workspace_key VARCHAR(128) NOT NULL COMMENT '企业空间标识',
-    name VARCHAR(256) NOT NULL COMMENT '企业空间名称',
-    description TEXT COMMENT '企业空间说明',
+    workspace_key VARCHAR(128) NOT NULL COMMENT '内部兼容容器标识',
+    name VARCHAR(256) NOT NULL COMMENT '内部兼容容器名称',
+    description TEXT COMMENT '内部兼容容器说明',
     status VARCHAR(32) DEFAULT 'active' COMMENT 'active/disabled',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_enterprise_workspace_key (workspace_key)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='企业空间逻辑容器';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='单公司内部兼容容器';
 
 INSERT IGNORE INTO enterprise_workspace (workspace_key, name, description, status)
 VALUES ('default', '默认企业空间', '企业业务领域与本体资产的默认逻辑空间', 'active');
@@ -131,7 +131,7 @@ VALUES ('default', '默认企业空间', '企业业务领域与本体资产的�
 -- 企业业务领域
 CREATE TABLE IF NOT EXISTS semantic_domain (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    workspace_id BIGINT NOT NULL COMMENT '所属企业空间',
+    workspace_id BIGINT NOT NULL COMMENT '历史兼容归属字段',
     agent_id BIGINT DEFAULT NULL COMMENT '兼容字段: 原创建/归属智能体',
     datasource_id BIGINT DEFAULT NULL COMMENT '默认数据源',
     domain_key VARCHAR(128) NOT NULL COMMENT '领域标识',

@@ -2059,7 +2059,7 @@ app.include_router(risk_workflow_router, prefix="/api/risk", tags=["风险与报
 app.include_router(semantic_router, prefix="/api/semantic", tags=["知识召回"])
 app.include_router(system_parameter_router, prefix="/api/system", tags=["系统参数"])
 app.include_router(user_router, prefix="/api/users", tags=["用户管理"])
-app.include_router(workspace_router, prefix="/api/workspaces", tags=["企业空间"])
+app.include_router(workspace_router, prefix="/api/workspaces", tags=["内部兼容容器"])
 
 
 if __name__ == "__main__":

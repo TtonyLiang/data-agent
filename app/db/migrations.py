@@ -63,14 +63,14 @@ async def run_management_migrations() -> None:
         """
         CREATE TABLE IF NOT EXISTS enterprise_workspace (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
-            workspace_key VARCHAR(128) NOT NULL COMMENT '企业空间标识',
-            name VARCHAR(256) NOT NULL COMMENT '企业空间名称',
-            description TEXT COMMENT '企业空间说明',
+            workspace_key VARCHAR(128) NOT NULL COMMENT '内部兼容容器标识',
+            name VARCHAR(256) NOT NULL COMMENT '内部兼容容器名称',
+            description TEXT COMMENT '内部兼容容器说明',
             status VARCHAR(32) DEFAULT 'active' COMMENT 'active/disabled',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uk_enterprise_workspace_key (workspace_key)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='企业空间逻辑容器'
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='单公司内部兼容容器'
         """,
         """
         CREATE TABLE IF NOT EXISTS agent_semantic_domain (
@@ -244,7 +244,7 @@ async def run_management_migrations() -> None:
         "semantic_domain",
         "workspace_id",
         "ALTER TABLE semantic_domain ADD COLUMN workspace_id BIGINT DEFAULT NULL "
-        "COMMENT '所属企业空间' AFTER id",
+        "COMMENT '历史兼容归属字段' AFTER id",
     )
     await ensure_column_nullable(
         "semantic_domain",
@@ -473,7 +473,7 @@ async def run_management_migrations() -> None:
         "semantic_domain",
         "workspace_id",
         "ALTER TABLE semantic_domain MODIFY COLUMN workspace_id BIGINT NOT NULL "
-        "COMMENT '所属企业空间'",
+        "COMMENT '历史兼容归属字段'",
     )
     await ensure_workspace_domain_unique_index()
     await backfill_agent_default_questions()
@@ -708,7 +708,7 @@ async def seed_default_model_configs() -> None:
 
 
 async def seed_default_workspace() -> None:
-    """Ensure the single default enterprise-space container exists."""
+    """Ensure the single-company compatibility container exists."""
     await get_management_db().execute_query(
         "INSERT IGNORE INTO enterprise_workspace "
         "(workspace_key, name, description, status) "
@@ -830,7 +830,7 @@ async def backfill_agent_semantic_domains() -> None:
 
 
 async def backfill_semantic_domain_workspaces() -> None:
-    """回填:把历史领域归入默认企业空间，不改变其领域 ID。"""
+    """回填:把历史领域归入单公司内部兼容容器，不改变其领域 ID。"""
     db = get_management_db()
     await db.execute_query(
         "UPDATE semantic_domain SET workspace_id = "
@@ -863,7 +863,7 @@ async def cleanup_orphan_agent_domain_bindings() -> None:
 
 
 async def ensure_workspace_domain_unique_index() -> None:
-    """Enforce one stable domain key per enterprise space after legacy backfill."""
+    """Enforce one stable domain key per company model container after legacy backfill."""
     db = get_management_db()
     duplicates = await db.execute_query(
         "SELECT workspace_id, domain_key, COUNT(*) AS duplicate_count "
@@ -873,7 +873,7 @@ async def ensure_workspace_domain_unique_index() -> None:
     if duplicates:
         duplicate = duplicates[0]
         raise RuntimeError(
-            "企业空间内存在重复领域标识，无法建立唯一约束: "
+            "公司内部模型容器存在重复领域标识，无法建立唯一约束: "
             f"workspace_id={duplicate.get('workspace_id')}, "
             f"domain_key={duplicate.get('domain_key')}"
         )

@@ -41,7 +41,7 @@
           </el-menu-item>
           <el-menu-item v-if="isAdminUser" index="/agent" :disabled="isNavigationDisabled('/agent')">
             <el-icon><User /></el-icon>
-            <span>应用智能体</span>
+            <span>调试与验证智能体</span>
           </el-menu-item>
           <el-menu-item v-if="isAdminUser" index="/datasource" :disabled="isNavigationDisabled('/datasource')">
             <el-icon><Coin /></el-icon>

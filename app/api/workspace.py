@@ -1,6 +1,6 @@
-"""企业空间只读 API。
+"""单公司内部兼容容器只读 API。
 
-当前阶段只暴露最小逻辑容器及其领域列表，避免提前引入复杂租户管理。
+仅为迁移和旧客户端保留，不能作为多租户或多企业空间产品入口。
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,7 +26,7 @@ async def list_workspace_domains(
     service = get_workspace_service()
     workspace = await service.get_workspace(workspace_id)
     if workspace is None:
-        raise HTTPException(status_code=404, detail="企业空间不存在")
+        raise HTTPException(status_code=404, detail="内部兼容容器不存在")
     domains = await service.list_domains(workspace_id)
     return {
         "workspace": workspace.model_dump(),

@@ -3,7 +3,7 @@
     <header class="page-header">
       <div>
         <h2>能力发布中心</h2>
-        <p>把企业模型转换成边界清晰、可被 Agent 和业务应用调用的标准能力。</p>
+        <p>把企业模型转换成边界清晰、可被外部 Agent 和业务应用调用的标准能力；本页调用仅用于调试和验证。</p>
       </div>
       <div class="header-actions">
         <el-select v-model="domainId" class="domain-select" placeholder="选择业务领域">
@@ -22,6 +22,13 @@
       </div>
     </header>
 
+    <el-alert
+      class="consumer-note"
+      type="info"
+      :closable="false"
+      title="这里展示外部 Agent 可调用的能力合同；当前页面的调用仅用于调试和验证。"
+    />
+
     <el-empty v-if="!loading && domains.length === 0" description="暂无可用业务领域" />
 
     <template v-else-if="currentDomain">
@@ -38,7 +45,7 @@
         <i aria-hidden="true">→</i>
         <div>
           <span>能力消费者</span>
-          <strong>垂直 Agent 与业务应用</strong>
+          <strong>外部 Agent 与业务应用</strong>
         </div>
       </section>
 
@@ -376,6 +383,10 @@ function errorMessage(error: unknown) {
   height: 100%;
   min-height: 0;
   overflow: auto;
+}
+
+.consumer-note {
+  margin-bottom: 14px;
 }
 
 .page-header {

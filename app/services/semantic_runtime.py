@@ -291,7 +291,7 @@ class SemanticRuntimeService:
         return agent_ids[0] if agent_ids else None
 
     async def _resolve_workspace_id(self, workspace_id: int | None) -> int:
-        """Resolve the explicit workspace or create/read the default logical container."""
+        """Resolve the single-company compatibility container used by legacy data."""
         db = get_management_db()
         if workspace_id is not None:
             rows = await db.execute_query(
@@ -299,7 +299,7 @@ class SemanticRuntimeService:
                 {"workspace_id": workspace_id},
             )
             if not rows:
-                raise ValueError("企业空间不存在")
+                raise ValueError("内部兼容容器不存在")
             return int(workspace_id)
         return await db.execute_insert(
             "INSERT INTO enterprise_workspace "

@@ -256,7 +256,7 @@
         </el-form-item>
       </el-form>
       <div class="domain-form-note">
-        业务领域及其模型是企业资产；智能体只在“应用智能体”中选择需要消费的领域。
+        业务领域及其模型是公司内部企业资产；“调试与验证智能体”只用于选择需要验证的领域，第三方 Agent 通过能力合同接入。
       </div>
       <template #footer>
         <el-button @click="showDomainDialog = false">取消</el-button>

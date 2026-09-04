@@ -2,7 +2,7 @@
 
 [English](./README.md) | 中文
 
-> 将企业业务定义和分散数据组织为 AI 可理解、可查询、可判断、可执行、可追溯的统一业务模型，为财税、贷款等垂直 Agent 和业务应用提供企业级 AI 底座。
+> 面向公司内部使用的 AI 底座：将业务理解和分散数据组织为可查询、可判断、可执行、可追溯的统一企业模型，再通过标准能力接口供第三方 Agent 和业务应用复用。
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)
@@ -11,6 +11,8 @@
 ![MySQL](https://img.shields.io/badge/MySQL-8.0+-4479A1?logo=mysql&logoColor=white)
 ![Milvus](https://img.shields.io/badge/Milvus-2.5+-00A3E0)
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
+
+> 项目文档入口：[docs/README.md](docs/README.md)；平台方向、优先级、阶段状态和验收进度唯一以 [Ontology 产品路线图](docs/ontology-product-roadmap.md) 为准。新成员先看[项目结构](docs/project-structure.md)，接入真实业务按[业务与数据接入手册](docs/business-data-onboarding.md)执行。
 
 ---
 
@@ -23,7 +25,7 @@
 - [详细说明](#详细说明)
   - [核心工作流](#1-核心工作流)
   - [企业业务模型](#2-企业业务模型)
-  - [深度分析 (Phase 3)](#3-深度分析-phase-3)
+  - [深度分析（历史模块名称 Phase 3）](#3-深度分析历史模块名称-phase-3)
   - [安全体系](#4-安全体系)
   - [流式交互与前端](#5-流式交互与前端)
   - [接口概览](#6-接口概览)
@@ -40,36 +42,36 @@
 
 ## 产品定位
 
-问渠 WenQu 的目标是成为企业的**智能中枢和决策引擎**。平台把业务人员对企业的理解，与数据库、API、文件和业务事件中的数据连接起来，形成随业务状态更新的运营数字孪生。上层 Agent 不再各自猜测表、字段和规则，而是消费平台发布的标准查询、决策和动作能力。
+问渠 WenQu 的目标是成为公司的**智能中枢和决策引擎**。平台把业务人员对公司的理解，与数据库、API、文件和业务事件中的数据连接起来，形成随业务状态更新的运营数字孪生。平台内置 Agent 只用于调试和验证；第三方 Agent 通过标准能力接口消费同一套业务模型、数据和规则。
 
 这不是 3D 仿真，也不是复制一份数据库。这里的“数字孪生”包括三部分：
 
 1. **企业模型中心**：统一对象、关系、指标、规则、状态、动作、数据映射、权限和版本；现有“查询语义”和“本体建模”在产品上合并为同一套企业业务模型。
 2. **数据处理与孪生运行时**：把物理数据映射为可识别的业务对象，维护对象当前状态、来源和后续历史变化。
-3. **能力发布中心**：将对象查询、指标计算、决策判断和受控动作以稳定契约提供给 Agent 与业务应用。
+3. **能力发布中心**：将对象查询、指标计算、决策判断和受控动作以稳定 API/SDK 契约提供给第三方 Agent 与业务应用。
 
 ```text
 数据库 / API / 文件 / 业务事件
         -> 企业模型与孪生运行时
         -> Query / Decision / Action Capability
-        -> 财税 Agent / 贷款 Agent / 其他业务应用
+        -> 本项目验证 Agent / 第三方 Agent / 其他业务应用
         -> 结果反馈与决策审计
 ```
 
 财税报告交付、贷款风控和智能问数是平台上的垂直应用与技术验证场景，不再代表平台本身的最终边界。当前对话功能用于演示和验证底座能力，近期不作为重点投入方向。
 
-### 截至 2026-09-03 的能力边界
+### 截至 2026-09-04 的能力边界
 
 | 状态 | 范围 |
 |------|------|
 | **已实现基础** | 查询语义资产、Ontology 对象/关系/动作建模、LogicForm 与确定性 SQL、对象实例、发布和审计原型，以及可演示的智能问数、分析与报告 |
 | **已实现技术切片** | 对象查询、第一版 Query Capability、受控 Action 工具，以及贷款域的风险事项、证据、复核、报告版本和决策审计闭环 |
-| **P0 兼容骨架（已实现）** | 默认企业空间与业务领域归属、Agent 与领域多对多绑定、统一“企业模型”入口，以及复用现有接口的“孪生运行”和“能力发布中心”页面 |
+| **P0 兼容骨架（已实现）** | 业务领域归属、统一“企业模型”入口，以及复用现有接口的“孪生运行”和“能力发布中心”页面；内置 Agent 仅作验证适配 |
 | **后续建设** | 生产级增量同步/CDC、对象身份解析、状态历史、数据质量与血缘、正式能力发布治理、通用 Decision Capability 和外部系统可靠写回 |
 
 当前先用贷款风控域验证技术闭环。其中数据、阈值、规则和结论均为合成演示，不得视为真实授信、财务、税务、会计、审计或其他合规意见。
 
-总体业务和数据链路见[当前业务方向、产品流程与数据链路](docs/product-business-flow.md)；平台演进见[Ontology 产品路线图](docs/ontology-product-roadmap.md)。
+完整文档入口见 [docs/README.md](docs/README.md)。总体业务和数据链路见[当前业务方向、产品流程与数据链路](docs/product-business-flow.md)；平台方向、优先级和进度唯一以[Ontology 产品路线图](docs/ontology-product-roadmap.md)为准。
 
 ---
 
@@ -85,7 +87,7 @@
 
 ### 能力发布中心
 
-把平台中的业务模型发布为 Agent 和应用可调用的标准能力：`Query Capability` 负责只读对象查询与指标计算，`Action Capability` 负责有副作用的受控操作，`Decision Capability` 负责后续的规则或模型判断。当前已有对象查询、第一版 Query Capability 和 Action 工具；P0 先集中展示和调用，正式版本治理、配额、灰度及统一网关后续补齐。
+把平台中的业务模型发布为第三方 Agent 和应用可调用的标准能力：`Query Capability` 负责只读对象查询与指标计算，`Action Capability` 负责有副作用的受控操作，`Decision Capability` 负责后续的规则或模型判断。当前已有对象查询、第一版 Query Capability 和 Action 工具；P0 先集中展示和调试验证，正式版本治理、调用身份、配额、灰度及统一网关后续补齐。
 
 ### 风险报告交付闭环（垂直技术切片）
 
@@ -109,9 +111,9 @@
 
 SQL 查询结果自动进入 Python 安全执行器进行统计分析（分布、趋势、排名、异常检测），最终生成不少于 300 字的中文 Markdown 结构化报告，包含图表和数据解读。
 
-### 多智能体 / 多数据源 / 多模型
+### 验证客户端兼容配置
 
-支持创建多个智能体并绑定不同模型、数据源和业务领域。目标关系是“企业资产先发布，Agent 再按授权消费”：同一业务领域可以被多个 Agent 和应用复用，一个 Agent 也可以组合多个已授权领域。现有按 Agent 隔离的运行边界通过兼容层逐步迁移，不一次性推翻现有问数链路。
+支持配置一个或多个本项目内置验证 Agent，绑定不同模型、数据源和业务领域。目标关系是“企业模型先发布，任何 Agent 再按授权消费”：内置验证 Agent 与第三方 Agent 应调用同一能力合同、遵循同一业务口径。现有按 Agent 隔离的运行边界仅作为兼容适配，不是平台底座边界。
 
 ### 安全体系
 
@@ -133,21 +135,21 @@ Prompt 模板支持按智能体、模型、语义层覆盖；系统参数支持�
 
 ## 架构概览
 
-### 总体设计架构
+### 现有技术底座架构（非完整平台目标架构）
 
-![总体设计架构](docs/images/architecture.png)
+![现有技术底座架构（非完整平台目标架构）](docs/images/architecture.png)
 
-当前技术底座由 Ontology/查询语义资产、数据源与 Schema、对象实例运行时、类型化能力接口、智能问数界面、FastAPI 后端、LangGraph 工作流和外部依赖（LLM、MySQL、Milvus）组成。P0 在这些既有能力之上增加企业空间/业务领域兼容骨架、统一企业模型入口、孪生运行页和能力发布中心页，不把页面聚合误写成生产级数字孪生运行时或能力网关。
+当前技术底座由 Ontology/查询语义资产、数据源与 Schema、对象实例运行时、类型化能力接口、智能问数界面、FastAPI 后端、LangGraph 工作流和外部依赖（LLM、MySQL、Milvus）组成。P0 在这些既有能力之上增加业务领域兼容骨架、统一企业模型入口、孪生运行页和能力发布中心页，不把页面聚合误写成生产级数字孪生运行时或能力网关。
 
-### 查询执行流程
+### 现有问数执行流程（参考）
 
-![查询执行流程](docs/images/workflow.png)
+![现有问数执行流程（参考）](docs/images/workflow.png)
 
 完整流程：用户提问 → 意图识别 → 语义增强 → 知识召回 → 数据定位 → LogicForm 生成 → 语义校验 → SQL 编译 → 语义一致性检查 → SQL 执行 → 分析计划 → Python 生成 → Python 分析 → 报告生成。
 
-### 企业业务模型
+### 企业业务模型（关系图参考）
 
-![企业本体与查询语义协同](docs/images/er-diagram.png)
+![企业业务模型关系图（历史参考）](docs/images/er-diagram.png)
 
 企业业务模型把两类互补资产放在同一个领域和发布边界下：Ontology 提供对象、关系、状态和动作；查询语义提供概念、指标、规则、映射和模板，并把业务模型连接到真实数据与可编译查询。产品入口统一并不要求立即合并所有底层表。
 
@@ -245,10 +247,10 @@ uv run python examples/douyin_ecommerce/seed_douyin_ecommerce.py
 
 打开 `http://localhost:4399`，使用管理员账号依次查看：
 
-- `/enterprise-model`：同一业务领域下的查询语义与 Ontology。
+- `/enterprise-model`：公司内部统一模型库中的查询语义与 Ontology。
 - `/twin-runtime`：对象类型、实例数量和手动分页同步状态。
 - `/capability-center`：当前可用的对象查询、Query Capability 和 Action 合同。
-- `/agent`：为应用智能体绑定一个或多个业务领域并设置默认领域。
+- `/agent`：配置本项目内置的调试与验证智能体；第三方 Agent 直接调用能力合同。
 
 然后进入对话页面，用已绑定领域的 Agent 提问：
 
@@ -264,7 +266,7 @@ uv run python examples/douyin_ecommerce/seed_douyin_ecommerce.py
 
 ### 1. 核心工作流
 
-问数链路由 LangGraph StateGraph 编排，共 16 个处理节点：
+问数链路由 LangGraph StateGraph 编排，以下列出主要处理节点（节点会随迭代增减）：
 
 | 节点 | 文件 | 功能 | 调用 LLM |
 |------|------|------|----------|
@@ -320,22 +322,24 @@ flowchart TD
 
 ### 2. 企业业务模型
 
-企业业务模型是 Ontology 与查询语义的统一产品边界：Ontology 负责对象、属性、关系、事件、状态和动作；查询语义负责概念、指标、规则、物理字段映射和可编译查询。两类资产通过同一企业空间、业务领域、稳定 `object_key` 和发布版本串联，使 Agent 和应用消费同一套业务定义。
+企业业务模型是 Ontology 与查询语义的统一产品边界：Ontology 负责对象、属性、关系、事件、状态和动作；查询语义负责概念、指标、规则、物理字段映射和可编译查询。两类资产通过公司内部统一模型库、业务领域、稳定 `object_key` 和发布版本串联，使内置验证 Agent 与第三方 Agent 消费同一套业务定义。
 
 目标归属关系为：
 
 ```text
-企业空间
+公司内部统一模型库
   -> 业务领域
       -> 企业模型 + 数据映射 + 发布版本 + 业务能力
-          -> 多个 Agent / 业务应用按授权消费
+          -> 内置验证 Agent / 第三方 Agent / 业务应用按授权消费
 ```
 
-- **企业空间**是企业资产、安全和治理边界，用于明确资产属于哪家企业、谁负责、能连接哪些数据源。
-- **业务领域**是可独立梳理、发布和复用的业务范围，例如客户、财税、授信或风险管理。
-- **Agent**是能力消费者，不再是本体和语义资产的唯一所有者。
+- **业务领域**是公司内部可独立梳理、发布和复用的业务范围，例如客户、财税、授信或风险管理。
+- **能力发布中心**是对外复用出口，负责让不同 Agent 按统一合同调用。
+- **内置验证 Agent**是调试客户端，不是本体和语义资产的所有者。
 
-P0 通过默认企业空间、领域归属和 Agent-领域多对多关系兼容现有数据；后续再补多租户隔离、领域负责人、正式审批和跨领域依赖治理。
+当前实现中，事件和状态主要通过语义概念、对象属性、动作效果和审计记录表达；独立事件流、历史状态时间线和持续事件订阅属于后续孪生运行时建设。
+
+P0 通过业务领域归属和内置验证 Agent 的兼容绑定保留现有数据；`enterprise_workspace/workspace_id` 仅作为单公司内部历史字段，不是产品功能，也不继续扩展多企业或租户治理。
 
 #### 企业本体运行模型
 
@@ -393,7 +397,7 @@ SELECT
   (SELECT SUM(amount) FROM loan_disbursement) AS total_disbursement
 ```
 
-### 3. 深度分析 (Phase 3)
+### 3. 深度分析（历史模块名称 Phase 3）
 
 SQL 执行完成后，结果自动进入深度分析链路：
 
@@ -468,10 +472,10 @@ Planner 根据结果数据特征自动推断分析模式：
 
 ```mermaid
 flowchart LR
-    subgraph Layer1[第一层：数据源授权]
-        A1[智能体 A] -->|绑定| D1[数据源 1]
+    subgraph Layer1[第一层：验证客户端数据源授权]
+        A1[验证 Agent A] -->|绑定| D1[数据源 1]
         A1 -->|绑定| D2[数据源 2]
-        A2[智能体 B] -->|绑定| D3[数据源 3]
+        A2[验证 Agent B] -->|绑定| D3[数据源 3]
     end
 
     subgraph Layer2[第二层：表级权限]
@@ -488,7 +492,7 @@ flowchart LR
 
 | 层级 | 控制粒度 | 存储表 |
 |------|----------|--------|
-| 数据源授权 | 智能体 ↔ 数据源 | `agent_datasource` |
+| 数据源授权 | 验证 Agent ↔ 数据源（兼容层） | `agent_datasource` |
 | 表级权限 | 允许/拒绝访问指定表 | `agent_table_permission` |
 | 列级权限 | 允许/禁止 + 脱敏策略 | `agent_column_permission` |
 
@@ -557,11 +561,11 @@ sequenceDiagram
 
 | 页面 | 路由 | 功能 |
 |------|------|------|
-| 对话 | `/` | Agent 能力演示界面，含问数链路、SQL、结果表和报告展示 |
-| 企业模型 | `/enterprise-model` | 统一进入查询语义与 Ontology 建模，按企业空间和业务领域组织资产 |
+| 对话 | `/` | 内置验证 Agent 能力演示界面，含问数链路、SQL、结果表和报告展示 |
+| 企业模型 | `/enterprise-model` | 统一进入查询语义与 Ontology 建模，按公司内部业务领域组织资产 |
 | 孪生运行 | `/twin-runtime` | 查看对象类型、实例和现有手动分页同步状态；不是后台定时同步 |
 | 能力发布中心 | `/capability-center` | 集中查看现有对象查询、Query Capability 和 Action Capability |
-| 智能体管理 | `/agent` | 创建/编辑/删除智能体，绑定模型、数据源和一个或多个业务领域 |
+| 调试与验证智能体 | `/agent` | 配置本项目内置验证 Agent，绑定模型、数据源和业务领域；第三方 Agent 不在此注册 |
 | 模型配置 | `/model-config` | 管理大语言模型和向量模型配置，测试连通性 |
 | 数据源 | `/datasource` | 数据源连接管理，表清单采集，字段详情查看 |
 | 风险交付 | `/risk-delivery` | 财税/贷款垂直验证场景：风险、证据、复核、报告和审计 |
@@ -580,10 +584,12 @@ sequenceDiagram
 | 健康检查 | `/health` | 服务探活 |
 | 对话 | `/api/chat` | 同步/流式问数、SQL 确认、会话管理 |
 | 认证 | `/api/auth` | 注册、登录、当前用户 |
-| 企业空间 | `/api/workspaces` | 默认企业空间及其业务领域列表 |
-| 智能体 | `/api/agent` | 智能体 CRUD、数据源绑定和领域多对多绑定 |
+| 内部兼容容器 | `/api/workspaces` | 单公司历史兼容读取，不是业务产品入口 |
+| 验证智能体 | `/api/agent` | 内置验证 Agent CRUD、数据源绑定和领域消费绑定 |
 | 数据源 | `/api/datasource` | 数据源 CRUD、连通性测试、Schema 采集 |
 | 语义层 | `/api/semantic` | 领域/资产管理、快照版本控制、导入导出、向量同步 |
+| 企业本体 | `/api/ontology` | 对象、关系、动作、实例、发布、同步和能力工具 |
+| 风险交付 | `/api/risk` | 风险事项、证据、复核、报告版本和决策审计 |
 | 模型配置 | `/api/model-config` | 模型 CRUD、连通性测试 |
 | Prompt | `/api/prompt` | Prompt 模板管理、目录查看 |
 | 系统参数 | `/api/system` | 运行时参数配置 |
@@ -688,9 +694,9 @@ sequenceDiagram
 
 | 分类 | 表 | 说明 |
 |------|-----|------|
-| 企业空间 | `enterprise_workspace` | 企业资产顶层归属；P0 默认创建单一空间 |
-| 业务领域 | `semantic_domain` | 企业模型、数据映射和能力的领域边界，含 `workspace_id` |
-| 智能体 | `agent` | 智能体配置；保留默认领域兼容字段 |
+| 内部兼容容器 | `enterprise_workspace` | 单公司部署的历史兼容容器，不是多租户边界 |
+| 业务领域 | `semantic_domain` | 企业模型、数据映射和能力的公司内部业务边界 |
+| 验证智能体 | `agent` | 本项目调试/验证客户端配置；保留默认领域兼容字段 |
 | 模型 | `model_config` | 大语言模型和向量模型配置 |
 | 数据源 | `datasource` | 数据库连接信息 |
 | 关联 | `agent_datasource` | 智能体 ↔ 数据源多对多 |
@@ -705,8 +711,16 @@ sequenceDiagram
 | 语义层 | `semantic_rule` | 规则 |
 | 语义层 | `semantic_mapping` | 物理映射 |
 | 语义层 | `logic_form_template` | LogicForm 模板 |
+| 企业本体 | `ontology_object_type` / `ontology_property` | 对象类型与属性定义 |
+| 企业本体 | `ontology_link_type` / `ontology_link` | 关系类型与关系实例 |
+| 企业本体 | `ontology_action_type` / `ontology_action_run` | 动作定义与执行记录 |
+| 企业本体 | `ontology_object` / `ontology_release` | 对象实例与发布版本 |
+| 风险交付 | `risk_issue` / `risk_evidence` | 风险事项与证据 |
+| 风险交付 | `risk_issue_review` / `risk_report` / `risk_report_version` | 复核、报告和不可变版本 |
+| 决策审计 | `decision_audit_event` / `decision_audit_head` | 追加式审计事件与链头 |
 | Prompt | `prompt_template` | Prompt 模板 |
 | 对话 | `chat_history` | 对话历史（含 reasoning_trace、report_payload） |
+| 任务运行 | `agent_task_checkpoint` | 可恢复任务状态 |
 | 反馈 | `user_feedback` | 用户反馈 |
 | 系统 | `system_parameter` | 运行时参数 |
 | 用户 | `app_user` | 系统用户 |
@@ -759,7 +773,7 @@ wenqu-dataquery-agent/
 │   ├── logging_config.py         # 日志配置
 │   ├── agent/                    # LangGraph 问数链路
 │   │   ├── graph.py              # 工作流定义与条件路由
-│   │   ├── nodes/                # 16 个处理节点
+│   │   ├── nodes/                # 问数处理节点
 │   │   ├── prompts/              # 默认 Prompt 模板
 │   │   ├── python_templates/     # Python 兜底分析脚本
 │   │   └── domain_rules.py       # 领域改写规则
@@ -771,16 +785,20 @@ wenqu-dataquery-agent/
 ├── frontend/                     # 前端应用
 │   ├── src/
 │   │   ├── views/                # 页面组件
-│   │   ├── components/           # 通用组件
-│   │   ├── stores/               # Pinia 状态管理
+│   │   ├── stores/               # 状态管理
 │   │   ├── api/                  # API 客户端
 │   │   └── router/               # 路由配置
 │   └── package.json
-├── docs/                         # 文档
-│   ├── project-design.md         # 项目总体设计
-│   ├── TODO.md                   # 开发进度
-│   ├── design-qa.md              # 设计 QA 记录
-│   └── images/                   # 架构图
+├── docs/                         # 文档（入口见 docs/README.md）
+│   ├── product-business-flow.md  # 业务流程与数据链路
+│   ├── ontology-product-roadmap.md # 平台主路线图
+│   ├── project-design.md         # 技术总体设计
+│   ├── project-structure.md      # 功能块、代码和数据结构地图
+│   ├── business-data-onboarding.md # 业务领域与真实表接入手册
+│   ├── ontology-osdk-alignment-plan.md # 工程与 OSDK 对齐
+│   ├── risk-report-delivery-roadmap.md # 垂直场景验证
+│   ├── images/                   # 技术底座参考图
+│   └── archive/                  # 历史参考
 ├── examples/                     # 演示数据
 │   ├── loan/                     # 信贷风控域
 │   └── douyin_ecommerce/         # 抖音电商域
@@ -864,14 +882,14 @@ uv run python examples/douyin_ecommerce/seed_douyin_ecommerce.py
 
 ## 路线图
 
-平台路线图详见 2026-09-03 版[Ontology 产品路线图](docs/ontology-product-roadmap.md)。[风险报告交付路线图](docs/risk-report-delivery-roadmap.md)保留为财税/贷款垂直场景的验证计划，不再代表整体产品路线。
+平台路线图详见 2026-09-04 版[Ontology 产品路线图](docs/ontology-product-roadmap.md)。[风险报告交付路线图](docs/risk-report-delivery-roadmap.md)保留为财税/贷款垂直场景的验证计划，不再代表整体产品路线。
 
 | 阶段 | 目标 | 验收门槛 |
 |------|------|----------|
-| P0 平台骨架 | 建立默认企业空间、领域资产归属、Agent 多对多消费关系和三个统一入口 | 现有演示数据可兼容迁移；企业模型、孪生运行和能力中心可见且不破坏原有问数 |
+| P0 平台骨架 | 建立业务领域边界、三个统一入口和内置验证 Agent 适配 | 现有演示数据可兼容迁移；企业模型、孪生运行和能力中心可见且不破坏原有问数 |
 | P1 企业模型中心 | 统一对象、关系、指标、规则、映射、动作和发布治理 | 一个真实领域可完成建模、映射校验、版本发布、差异查看和回滚 |
 | P2 孪生运行时 | 建设增量同步、对象身份解析、当前/历史状态、质量与血缘 | 真实数据可稳定增量更新；冲突、坏数据和来源可追溯 |
-| P3 能力发布中心 | 形成 Query / Decision / Action 的正式发布与治理 | 外部 Agent 按版本和权限调用；输入输出、审计、限流和失败契约稳定 |
+| P3 能力发布中心 | 形成与 Agent 解耦的 Query / Decision / Action 正式发布与治理 | 外部 Agent 无需创建内部 Agent 即可按版本和权限调用；输入输出、审计、限流和失败契约稳定 |
 | P4 垂直场景验证 | 用财税、贷款等真实场景验证平台价值 | 至少一个领域完成历史案例影子运行，并量化准确率、效率和可追溯性 |
 
 当前 Agent 对话只承担底座能力演示和接口验证。复杂多轮对话、通用 Agent 编排和长期记忆暂不作为近期主线。

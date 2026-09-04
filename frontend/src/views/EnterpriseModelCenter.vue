@@ -36,9 +36,9 @@
       </nav>
 
       <div class="model-center-outcome">
-        <span>企业空间</span>
-        <strong>{{ workspaceName }}</strong>
-        <small>{{ workspaceDomainCount }} 个业务领域 · 企业资产统一归属</small>
+        <span>公司业务模型</span>
+        <strong>统一业务语言</strong>
+        <small>{{ domainCount }} 个业务领域 · 本体与数据口径集中管理</small>
       </div>
     </header>
 
@@ -53,10 +53,7 @@
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  fetchEnterpriseWorkspaces,
   fetchOntologyDomains,
-  fetchWorkspaceDomains,
-  type EnterpriseWorkspace,
 } from '../api'
 import { isAdmin } from '../stores/auth'
 
@@ -65,10 +62,8 @@ const KnowledgeConfig = defineAsyncComponent(() => import('./KnowledgeConfig.vue
 
 const route = useRoute()
 const router = useRouter()
-const workspaces = ref<EnterpriseWorkspace[]>([])
-const workspaceDomainCount = ref(0)
+const domainCount = ref(0)
 const canManage = computed(() => isAdmin())
-const workspaceName = computed(() => workspaces.value[0]?.name || '默认企业空间')
 
 const activeSection = computed<'ontology' | 'semantic'>(() => (
   canManage.value && route.query.section === 'semantic' ? 'semantic' : 'ontology'
@@ -76,16 +71,7 @@ const activeSection = computed<'ontology' | 'semantic'>(() => (
 
 onMounted(async () => {
   const visibleDomains = await fetchOntologyDomains().catch(() => [])
-  workspaceDomainCount.value = visibleDomains.length
-  if (!canManage.value) return
-  try {
-    workspaces.value = await fetchEnterpriseWorkspaces()
-    if (workspaces.value[0]) {
-      workspaceDomainCount.value = (await fetchWorkspaceDomains(workspaces.value[0].id)).length
-    }
-  } catch {
-    workspaces.value = []
-  }
+  domainCount.value = visibleDomains.length
 })
 
 function selectSection(section: 'ontology' | 'semantic') {

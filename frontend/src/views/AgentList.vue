@@ -2,13 +2,13 @@
   <div class="page-shell">
     <div class="page-header">
       <div>
-        <h2>应用智能体</h2>
-        <p>智能体是企业模型能力的消费者，负责面向具体场景与用户交互。</p>
+        <h2>调试与验证智能体</h2>
+        <p>用于调试、回归和验收企业模型能力；第三方 Agent 通过能力合同接入。</p>
       </div>
       <div class="header-actions">
-        <el-tag effect="plain">共 {{ agents.length }} 个智能体</el-tag>
+        <el-tag effect="plain">共 {{ agents.length }} 个验证智能体</el-tag>
         <el-button type="primary" @click="openCreate">
-          <el-icon><Plus /></el-icon> 创建智能体
+          <el-icon><Plus /></el-icon> 创建验证智能体
         </el-button>
       </div>
     </div>
@@ -49,10 +49,10 @@
       </el-table>
     </div>
 
-    <el-dialog v-model="showDialog" :title="editingAgentId ? '编辑智能体' : '创建智能体'" width="620">
+    <el-dialog v-model="showDialog" :title="editingAgentId ? '编辑验证智能体' : '创建验证智能体'" width="620">
       <el-form :model="form" label-width="100px">
         <el-form-item label="名称">
-          <el-input v-model="form.name" placeholder="请输入智能体名称" />
+          <el-input v-model="form.name" placeholder="请输入验证智能体名称" />
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="3" />
@@ -144,14 +144,14 @@
 
     <el-drawer
       v-model="showDetailDrawer"
-      title="智能体详情"
+      title="验证智能体详情"
       size="640px"
       append-to-body
       class="agent-detail-drawer"
     >
       <div v-if="detailAgent" class="agent-detail">
         <div class="detail-identity">
-          <span>智能体配置</span>
+          <span>验证智能体配置</span>
           <strong>{{ detailAgent.name }}</strong>
           <code>{{ `agent_${detailAgent.id}` }}</code>
         </div>

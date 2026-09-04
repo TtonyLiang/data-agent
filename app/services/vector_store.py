@@ -1,13 +1,13 @@
 """向量存储服务 —— Milvus 本地模式的语义资产向量索引。
 
 VectorStore 负责:
-1. ``ensure_collection``:按 agent_id + domain_id 创建独立的 Milvus collection。
+1. ``ensure_collection``:按验证客户端兼容标识 + domain_id 创建独立的 Milvus collection。
 2. ``insert``:批量插入语义资产向量(概念/指标/规则/模板)。
 3. ``search``:向量相似度检索,返回超过阈值的结果。
 4. ``delete_by_source``:按 source_type + source_id 删除单条向量。
-5. ``delete_collection``:删除整个 collection(智能体删除时)。
+5. ``delete_collection``:删除整个 collection（验证客户端删除时）。
 
-每个 Agent 的每个领域使用独立 collection，避免共享领域和多领域之间相互污染。
+当前按 Agent/领域隔离 collection 只是兼容实现，避免验证数据相互污染，不代表 Agent 拥有业务模型。
 向量维度和相似度阈值由系统配置决定(embedding_dimension / rag_score_threshold)。
 """
 

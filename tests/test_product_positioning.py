@@ -11,8 +11,8 @@ def test_primary_product_position_is_enterprise_ontology_digital_twin():
     expected = "Ontology 驱动的企业运营数字孪生与智能决策平台"
     assert expected in chinese_readme
     assert "企业本体数字孪生与智能决策平台" in app_shell
-    assert "企业智能中枢和决策引擎" in project_design
-    assert "Agent 负责在具体场景中与用户交互和调用能力" in project_design
+    assert "公司的智能中枢和决策引擎" in project_design
+    assert "内置 Agent 只是调试、回归和验收客户端" in project_design
     assert "财税报告交付、贷款风控和智能问数" in project_design
 
 

@@ -13,7 +13,8 @@ assert.ok(
   appSource.includes('企业本体数字孪生与智能决策平台') &&
     appSource.includes('index="/enterprise-model"') &&
     appSource.includes('index="/twin-runtime"') &&
-    appSource.includes('index="/capability-center"'),
+    appSource.includes('index="/capability-center"') &&
+    appSource.includes('调试与验证智能体'),
   'primary navigation should expose the platform foundation instead of separate ontology and semantic entries',
 )
 
@@ -30,12 +31,16 @@ assert.ok(
   modelSource.includes('企业模型') &&
     modelSource.includes('业务本体') &&
     modelSource.includes('语义与数据') &&
-    modelSource.includes('企业空间') &&
-    modelSource.includes('企业资产统一归属') &&
+    modelSource.includes('公司业务模型') &&
+    modelSource.includes('本体与数据口径集中管理') &&
+    !modelSource.includes('企业空间') &&
+    !modelSource.includes('默认企业空间') &&
+    !modelSource.includes('fetchEnterpriseWorkspaces') &&
+    !modelSource.includes('fetchWorkspaceDomains') &&
     modelSource.includes("route.query.section === 'semantic'") &&
     modelSource.includes('<span v-if="canManage" class="section-connector"') &&
     modelSource.includes('<button\n          v-if="canManage"\n          type="button"\n          :class="{ active: activeSection === \'semantic\' }"'),
-  'enterprise model should combine ontology and semantic data under a workspace-aware entry',
+  'enterprise model should combine ontology and semantic data under a single-company entry',
 )
 
 assert.ok(
@@ -54,6 +59,8 @@ assert.ok(
     capabilitySource.includes('只读查询能力') &&
     capabilitySource.includes('受控动作能力') &&
     capabilitySource.includes('Agent 调用接口') &&
+    capabilitySource.includes('外部 Agent') &&
+    capabilitySource.includes('调试和验证') &&
     capabilitySource.includes('权限与结果脱敏生效') &&
     capabilitySource.includes('独立能力版本、灰度发布和调用监控仍属于下一阶段'),
   'capability center should publish the actual query, action, and tool contracts exposed by the backend',
@@ -67,8 +74,9 @@ assert.ok(
 )
 
 assert.ok(
-  agentSource.includes('<h2>应用智能体</h2>') &&
-    agentSource.includes('智能体是企业模型能力的消费者') &&
+  agentSource.includes('<h2>调试与验证智能体</h2>') &&
+    agentSource.includes('用于调试、回归和验收企业模型能力') &&
+    agentSource.includes('第三方 Agent 通过能力合同接入') &&
     agentSource.includes('v-model="form.semantic_domain_ids"') &&
     agentSource.includes('可消费的业务领域') &&
     agentSource.includes('企业模型与业务领域资产会保留'),

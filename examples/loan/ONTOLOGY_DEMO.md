@@ -1,4 +1,4 @@
-# 信贷业务智能体 Ontology Demo
+# 信贷业务 Ontology Demo（内置验证智能体）
 
 这份 Demo 把现有的 `loan_risk` 信贷语义域扩展成一个可运行的业务本体。它不是替换现有问数语义层，而是把“谁、申请了什么、形成了哪笔贷款、当前是否逾期、应该采取什么动作”表达成可查询、可执行、可审计的业务对象。
 
@@ -9,7 +9,7 @@
 | 语义问数 | 审批通过率、申请趋势、M1+ 逾期率、Vintage、催收回收率等聚合指标 | 对话页 |
 | 业务 Ontology | 客户、申请、贷款、期次、风险快照、催收案件的对象状态，以及审批/催收/结案动作 | `业务本体`工作台 |
 
-当前 MVP 会把 Ontology 定义注入信贷 Agent 的问数上下文，但聊天 ReAct 尚未自动调用 Ontology 动作工具。因此本 Demo 的“动作执行”通过工作台完成，或调用两个受控 REST 工具；不要把普通问数对话误认为已经自动审批或自动催收。
+当前 MVP 会把 Ontology 定义注入内置验证 Agent 的问数上下文，但聊天 ReAct 尚未自动调用 Ontology 动作工具。因此本 Demo 的“动作执行”通过工作台完成，或调用两个受控 REST 工具；不要把普通问数对话误认为已经自动审批或自动催收。第三方 Agent 不需要创建该验证 Agent。
 
 ### 1.1 为什么“贷款申请”是对象
 
@@ -55,7 +55,7 @@ uv run python examples/loan/seed_loan_indicators.py --write --yes-drop-existing
 uv run python examples/loan/seed_loan_indicators.py --append
 uv run python examples/loan/seed_loan_indicators.py --append --write --yes-append
 
-# 将现有审批率、M1+、Vintage 等问数语义导入同一个信贷智能体
+# 将现有审批率、M1+、Vintage 等问数语义导入同一个内置验证智能体
 uv run python scripts/import_semantic_bundle.py \
   --path examples/loan/semantic-domain.json \
   --agent-id 1 \
@@ -64,7 +64,7 @@ uv run python scripts/import_semantic_bundle.py \
 
 演示环境必须显式使用 `--agent-id 1 --datasource-id 1`，不要省略数据源参数。`import_semantic_bundle.py` 只会对语义资产执行 upsert，不会删除 bundle 中未出现的旧 `semantic_relation`；如需清理旧关系，应先备份并核对，再单独执行定向清理。
 
-在“智能体管理”中把这个 `loan_risk` 语义域绑定到信贷智能体，并确认领域已绑定包含上述信贷表的默认数据源。对象同步沿用该智能体的数据权限，因此还要允许访问 `loan_application_indicator`、`loan_account_indicator`、`loan_repayment_period_indicator`、`customer_risk_monthly_indicator` 和 `collection_case_indicator`。
+在“调试与验证智能体”中把这个 `loan_risk` 语义域绑定到内置验证智能体，并确认领域已绑定包含上述信贷表的默认数据源。对象同步沿用该验证智能体的数据权限，因此还要允许访问 `loan_application_indicator`、`loan_account_indicator`、`loan_repayment_period_indicator`、`customer_risk_monthly_indicator` 和 `collection_case_indicator`。第三方 Agent 不需要创建该智能体，直接复用能力合同即可。
 
 ## 4. 业务库同步映射
 

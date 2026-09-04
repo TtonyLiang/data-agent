@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h2>数据源管理</h2>
-        <p>维护可复用的数据连接，智能体访问权限在智能体管理中绑定。</p>
+        <p>维护可复用的数据连接，内置验证智能体的访问边界在验证配置中绑定。</p>
       </div>
       <div class="header-actions">
         <el-select v-model="agentId" clearable placeholder="初始关联智能体" style="width: 180px">

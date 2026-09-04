@@ -366,7 +366,7 @@
           <span>企业运营数字孪生与智能决策平台</span>
         </div>
       </div>
-      <div class="header-meta">会议简介 · 截至 2026-09-03</div>
+      <div class="header-meta">会议简介 · 截至 2026-09-04</div>
     </div>
   </header>
 
@@ -447,22 +447,22 @@
             <small>一套底座服务多个场景</small>
           </article>
         </div>
-        <p class="flow-note">Agent 负责具体场景交互；平台负责提供统一、可信、可追溯的业务能力。</p>
+        <p class="flow-note">本项目内置 Agent 只用于调试和验收；平台能力通过统一合同供第三方 Agent 复用。</p>
       </div>
     </section>
 
     <section class="wrap" id="modules">
       <div class="section-heading">
         <h2>核心功能怎么分工</h2>
-        <p>资产归企业，能力按领域发布，Agent 按授权消费。</p>
+        <p>公司内部统一沉淀业务模型，能力按领域发布，任意 Agent 按合同消费。</p>
       </div>
       <div class="module-grid">
-        <article class="module"><span class="module-role">01 · 企业空间</span><h3>明确资产属于谁</h3><p>提供企业级安全、成员和治理边界。</p></article>
-        <article class="module"><span class="module-role">02 · 业务领域</span><h3>划分可管理范围</h3><p>例如客户、财税、授信或风险管理。</p></article>
-        <article class="module"><span class="module-role">03 · 企业模型</span><h3>统一业务与数据</h3><p>整合原查询语义和本体建模。</p></article>
-        <article class="module"><span class="module-role">04 · 孪生运行</span><h3>维护真实状态</h3><p>把源数据转换为可识别的业务对象。</p></article>
-        <article class="module"><span class="module-role">05 · 能力发布</span><h3>提供标准接口</h3><p>发布查询、决策和受控动作能力。</p></article>
-        <article class="module"><span class="module-role">06 · Agent / 应用</span><h3>处理垂直场景</h3><p>按授权调用能力，与具体用户交互。</p></article>
+        <article class="module"><span class="module-role">01 · 业务领域</span><h3>划分可管理范围</h3><p>例如客户、财税、授信或风险管理。</p></article>
+        <article class="module"><span class="module-role">02 · 企业模型</span><h3>统一业务与数据</h3><p>整合原查询语义和本体建模。</p></article>
+        <article class="module"><span class="module-role">03 · 孪生运行</span><h3>维护真实状态</h3><p>把源数据转换为可识别的业务对象。</p></article>
+        <article class="module"><span class="module-role">04 · 能力发布</span><h3>提供标准接口</h3><p>发布查询、决策和受控动作能力。</p></article>
+        <article class="module"><span class="module-role">05 · 验证 Agent</span><h3>调试底座效果</h3><p>在本项目内验证口径、结果和审计。</p></article>
+        <article class="module"><span class="module-role">06 · 第三方应用</span><h3>复用平台能力</h3><p>通过统一合同处理实际垂直业务。</p></article>
       </div>
     </section>
 
@@ -476,7 +476,7 @@
           <article class="roadmap-card">
             <span class="status">平台目标</span>
             <h3>企业智能中枢</h3>
-            <p>统一企业对象、指标、规则、数据和权限，供多个 Agent 复用。</p>
+            <p>统一企业对象、指标、规则、数据和权限，供不同 Agent 复用。</p>
             <div class="roadmap-value"><b>价值</b><span>避免重复建设，让 AI 使用同一套企业语言。</span></div>
           </article>
           <article class="roadmap-card">
@@ -499,14 +499,14 @@
     <section class="wrap" id="progress">
       <div class="section-heading">
         <h2>项目当前进度</h2>
-        <p>已有模型与能力原型，正在从单个 Agent 配置升级为企业级共享底座。</p>
+        <p>已有模型与能力原型，正在把本项目验证结果沉淀为可供第三方 Agent 使用的共享底座。</p>
       </div>
-      <div class="progress-summary">当前重点：企业模型中心、孪生运行时、能力发布中心</div>
+      <div class="progress-summary">当前重点：企业模型中心、孪生运行时、能力发布中心；对话仅作验证</div>
       <div class="progress-grid">
         <article class="progress-card done"><span class="status">已有基础</span><h3>企业模型原型</h3><p>对象、关系、指标、规则、映射、动作和发布能力已具备。</p></article>
         <article class="progress-card done"><span class="status">已有基础</span><h3>查询与动作能力</h3><p>对象查询、Query Capability 和受控 Action 已跑通。</p></article>
         <article class="progress-card done"><span class="status">技术切片</span><h3>决策可溯源</h3><p>贷款演示已串联风险、证据、复核、报告和审计。</p></article>
-        <article class="progress-card next"><span class="status">P0 已落地</span><h3>平台化骨架</h3><p>已统一资产归属、数据运行和能力发布入口。</p></article>
+        <article class="progress-card next"><span class="status">P0 已落地</span><h3>平台化骨架</h3><p>已统一业务领域、数据运行和能力发布入口。</p></article>
       </div>
       <div class="timeline">
         <div class="phase active"><b>P0 · 平台骨架</b><span>统一入口与资产关系</span></div>
@@ -531,8 +531,9 @@
 
   <footer>
     <div class="wrap footer-inner">
-      <span>问渠 WenQu · 项目会议简介 · 2026-09-03</span>
+      <span>问渠 WenQu · 项目会议简介 · 2026-09-04</span>
       <div class="footer-links">
+        <a href="docs/README.md">文档入口</a>
         <a href="README_CN.md">项目 README</a>
         <a href="docs/product-business-flow.md">业务流程文档</a>
         <a href="docs/ontology-product-roadmap.md">平台路线图</a>
