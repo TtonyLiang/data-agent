@@ -67,11 +67,36 @@ async def lf_to_sql_compile_node(state: dict) -> dict:
         log_node_end(logger, "lf_to_sql_compile", result)
         return result
 
-    trace = {
-        "used_assets": compiled.used_assets,
-        "warnings": compiled.warnings,
-        "compile_strategy": "deterministic_logic_form",
+    trace = dict(state.get("execution_trace") or {})
+    ontology_context = (
+        query_context.get("ontology_context")
+        if isinstance(query_context, dict)
+        and isinstance(query_context.get("ontology_context"), dict)
+        else {}
+    )
+    warnings = list(trace.get("warnings") or [])
+    for warning in [
+        *list(ontology_context.get("warnings") or []),
+        *list(compiled.warnings),
+    ]:
+        if warning not in warnings:
+            warnings.append(warning)
+    trace.update(
+        {
+            "used_assets": compiled.used_assets,
+            "warnings": warnings,
+            "compile_strategy": "deterministic_logic_form",
+        }
+    )
+    version_fields = {
+        "model_release": ontology_context.get("model_release"),
+        "semantic_snapshot": ontology_context.get("semantic_snapshot"),
+        "ontology_release": ontology_context.get("ontology_release")
+        or ontology_context.get("release"),
     }
+    trace.update(
+        {key: value for key, value in version_fields.items() if value is not None}
+    )
     if capability_key and query_context:
         capability = build_query_capability_registry(query_context).resolve(str(capability_key))
         if capability is not None:
@@ -82,10 +107,14 @@ async def lf_to_sql_compile_node(state: dict) -> dict:
                     "read_only": capability.read_only,
                 }
             )
+    sql_params = getattr(compiled, "sql_params", {})
+    if not isinstance(sql_params, dict):
+        sql_params = {}
     result = {
         "compiled_query": compiled.model_dump(),
         "compiled_sql": compiled.sql,
         "sql_text": compiled.sql,
+        "sql_params": sql_params,
         "sql_error": None,
         "execution_trace": trace,
     }

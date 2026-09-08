@@ -6,6 +6,8 @@ const source = readFileSync(new URL('./RiskDeliveryWorkbench.vue', import.meta.u
 assert.ok(
   source.includes('<h2>风险与报告交付</h2>') &&
     source.includes('v-model="domainId"') &&
+    source.includes('aria-label="选择风险交付业务领域"') &&
+    source.includes(':aria-busy="domainLoading || workspaceLoading || riskLoading || reportLoading || auditLoading"') &&
     source.includes('fetchOntologyDomains') &&
     source.includes('fetchOntologyObjects'),
   'workbench should expose the risk delivery title and domain-scoped ontology context',
@@ -28,6 +30,47 @@ assert.ok(
     !source.includes('@expand-change="handleRiskExpand"') &&
     !source.includes('<el-table-column type="expand"'),
   'risk table should support status/severity filters and open issue details from a row click',
+)
+
+assert.ok(
+  !source.includes('@keydown.enter.space') &&
+  source.includes('可点击行或使用查看详情按钮') &&
+    source.includes(':aria-label="`查看风险事项详情：${textFieldOr(row, \'未命名风险\', \'title\', \'name\')}`"') &&
+    source.includes('@keydown.enter.prevent.stop="openRiskDetail(row)"') &&
+    source.includes('@keydown.space.prevent.stop="openRiskDetail(row)"') &&
+    source.includes('@click.stop="openRiskDetail(row)"'),
+  'risk issue rows should retain mouse row access and provide an explicit keyboard-operable detail action',
+)
+
+assert.ok(
+  source.includes(':aria-label="`查看报告版本：${textFieldOr(row, \'未命名报告\', \'title\', \'name\')}`"') &&
+    source.includes('@keydown.enter.prevent.stop="openReportVersions(row)"') &&
+    source.includes('@keydown.space.prevent.stop="openReportVersions(row)"') &&
+    source.includes(':aria-label="`创建报告新版本：${textFieldOr(row, \'未命名报告\', \'title\', \'name\')}`"') &&
+    source.includes('@keydown.enter.prevent.stop="openVersionDialog(row)"') &&
+    source.includes('@keydown.space.prevent.stop="openVersionDialog(row)"') &&
+    source.includes(':aria-label="`定稿报告：${textFieldOr(row, \'未命名报告\', \'title\', \'name\')}`"') &&
+    source.includes('@keydown.enter.prevent.stop="handleFinalizeReport(row)"') &&
+    source.includes('@keydown.space.prevent.stop="handleFinalizeReport(row)"') &&
+    source.includes('tabindex="0"') &&
+    source.includes(':aria-label="`完整事件哈希：${String(field(row, \'event_hash\', \'hash\') || \'-\')}`"'),
+  'report actions and truncated audit hashes should expose row context to keyboard and assistive technology users',
+)
+
+for (const focusBinding of [
+  '@opened="focusControl(riskTitleInput)"',
+  '@opened="focusControl(evidenceTitleInput)"',
+  '@opened="focusControl(reviewActionSelect)"',
+  '@opened="focusControl(reportNameInput)"',
+  '@opened="focusControl(versionIssueSelect)"',
+]) {
+  assert.ok(source.includes(focusBinding), `dialog should focus its first field: ${focusBinding}`)
+}
+assert.ok(
+  source.includes('type FocusableControl = { focus: () => void }') &&
+    source.includes('function focusControl(control: FocusableControl | undefined)') &&
+    source.includes('requestAnimationFrame(() => control?.focus())'),
+  'dialog initial focus should use the Element Plus control focus API after opening',
 )
 
 assert.ok(
@@ -332,4 +375,11 @@ assert.ok(
     source.includes('class="table-section"') &&
     source.includes('class="version-record"'),
   'operational workspace should avoid nested cards and use flat sections and record rows',
+)
+
+assert.ok(
+  source.includes('垂直验证场景') &&
+    source.includes('贷款/财税垂直验证场景') &&
+    source.includes('暂无可访问业务领域，请联系管理员分配验证客户端权限'),
+  'risk delivery should present itself as a vertical validation scenario with role-appropriate empty guidance',
 )

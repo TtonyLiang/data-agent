@@ -23,11 +23,27 @@ from app.utils.logging_helpers import (
     log_node_start,
     truncate_text,
 )
-from app.utils.sql_validator import normalize_sql_for_execution
+from app.utils.sql_validator import normalize_sql_for_execution, tokenize_sql
 
 logger = logging.getLogger(__name__)
 # 慢查询告警阈值(秒)
 SLOW_QUERY_THRESHOLD_SECONDS = 2.0
+
+
+def _bind_parameter_names(sql: str) -> set[str]:
+    """Return SQLAlchemy-style bind names outside SQL strings and comments."""
+    tokens = tokenize_sql(sql)
+    names: set[str] = set()
+    for index, token in enumerate(tokens[:-1]):
+        next_token = tokens[index + 1]
+        if (
+            token.value == ":"
+            and next_token.kind == "word"
+            and token.end == next_token.start
+            and (index == 0 or tokens[index - 1].value != ":")
+        ):
+            names.add(next_token.value)
+    return names
 
 
 async def sql_execute_node(state: dict) -> dict:
@@ -81,9 +97,29 @@ async def sql_execute_node(state: dict) -> dict:
         log_node_end(logger, "sql_execute", result)
         return result
     safe_sql = validation.sql
+    raw_sql_params = state.get("sql_params") or {}
+    if not isinstance(raw_sql_params, dict):
+        raw_sql_params = {}
+    normalized_sql_params = {str(key): value for key, value in raw_sql_params.items()}
+    parameter_names = _bind_parameter_names(safe_sql)
+    missing_parameters = sorted(parameter_names - set(normalized_sql_params))
+    if missing_parameters:
+        result = {
+            "sql_result": [],
+            "sql_error": "SQL 参数缺失: " + "、".join(missing_parameters),
+            "final_answer": "查询未执行：SQL 参数不完整。",
+            "sql_retry_count": retry_count + 1,
+        }
+        log_node_end(logger, "sql_execute", result)
+        return result
+    sql_params = {
+        key: normalized_sql_params[key]
+        for key in parameter_names
+    }
 
     # 第2步:权限校验 —— 检查 SQL 引用的表是否在 agent 白名单内
-    access_ok, access_reason = await get_permission_service().validate_sql_access(
+    permission_service = get_permission_service()
+    access_ok, access_reason = await permission_service.validate_sql_access(
         agent_id, datasource_id, safe_sql
     )
     logger.info(
@@ -111,6 +147,32 @@ async def sql_execute_node(state: dict) -> dict:
         }
         log_node_end(logger, "sql_execute", result)
         return result
+    result_column_policies = {}
+    resolve_result_policies = getattr(
+        permission_service, "get_result_column_policies", None
+    )
+    if callable(resolve_result_policies):
+        try:
+            result_column_policies = await resolve_result_policies(
+                agent_id, datasource_id, safe_sql
+            )
+        except ValueError as exc:
+            result = {
+                "sql_result": [],
+                "sql_error": f"权限拦截: {exc}",
+                "final_answer": f"权限拦截: {exc}",
+                "sql_retry_count": retry_count + 1,
+                "execution_trace": {
+                    **dict(state.get("execution_trace") or {}),
+                    "trace_id": trace_id,
+                    "permission": {
+                        "allowed": False,
+                        "reason": str(exc),
+                    },
+                },
+            }
+            log_node_end(logger, "sql_execute", result)
+            return result
 
     # 第3步:执行查询 —— 对业务库执行 SELECT,记录耗时和行数
     try:
@@ -122,10 +184,22 @@ async def sql_execute_node(state: dict) -> dict:
             datasource_id,
             truncate_text(safe_sql, 2400),
         )
-        results = await db.execute_query(safe_sql)
-        masked_results, masking_applied = await get_permission_service().mask_rows(
-            agent_id, datasource_id, results
+        results = (
+            await db.execute_query(safe_sql, sql_params)
+            if sql_params
+            else await db.execute_query(safe_sql)
         )
+        if result_column_policies:
+            masked_results, masking_applied = await permission_service.mask_rows(
+                agent_id,
+                datasource_id,
+                results,
+                result_column_policies=result_column_policies,
+            )
+        else:
+            masked_results, masking_applied = await permission_service.mask_rows(
+                agent_id, datasource_id, results
+            )
         duration_ms = round((time.monotonic() - started_at) * 1000, 2)
         slow_query = duration_ms >= SLOW_QUERY_THRESHOLD_SECONDS * 1000
         if slow_query:
@@ -144,6 +218,7 @@ async def sql_execute_node(state: dict) -> dict:
                     "normalized": safe_sql != sql.strip(),
                     "limit_injected": "LIMIT" not in sql.upper(),
                     "max_limit": 1000,
+                    "bound_parameter_count": len(sql_params),
                 },
                 "sql_execution": {
                     "duration_ms": duration_ms,

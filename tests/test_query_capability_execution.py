@@ -47,6 +47,14 @@ def _runtime(datasource_id: int | None = 23) -> SemanticRuntime:
 def _context() -> dict:
     return {
         "domain": {"id": 9, "domain_key": "loan_risk", "name": "贷款风控"},
+        "model_release": {
+            "id": 40,
+            "version": 5,
+            "model_hash": "c" * 64,
+            "status": "active",
+        },
+        "semantic_snapshot": {"id": 30, "snapshot_hash": "b" * 64},
+        "ontology_release": {"id": 4, "version": 2, "definition_hash": "a" * 64},
         "release": {"id": 4, "version": 2, "definition_hash": "a" * 64},
         "object_types": [
             {
@@ -130,6 +138,8 @@ async def test_query_capability_executes_compiled_sql_with_domain_identity(monke
     assert result["execution_trace"]["trace_id"] != "trace-query-execution"
     assert result["execution_trace"]["domain_id"] == 9
     assert result["execution_trace"]["datasource_id"] == 23
+    assert result["execution_trace"]["model_release"] == _context()["model_release"]
+    assert result["execution_trace"]["semantic_snapshot"] == _context()["semantic_snapshot"]
     assert result["execution_trace"]["ontology_release"] == _context()["release"]
     assert result["execution_trace"]["release"] == _context()["release"]
     assert result["execution_trace"]["executed_sql"] == safe_sql
@@ -422,3 +432,44 @@ async def test_query_capability_rejects_non_object_logic_form(monkeypatch):
         )
 
     executor.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_query_capability_keeps_filter_values_out_of_compiled_sql(monkeypatch):
+    executor = AsyncMock(
+        return_value={
+            "sql_result": [{"application_count": 1}],
+            "sql_error": None,
+            "compiled_sql": (
+                "SELECT COUNT(*) AS application_count FROM loan_application "
+                "WHERE product_type = :lf_0 LIMIT 1000"
+            ),
+            "final_answer": "申请笔数为 1。",
+            "execution_trace": {},
+        }
+    )
+    monkeypatch.setattr(ontology_tools, "sql_execute_node", executor)
+    malicious_value = "\\' OR 1=1 #"
+
+    result = await ontology_tools.invoke_ontology_tool(
+        _service(),
+        9,
+        ontology_tools.QUERY_CAPABILITY_TOOL,
+        _arguments(
+            filters=[
+                {
+                    "field": "product_type",
+                    "operator": "=",
+                    "value": malicious_value,
+                }
+            ]
+        ),
+        {"id": 5, "role": "user"},
+        ontology_context=_context(),
+        semantic_runtime=_runtime(),
+    )
+
+    execution_state = executor.await_args.args[0]
+    assert malicious_value not in execution_state["compiled_sql"]
+    assert execution_state["sql_params"] == {"lf_0": malicious_value}
+    assert "sql_params" not in result["compiled_plan"]

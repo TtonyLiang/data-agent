@@ -60,14 +60,14 @@ Databases / APIs / files / business events
 
 Finance/tax report delivery, lending risk, and conversational querying are vertical applications and validation scenarios, not the final boundary of the platform. Chat currently demonstrates and validates the foundation rather than defining the product roadmap.
 
-### Capability Boundary as of 2026-09-04
+### Capability Boundary as of 2026-09-07
 
 | Status | Scope |
 |--------|-------|
-| **Implemented foundation** | Query-semantic assets, Ontology object/link/action modeling, LogicForm and deterministic SQL, object instances, release/audit prototypes, and demonstrable conversational analysis/reporting |
-| **Implemented technical slice** | Object queries, the first Query Capability, governed Action tools, plus a lending-domain risk/evidence/review/report/decision-audit loop |
-| **Implemented P0 compatibility skeleton** | Business-domain ownership, a unified Enterprise Model entry, pages that surface existing twin-runtime and capability APIs, and an internal Agent validation adapter |
-| **Future work** | Production incremental sync/CDC, identity resolution, state history, data quality and lineage, formal capability release governance, reusable Decision Capabilities, and reliable external-system writeback |
+| **Implemented foundation** | Unified Ontology/query semantics, server-validated enterprise model releases, parameterized LogicForm SQL, fail-closed table/column permissions, and protected object/link/action results |
+| **Implemented technical slice** | Manual twin preview/execution with version lineage, external Query Capability credentials and grants, invocation audit, and built-in/external consumer parity tests |
+| **Implemented validation applications** | Conversational querying plus the lending-domain risk/evidence/review/report/decision-audit loop on synthetic data |
+| **Future work** | Production incremental sync/CDC, identity resolution, state history, data quality/lineage, SDK and quota governance, external Decision/Action APIs, and reliable external-system writeback |
 
 The loan-risk domain is currently used only to validate the technical workflow. Its sample data, thresholds, rules, and conclusions are synthetic and must not be treated as real lending, finance, tax, accounting, audit, or compliance advice.
 
@@ -83,11 +83,11 @@ Model objects, properties, relationships, events, states, and actions together w
 
 ### Data Processing and Twin Runtime
 
-Map database records into Ontology object instances while keeping source properties separate from local action overlays. Read-only object synchronization and instance queries already exist through page/API triggers, and P0 provides a unified runtime entry. Scheduled incremental sync, CDC, cross-system identity resolution, complete state history, and production data-quality governance remain future work.
+Map database records into Ontology object instances while keeping source properties separate from local action overlays. The first runtime version supports permission-aware preview, administrator-triggered execution, run statistics, trace records, and active-model/data-source drift checks. Scheduled incremental sync, CDC, cross-system identity resolution, complete state history, and production data-quality governance remain future work.
 
 ### Capability Publishing Center
 
-Expose the model as standard capabilities for third-party agents and applications. `Query Capability` handles read-only object queries and metrics, `Action Capability` handles governed side effects, and future `Decision Capability` contracts will handle rule/model evaluation. Object query, a first Query Capability, and Action tools already exist; P0 centralizes discovery and debug validation without claiming a production capability gateway.
+Expose the model as standard capabilities for third-party agents and applications. The first external slice provides independent caller credentials, per-domain Query Capability grants, a stable invoke API, sanitized failures, and audit summaries. Action tools remain available for governed in-project validation; external Decision/Action APIs, SDKs, quotas, and grey releases remain future work.
 
 ### Risk Report Delivery Loop (Vertical Technical Slice)
 
@@ -97,7 +97,7 @@ Completed query results in Chat can be converted directly into risk issues. The 
 
 ### Business Ontology Foundation
 
-Model the business through object types, properties, relationships, states, and governed actions. Validate and publish model versions, manage instances and permissions, and retain runtime audit records for shared use by data, AI agents, reports, and applications. Ontology is an enterprise asset, not private configuration owned by one Agent.
+Model the business through object types, properties, relationships, states, and governed actions, then validate and publish immutable model versions. Object instances, relationship instances, and action-run records are managed in Twin Runtime. Ontology is an enterprise asset, not private configuration owned by one Agent.
 
 ### Governed AI Data Querying
 
@@ -342,7 +342,8 @@ P0 preserves existing data through business-domain ownership and an internal Age
 - **Object types and properties** define core entities, business identities, fields, and states.
 - **Relationship types** express business associations, cardinality, and connection paths.
 - **Business actions** define parameters, preconditions, authorized roles, approval requirements, and state effects.
-- **Instances, releases, and audit** manage runtime objects, publish validated versions, and retain action and state-change history.
+- **Model releases** validate and publish immutable Ontology definitions, then bind them to query-semantic snapshots as one enterprise-model release.
+- **Twin runtime and audit** manage object/link instances, synchronization, action runs, and state-change history.
 
 #### Six Query Semantic Asset Types
 
@@ -557,10 +558,10 @@ sequenceDiagram
 
 | Page | Route | Function |
 |------|-------|----------|
-| Chat | `/` | Built-in validation Agent surface with query pipeline, SQL, result table, and reports |
+| Chat Validation | `/` | Built-in validation Agent surface with query pipeline, SQL, result table, and reports |
 | Enterprise Model | `/enterprise-model` | Unified entry for query semantics and Ontology assets organized by company business domain |
-| Twin Runtime | `/twin-runtime` | View object types, instances, and current manual paginated synchronization; not a background scheduler |
-| Capability Center | `/capability-center` | Discover existing object query, Query Capability, and Action Capability contracts |
+| Twin Runtime | `/twin-runtime` | View sync tasks, object/link instances, and action-run records; not a background scheduler |
+| Capability Center | `/capability-center` | Manage external Query callers, grants, and audits; object queries and Actions are labeled as internal validation tools |
 | Validation Agent | `/agent` | Configure the built-in debugging/validation client; third-party agents are not registered here |
 | Model Config | `/model-config` | Manage LLM and embedding model configurations, test connectivity |
 | Datasource | `/datasource` | Datasource connection management, table schema collection, field details |
@@ -703,9 +704,8 @@ Stores system configuration, metadata, and session history:
 | Semantic Layer | `semantic_concept`, `semantic_relation`, `semantic_metric` | Concepts, relations, metrics |
 | Semantic Layer | `semantic_rule`, `semantic_mapping`, `logic_form_template` | Rules, mappings, templates |
 | Enterprise Ontology | `ontology_object_type`, `ontology_property` | Object-type and property definitions |
-| Enterprise Ontology | `ontology_link_type`, `ontology_link` | Link-type and link instances |
-| Enterprise Ontology | `ontology_action_type`, `ontology_action_run` | Action definitions and execution records |
-| Enterprise Ontology | `ontology_object`, `ontology_release` | Object instances and published releases |
+| Enterprise Ontology | `ontology_link_type`, `ontology_action_type`, `ontology_release` | Link/action definitions and Ontology releases |
+| Twin Runtime | `ontology_object`, `ontology_link`, `ontology_action_run`, `twin_sync_run` | Object/link instances, action runs, and synchronization records |
 | Risk Delivery | `risk_issue`, `risk_evidence` | Risk issues and evidence |
 | Risk Delivery | `risk_issue_review`, `risk_report`, `risk_report_version` | Reviews, reports, and immutable versions |
 | Decision Audit | `decision_audit_event`, `decision_audit_head` | Append-only audit events and chain head |
@@ -872,11 +872,12 @@ Example queries:
 
 ## Roadmap
 
-The platform roadmap is maintained in the [Ontology Product Roadmap](docs/ontology-product-roadmap.md), dated 2026-09-04. The [Risk Report Delivery Roadmap](docs/risk-report-delivery-roadmap.md) remains a vertical finance/tax and lending validation plan rather than the overall product roadmap.
+The platform roadmap is maintained in the [Ontology Product Roadmap](docs/ontology-product-roadmap.md), dated 2026-09-08. The [Risk Report Delivery Roadmap](docs/risk-report-delivery-roadmap.md) remains a vertical finance/tax and lending validation plan rather than the overall product roadmap.
 
 | Phase | Goal | Acceptance gate |
 |-------|------|-----------------|
 | P0 platform skeleton | Add business-domain ownership, the three unified product entries, and an internal validation-Agent adapter | Existing demo data migrates compatibly; Enterprise Model, Twin Runtime, and Capability Center are visible without breaking current querying |
+| P0.5 data-security gate | Enforce explicit table/column permissions, masking lineage, version pinning, and protected object/action access | Allowed, denied, alias-masking, synchronization, and external-call tests pass before real sensitive data is connected |
 | P1 Enterprise Model Center | Govern objects, links, metrics, rules, mappings, actions, and releases as one model | One real domain can be modeled, mapping-tested, published, diffed, and rolled back |
 | P2 Twin Runtime | Add incremental sync, identity resolution, current/history state, quality, and lineage | Real data updates reliably; conflicts, bad records, and provenance are traceable |
 | P3 Capability Publishing Center | Formally publish and govern Agent-independent Query / Decision / Action contracts | External agents call by version and permission without creating an internal Agent; schemas, audit, limits, and failure contracts are stable |

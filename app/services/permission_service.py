@@ -27,9 +27,16 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.db.mysql import get_management_db
-from app.utils.sql_validator import extract_table_references
+from app.models.permission import (
+    ColumnPermissionRule,
+    DatasourcePermissionConfig,
+    DatasourcePermissionReplace,
+    TablePermissionRule,
+)
+from app.utils.sql_validator import extract_table_references, tokenize_sql
 
 logger = logging.getLogger(__name__)
+_MASKING_PRIORITY = {"none": 0, "partial": 1, "hash": 2, "redact": 3}
 
 
 @dataclass(frozen=True)
@@ -44,14 +51,19 @@ class PermissionService:
     """智能体级表/列权限与结果脱敏服务。"""
 
     async def filter_schema(
-        self, agent_id: int | None, datasource_id: int | None, schema: list[dict]
+        self,
+        agent_id: int | None,
+        datasource_id: int | None,
+        schema: list[dict],
+        *,
+        enforce_table_allowlist: bool = True,
     ) -> list[dict]:
         """在 schema 上叠加权限规则:移除被拒的表/列,标记脱敏策略。
 
         返回过滤后的 schema(结构不变),用于数据定位和 NL2SQL 兜底。
         """
         if not agent_id or not datasource_id:
-            return schema
+            return [] if enforce_table_allowlist else schema
 
         table_permissions = await self.get_table_permissions(agent_id, datasource_id)
         column_permissions = await self.get_column_permissions(agent_id, datasource_id)
@@ -60,7 +72,11 @@ class PermissionService:
         for table in schema:
             table_name = str(table.get("table_name") or "")
             # 表级权限:不在白名单中的表整体移除
-            if not self.table_allowed(table_name, table_permissions):
+            if not self.table_allowed(
+                table_name,
+                table_permissions,
+                enforce_table_allowlist=enforce_table_allowlist,
+            ):
                 continue
             table_data = dict(table)
             columns = []
@@ -89,40 +105,346 @@ class PermissionService:
         return filtered
 
     async def validate_sql_access(
-        self, agent_id: int | None, datasource_id: int | None, sql: str
+        self,
+        agent_id: int | None,
+        datasource_id: int | None,
+        sql: str,
+        *,
+        enforce_table_allowlist: bool = True,
     ) -> tuple[bool, str]:
         """SQL 执行前权限检查:验证 SQL 引用的表是否全部被允许。
 
         返回 (allowed, reason)。reason 为 "OK" 时表示通过。
         """
+        source_tables = extract_table_references(sql)
+        if not source_tables:
+            return True, "OK"
         if not agent_id or not datasource_id:
+            if enforce_table_allowlist:
+                return False, "缺少明确的权限主体或数据源"
             return True, "OK"
 
         table_permissions = await self.get_table_permissions(agent_id, datasource_id)
-        if not table_permissions:
-            return True, "OK"
+        if not table_permissions and enforce_table_allowlist:
+            return False, "当前权限主体未配置表白名单"
 
         # 提取 SQL 中 FROM/JOIN 引用的表名
         denied = [
             table
-            for table in extract_table_references(sql)
-            if not self.table_allowed(table, table_permissions)
+            for table in source_tables
+            if not self.table_allowed(
+                table,
+                table_permissions,
+                enforce_table_allowlist=enforce_table_allowlist,
+            )
         ]
         if denied:
             logger.warning(
-                "permission validate_sql_access BLOCKED agent_id=%s datasource_id=%s denied_tables=%s",
+                "permission validate_sql_access BLOCKED agent_id=%s "
+                "datasource_id=%s denied_tables=%s",
                 agent_id,
                 datasource_id,
                 denied,
             )
             return False, "无权访问表: " + "、".join(denied)
+        column_permissions = await self.get_column_permissions(agent_id, datasource_id)
+        denied_columns = self._denied_column_references(
+            sql,
+            source_tables,
+            column_permissions,
+        )
+        if denied_columns:
+            logger.warning(
+                "permission validate_sql_access BLOCKED agent_id=%s "
+                "datasource_id=%s denied_columns=%s",
+                agent_id,
+                datasource_id,
+                denied_columns,
+            )
+            return False, "无权访问字段: " + "、".join(denied_columns)
+        _, lineage_error = self._masked_result_column_policies(
+            sql,
+            source_tables,
+            column_permissions,
+        )
+        if lineage_error:
+            return False, lineage_error
         return True, "OK"
+
+    async def get_result_column_policies(
+        self,
+        agent_id: int | None,
+        datasource_id: int | None,
+        sql: str,
+    ) -> dict[str, ColumnPolicy]:
+        """Resolve masking policies from physical SELECT columns to output names."""
+        source_tables = extract_table_references(sql)
+        if not source_tables or not agent_id or not datasource_id:
+            return {}
+        column_permissions = await self.get_column_permissions(agent_id, datasource_id)
+        return self.resolve_result_column_policies(
+            sql,
+            source_tables,
+            column_permissions,
+        )
+
+    @classmethod
+    def resolve_result_column_policies(
+        cls,
+        sql: str,
+        source_tables: list[str],
+        column_permissions: dict[tuple[str, str], ColumnPolicy],
+    ) -> dict[str, ColumnPolicy]:
+        """Resolve protected physical columns to their SELECT output names."""
+        policies, error = cls._masked_result_column_policies(
+            sql,
+            source_tables,
+            column_permissions,
+        )
+        if error:
+            raise ValueError(error)
+        return policies
+
+    @staticmethod
+    def _denied_column_references(
+        sql: str,
+        source_tables: list[str],
+        column_permissions: dict[tuple[str, str], ColumnPolicy],
+    ) -> list[str]:
+        """Return denied physical columns referenced anywhere in a SELECT."""
+        referenced_tables = {table.lower() for table in source_tables}
+        denied = {
+            (table, column)
+            for (table, column), policy in column_permissions.items()
+            if table in referenced_tables and not policy.allowed
+        }
+        if not denied:
+            return []
+        tokens = tokenize_sql(sql)
+        identifier_values = {
+            token.value.lower()
+            for token in tokens
+            if token.kind in {"word", "identifier"}
+        }
+        matched = {
+            f"{table}.{column}"
+            for table, column in denied
+            if column in identifier_values
+        }
+        if PermissionService._selects_top_level_wildcard(tokens):
+            matched.update(f"{table}.{column}" for table, column in denied)
+        return sorted(matched)
+
+    @staticmethod
+    def _selects_top_level_wildcard(tokens: list[Any]) -> bool:
+        """Detect SELECT * and SELECT alias.* without treating COUNT(*) as data access."""
+        depth = 0
+        selecting = False
+        meaningful = [token for token in tokens if token.kind != "comment"]
+        for index, token in enumerate(meaningful):
+            if token.value == "(":
+                depth += 1
+                continue
+            if token.value == ")":
+                depth = max(depth - 1, 0)
+                continue
+            if depth != 0:
+                continue
+            if token.kind == "word" and token.upper == "SELECT":
+                selecting = True
+                continue
+            if selecting and token.kind == "word" and token.upper == "FROM":
+                return False
+            if not selecting or token.value != "*":
+                continue
+            previous = meaningful[index - 1] if index else None
+            if previous is None or previous.upper == "SELECT" or previous.value in {",", "."}:
+                return True
+        return False
+
+    @classmethod
+    def _masked_result_column_policies(
+        cls,
+        sql: str,
+        source_tables: list[str],
+        column_permissions: dict[tuple[str, str], ColumnPolicy],
+    ) -> tuple[dict[str, ColumnPolicy], str | None]:
+        """Map masked physical columns in SELECT expressions to result column names."""
+        referenced_tables = {table.lower() for table in source_tables}
+        masked = {
+            (table, column): policy
+            for (table, column), policy in column_permissions.items()
+            if table in referenced_tables
+            and (not policy.allowed or policy.masking_policy != "none")
+        }
+        if not masked:
+            return {}, None
+
+        tokens = [token for token in tokenize_sql(sql) if token.kind != "comment"]
+        ranges = cls._select_projection_ranges(tokens)
+        top_range = next((item for item in ranges if item[2] == 0), None)
+        if top_range is None:
+            return {}, "无法安全解析脱敏字段血缘: 缺少顶层 SELECT 投影"
+        top_start, top_end, _ = top_range
+        masked_names = {column for _table, column in masked}
+
+        for start, end, _depth in ranges:
+            if start <= top_end:
+                continue
+            identifiers = {
+                token.value.lower()
+                for token in tokens[start:end]
+                if token.kind in {"word", "identifier"}
+            }
+            if identifiers & masked_names:
+                return {}, "无法安全解析脱敏字段血缘: 派生查询隐藏了物理字段"
+
+        result: dict[str, ColumnPolicy] = {}
+        for projection in cls._split_select_projections(tokens[top_start:top_end]):
+            identifiers = {
+                token.value.lower()
+                for token in projection
+                if token.kind in {"word", "identifier"}
+            }
+            matched = [
+                policy
+                for (_table, column), policy in masked.items()
+                if column in identifiers
+            ]
+            if not matched:
+                continue
+            if cls._projection_is_wildcard(projection):
+                for (_table, column), policy in masked.items():
+                    cls._merge_output_policy(result, column, policy)
+                continue
+            output_name = cls._projection_output_name(projection)
+            if not output_name:
+                return {}, "无法安全解析脱敏字段血缘: 表达式缺少明确输出别名"
+            strongest = max(
+                matched,
+                key=lambda policy: _MASKING_PRIORITY.get(
+                    policy.masking_policy, _MASKING_PRIORITY["redact"]
+                ),
+            )
+            cls._merge_output_policy(result, output_name, strongest)
+        return result, None
+
+    @staticmethod
+    def _select_projection_ranges(tokens: list[Any]) -> list[tuple[int, int, int]]:
+        depths: list[int] = []
+        depth = 0
+        for token in tokens:
+            depths.append(depth)
+            if token.value == "(":
+                depth += 1
+            elif token.value == ")":
+                depth = max(depth - 1, 0)
+
+        ranges: list[tuple[int, int, int]] = []
+        for index, token in enumerate(tokens):
+            if token.kind != "word" or token.upper != "SELECT":
+                continue
+            select_depth = depths[index]
+            end = next(
+                (
+                    candidate
+                    for candidate in range(index + 1, len(tokens))
+                    if depths[candidate] == select_depth
+                    and tokens[candidate].kind == "word"
+                    and tokens[candidate].upper == "FROM"
+                ),
+                len(tokens),
+            )
+            ranges.append((index + 1, end, select_depth))
+        return ranges
+
+    @staticmethod
+    def _split_select_projections(tokens: list[Any]) -> list[list[Any]]:
+        projections: list[list[Any]] = []
+        current: list[Any] = []
+        depth = 0
+        for token in tokens:
+            if token.value == "(":
+                depth += 1
+            elif token.value == ")":
+                depth = max(depth - 1, 0)
+            if token.value == "," and depth == 0:
+                if current:
+                    projections.append(current)
+                current = []
+                continue
+            current.append(token)
+        if current:
+            projections.append(current)
+        return projections
+
+    @staticmethod
+    def _projection_is_wildcard(tokens: list[Any]) -> bool:
+        values = [token.value for token in tokens]
+        return values == ["*"] or (
+            len(values) == 3 and values[1:] == [".", "*"]
+        )
+
+    @staticmethod
+    def _projection_output_name(tokens: list[Any]) -> str | None:
+        depth = 0
+        top_level_indexes: list[int] = []
+        for index, token in enumerate(tokens):
+            if token.value == "(":
+                depth += 1
+            elif token.value == ")":
+                depth = max(depth - 1, 0)
+            elif depth == 0:
+                top_level_indexes.append(index)
+
+        for index in reversed(top_level_indexes):
+            token = tokens[index]
+            if token.kind == "word" and token.upper == "AS":
+                output = tokens[index + 1] if index + 1 < len(tokens) else None
+                if output and output.kind in {"word", "identifier"}:
+                    return output.value
+                return None
+
+        compact = [token for token in tokens if token.value not in {"(", ")"}]
+        if len(compact) == 1 and compact[0].kind in {"word", "identifier"}:
+            return compact[0].value
+        if (
+            len(compact) == 3
+            and compact[1].value == "."
+            and compact[2].kind in {"word", "identifier"}
+        ):
+            return compact[2].value
+        if (
+            len(compact) == 2
+            and compact[0].kind == "word"
+            and compact[0].upper == "DISTINCT"
+            and compact[1].kind in {"word", "identifier"}
+        ):
+            return compact[1].value
+        return None
+
+    @staticmethod
+    def _merge_output_policy(
+        result: dict[str, ColumnPolicy],
+        output_name: str,
+        policy: ColumnPolicy,
+    ) -> None:
+        key = output_name.lower()
+        existing = result.get(key)
+        if existing is None or _MASKING_PRIORITY.get(
+            policy.masking_policy, _MASKING_PRIORITY["redact"]
+        ) > _MASKING_PRIORITY.get(
+            existing.masking_policy, _MASKING_PRIORITY["redact"]
+        ):
+            result[key] = policy
 
     async def mask_rows(
         self,
         agent_id: int | None,
         datasource_id: int | None,
         rows: list[dict[str, Any]],
+        *,
+        result_column_policies: dict[str, ColumnPolicy] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, str]]:
         """对 SQL 执行结果中配置了脱敏策略的列进行脱敏。
 
@@ -133,11 +455,23 @@ class PermissionService:
 
         column_permissions = await self.get_column_permissions(agent_id, datasource_id)
         # 构建需要脱敏的字段映射
-        masking_by_column = {
-            column: (policy.masking_policy if policy.allowed else "redact")
-            for (_table, column), policy in column_permissions.items()
-            if not policy.allowed or policy.masking_policy != "none"
-        }
+        masking_by_column: dict[str, str] = {}
+        for (_table, column), policy in column_permissions.items():
+            if policy.allowed and policy.masking_policy == "none":
+                continue
+            masking_policy = policy.masking_policy if policy.allowed else "redact"
+            existing = masking_by_column.get(column)
+            if existing is None or _MASKING_PRIORITY.get(
+                masking_policy, _MASKING_PRIORITY["redact"]
+            ) > _MASKING_PRIORITY.get(existing, _MASKING_PRIORITY["redact"]):
+                masking_by_column[column] = masking_policy
+        for output_name, policy in (result_column_policies or {}).items():
+            masking_policy = policy.masking_policy if policy.allowed else "redact"
+            existing = masking_by_column.get(output_name.lower())
+            if existing is None or _MASKING_PRIORITY.get(
+                masking_policy, _MASKING_PRIORITY["redact"]
+            ) > _MASKING_PRIORITY.get(existing, _MASKING_PRIORITY["redact"]):
+                masking_by_column[output_name.lower()] = masking_policy
         if not masking_by_column:
             return rows, {}
 
@@ -190,11 +524,139 @@ class PermissionService:
             )
         return policies
 
+    async def get_permission_configuration(
+        self, agent_id: int, datasource_id: int
+    ) -> DatasourcePermissionConfig:
+        """Return all explicit table and column rules for one Agent and datasource."""
+        db = get_management_db()
+        table_rows = await db.execute_query(
+            "SELECT table_name, allowed FROM agent_table_permission "
+            "WHERE agent_id = :aid AND datasource_id = :did ORDER BY table_name",
+            {"aid": agent_id, "did": datasource_id},
+        )
+        column_rows = await db.execute_query(
+            "SELECT table_name, column_name, allowed, masking_policy "
+            "FROM agent_column_permission "
+            "WHERE agent_id = :aid AND datasource_id = :did "
+            "ORDER BY table_name, column_name",
+            {"aid": agent_id, "did": datasource_id},
+        )
+        table_permissions = [
+            TablePermissionRule(
+                table_name=str(row["table_name"]),
+                allowed=bool(row.get("allowed", 1)),
+            )
+            for row in table_rows
+        ]
+        column_permissions = []
+        for row in column_rows:
+            masking_policy = str(row.get("masking_policy") or "none").lower()
+            if masking_policy not in {"none", "redact", "partial", "hash"}:
+                masking_policy = "redact"
+            column_permissions.append(
+                ColumnPermissionRule(
+                    table_name=str(row["table_name"]),
+                    column_name=str(row["column_name"]),
+                    allowed=bool(row.get("allowed", 1)),
+                    masking_policy=masking_policy,
+                )
+            )
+        return DatasourcePermissionConfig(
+            agent_id=agent_id,
+            datasource_id=datasource_id,
+            table_permissions=table_permissions,
+            column_permissions=column_permissions,
+        )
+
+    async def replace_permission_configuration(
+        self,
+        agent_id: int,
+        datasource_id: int,
+        configuration: DatasourcePermissionReplace,
+    ) -> DatasourcePermissionConfig:
+        """Atomically replace all explicit rules for one Agent and datasource."""
+        table_permissions = sorted(
+            configuration.table_permissions,
+            key=lambda rule: rule.table_name.lower(),
+        )
+        column_permissions = sorted(
+            configuration.column_permissions,
+            key=lambda rule: (rule.table_name.lower(), rule.column_name.lower()),
+        )
+        statements: list[tuple[str, dict | None]] = [
+            (
+                "DELETE FROM agent_table_permission "
+                "WHERE agent_id = :aid AND datasource_id = :did",
+                {"aid": agent_id, "did": datasource_id},
+            ),
+            (
+                "DELETE FROM agent_column_permission "
+                "WHERE agent_id = :aid AND datasource_id = :did",
+                {"aid": agent_id, "did": datasource_id},
+            ),
+        ]
+        statements.extend(
+            (
+                "INSERT INTO agent_table_permission "
+                "(agent_id, datasource_id, table_name, allowed) "
+                "VALUES (:aid, :did, :table_name, :allowed)",
+                {
+                    "aid": agent_id,
+                    "did": datasource_id,
+                    "table_name": rule.table_name,
+                    "allowed": int(rule.allowed),
+                },
+            )
+            for rule in table_permissions
+        )
+        statements.extend(
+            (
+                "INSERT INTO agent_column_permission "
+                "(agent_id, datasource_id, table_name, column_name, allowed, masking_policy) "
+                "VALUES (:aid, :did, :table_name, :column_name, :allowed, :masking_policy)",
+                {
+                    "aid": agent_id,
+                    "did": datasource_id,
+                    "table_name": rule.table_name,
+                    "column_name": rule.column_name,
+                    "allowed": int(rule.allowed),
+                    "masking_policy": rule.masking_policy,
+                },
+            )
+            for rule in column_permissions
+        )
+
+        db = get_management_db()
+        if hasattr(db, "execute_transaction"):
+            await db.execute_transaction(statements)
+        else:
+            for sql, params in statements:
+                await db.execute_query(sql, params)
+        logger.info(
+            "permission configuration replaced agent_id=%s datasource_id=%s "
+            "table_rules=%s column_rules=%s",
+            agent_id,
+            datasource_id,
+            len(table_permissions),
+            len(column_permissions),
+        )
+        return DatasourcePermissionConfig(
+            agent_id=agent_id,
+            datasource_id=datasource_id,
+            table_permissions=table_permissions,
+            column_permissions=column_permissions,
+        )
+
     @staticmethod
-    def table_allowed(table_name: str, table_permissions: dict[str, bool]) -> bool:
-        """判断表是否在白名单内。无白名单时默认允许。"""
+    def table_allowed(
+        table_name: str,
+        table_permissions: dict[str, bool],
+        *,
+        enforce_table_allowlist: bool = True,
+    ) -> bool:
+        """判断表是否在白名单内；仅显式兼容模式允许空白名单。"""
         if not table_permissions:
-            return True
+            return not enforce_table_allowlist
         return bool(table_permissions.get(table_name.lower(), False))
 
 

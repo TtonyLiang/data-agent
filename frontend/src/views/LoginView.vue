@@ -1,5 +1,5 @@
 <template>
-  <main class="auth-page">
+  <main class="auth-page" :aria-busy="loading">
     <div class="auth-shell">
       <aside class="brand-panel" aria-label="问渠 WenQu 企业本体数字孪生与智能决策平台">
         <div class="brand-lockup">
@@ -13,13 +13,13 @@
         </div>
 
         <div class="brand-copy">
-          <h2>把数据结论变成可交付决策。</h2>
-          <p>连接风险事项、证据、人工复核、报告版本与受控业务动作。</p>
+          <h2>让 AI 读懂公司的业务与数据。</h2>
+          <p>用企业模型连接业务语义、数据孪生与可复用能力。</p>
         </div>
 
         <div class="access-note">
           <el-icon aria-hidden="true"><Lock /></el-icon>
-          <span>访问范围由工作区权限控制</span>
+          <span>访问范围由公司内部权限统一控制</span>
         </div>
       </aside>
 
@@ -36,7 +36,7 @@
 
         <header class="form-heading">
           <h1 id="login-title">登录</h1>
-          <p>使用工作区账号继续</p>
+          <p>使用公司内部账号继续</p>
         </header>
 
         <el-alert
@@ -51,7 +51,7 @@
 
         <el-form class="auth-form" :model="form" label-position="top" @submit.prevent="handleLogin">
           <el-form-item label="用户名">
-            <el-input v-model="form.username" autocomplete="username" placeholder="请输入用户名" :disabled="loading" name="username">
+            <el-input v-model="form.username" autocomplete="username" placeholder="请输入用户名" :disabled="loading" name="username" autofocus>
               <template #prefix>
                 <el-icon aria-hidden="true"><User /></el-icon>
               </template>
@@ -313,13 +313,13 @@ async function handleLogin() {
   padding: 1px 13px;
   border-radius: 8px;
   background: #ffffff;
-  box-shadow: 0 0 0 1px #c8d1dc inset !important;
+  box-shadow: 0 0 0 1px #7f8c9f inset !important;
   transition: box-shadow 0.18s ease, background-color 0.18s ease;
 }
 
 :deep(.el-input__wrapper:hover) {
   background: #fbfcfe;
-  box-shadow: 0 0 0 1px #8b9aae inset !important;
+  box-shadow: 0 0 0 1px #667085 inset !important;
 }
 
 :deep(.el-input__wrapper.is-focus) {

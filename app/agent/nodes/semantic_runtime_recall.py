@@ -49,12 +49,50 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
         truncate_text(question, 600),
     )
 
+    ontology_context = None
+    ontology_context_error: Exception | None = None
     try:
-        runtime = await svc.build_runtime(
-            agent_id=agent_id,
-            datasource_id=datasource_id,
-            domain_id=domain_id,
+        ontology_context = await get_ontology_service().build_agent_context(
+            domain_id,
+            role=str(state.get("user_role") or "user"),
         )
+    except Exception as exc:
+        ontology_context_error = exc
+        logger.warning(
+            "ontology context unavailable agent_id=%s domain_id=%s error=%s",
+            agent_id,
+            domain_id,
+            exc,
+        )
+
+    try:
+        if ontology_context_error is not None:
+            raise ontology_context_error
+        runtime_domain = await svc.get_domain(domain_id)
+        if runtime_domain is None:
+            raise ValueError("企业业务领域不存在")
+        if str(runtime_domain.status or "").lower() != "active":
+            raise ValueError("当前业务领域已停用")
+        semantic_snapshot = (
+            ontology_context.get("semantic_snapshot")
+            if isinstance(ontology_context, dict)
+            else None
+        )
+        if isinstance(semantic_snapshot, dict) and semantic_snapshot.get("id"):
+            runtime = await svc.build_runtime_from_snapshot(
+                domain_id,
+                int(semantic_snapshot["id"]),
+                agent_id=agent_id,
+                expected_snapshot_hash=str(
+                    semantic_snapshot.get("snapshot_hash") or ""
+                ),
+            )
+        else:
+            runtime = await svc.build_runtime(
+                agent_id=agent_id,
+                datasource_id=datasource_id,
+                domain_id=domain_id,
+            )
     except Exception as exc:
         log_node_error(logger, "semantic_runtime_recall", exc, state)
         result = {
@@ -123,19 +161,6 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
     # business objects and governed actions while the semantic runtime keeps
     # metric-to-SQL mappings.  Loading it here makes both available in one
     # deterministic graph observation.
-    try:
-        ontology_context = await get_ontology_service().build_agent_context(
-            domain_id,
-            role=str(state.get("user_role") or "user"),
-        )
-    except Exception as exc:
-        logger.warning(
-            "ontology context unavailable agent_id=%s domain_id=%s error=%s",
-            agent_id,
-            domain_id,
-            exc,
-        )
-        ontology_context = None
     result["ontology_context"] = ontology_context
     result["ontology_evidence"] = build_ontology_evidence(question, ontology_context)
     runtime_payload = runtime.model_dump()

@@ -37,7 +37,7 @@ from app.agent.nodes.intent import rule_based_intent_with_history
 from app.api.deps import get_current_user, require_agent_access
 from app.config import get_settings
 from app.db.migrations import run_management_migrations
-from app.db.mysql import get_management_db
+from app.db.mysql import close_database_clients, get_management_db
 from app.logging_config import configure_file_logging
 from app.models.user import PublicUser
 from app.security import auth_and_rate_limit_middleware
@@ -97,7 +97,10 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("management database migration failed")
         raise
-    yield
+    try:
+        yield
+    finally:
+        await close_database_clients()
 
 
 app = FastAPI(
@@ -2037,27 +2040,33 @@ def compact_history_value(value: Any) -> Any:
 # 注册子路由
 from app.api.agent import router as agent_router  # noqa: E402
 from app.api.auth import router as auth_router  # noqa: E402
+from app.api.capability_access import router as capability_access_router  # noqa: E402
 from app.api.datasource import router as ds_router  # noqa: E402
 from app.api.feedback import router as feedback_router  # noqa: E402
 from app.api.model_config import router as model_config_router  # noqa: E402
+from app.api.model_release import router as model_release_router  # noqa: E402
 from app.api.ontology import router as ontology_router  # noqa: E402
 from app.api.prompt import router as prompt_router  # noqa: E402
 from app.api.risk_workflow import router as risk_workflow_router  # noqa: E402
 from app.api.semantic import router as semantic_router  # noqa: E402
 from app.api.system_parameter import router as system_parameter_router  # noqa: E402
+from app.api.twin_runtime import router as twin_runtime_router  # noqa: E402
 from app.api.user import router as user_router  # noqa: E402
 from app.api.workspace import router as workspace_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["认证"])
+app.include_router(capability_access_router, prefix="/api", tags=["能力调用"])
 app.include_router(agent_router, prefix="/api/agent", tags=["智能体"])
 app.include_router(ds_router, prefix="/api/datasource", tags=["数据源"])
 app.include_router(feedback_router, prefix="/api/feedback", tags=["反馈"])
 app.include_router(model_config_router, prefix="/api/model-config", tags=["模型配置"])
+app.include_router(model_release_router, prefix="/api/model-releases", tags=["企业模型版本"])
 app.include_router(ontology_router, prefix="/api/ontology", tags=["企业本体"])
 app.include_router(prompt_router, prefix="/api/prompt", tags=["Prompt配置"])
 app.include_router(risk_workflow_router, prefix="/api/risk", tags=["风险与报告交付"])
 app.include_router(semantic_router, prefix="/api/semantic", tags=["知识召回"])
 app.include_router(system_parameter_router, prefix="/api/system", tags=["系统参数"])
+app.include_router(twin_runtime_router, prefix="/api/twin", tags=["孪生运行"])
 app.include_router(user_router, prefix="/api/users", tags=["用户管理"])
 app.include_router(workspace_router, prefix="/api/workspaces", tags=["内部兼容容器"])
 

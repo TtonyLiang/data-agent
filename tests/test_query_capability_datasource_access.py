@@ -102,6 +102,7 @@ async def test_query_capability_invokes_tool_for_agent_owned_datasource(monkeypa
     )
     assert args[4] == user.model_dump()
     assert kwargs == {
+        "access_agent_id": None,
         "ontology_context": {"domain": {"id": 7}},
         "semantic_runtime": runtime,
     }

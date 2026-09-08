@@ -8,13 +8,72 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import require_admin
+from app.db.mysql import get_management_db
 from app.models.datasource import DatasourceCreate, DatasourceUpdate
+from app.models.permission import DatasourcePermissionReplace
 from app.models.user import PublicUser
 from app.services.datasource_service import get_datasource_service
 from app.services.metadata_service import get_metadata_service
+from app.services.permission_service import get_permission_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+async def _validate_permission_scope(ds_id: int, agent_id: int) -> None:
+    agent_rows = await get_management_db().execute_query(
+        "SELECT id FROM agent WHERE id = :agent_id",
+        {"agent_id": agent_id},
+    )
+    if not agent_rows:
+        raise HTTPException(status_code=404, detail="智能体不存在")
+    datasource_service = get_datasource_service()
+    if await datasource_service.get(ds_id) is None:
+        raise HTTPException(status_code=404, detail="数据源不存在")
+    if not await datasource_service.belongs_to_agent(ds_id, agent_id):
+        raise HTTPException(status_code=400, detail="智能体与数据源尚未绑定")
+
+
+async def _validate_permission_rules(
+    ds_id: int, request: DatasourcePermissionReplace
+) -> None:
+    schema = await get_metadata_service().get_schema(ds_id)
+    columns_by_table = {
+        str(table.get("table_name") or "").lower(): {
+            str(column.get("column_name") or "").lower()
+            for column in table.get("columns") or []
+        }
+        for table in schema
+        if table.get("table_name")
+    }
+    unknown_tables = sorted(
+        {
+            rule.table_name
+            for rule in request.table_permissions
+            if rule.table_name.lower() not in columns_by_table
+        }
+        | {
+            rule.table_name
+            for rule in request.column_permissions
+            if rule.table_name.lower() not in columns_by_table
+        }
+    )
+    if unknown_tables:
+        raise HTTPException(
+            status_code=400,
+            detail="表不存在或尚未采集: " + "、".join(unknown_tables),
+        )
+    unknown_columns = sorted(
+        f"{rule.table_name}.{rule.column_name}"
+        for rule in request.column_permissions
+        if rule.column_name.lower()
+        not in columns_by_table.get(rule.table_name.lower(), set())
+    )
+    if unknown_columns:
+        raise HTTPException(
+            status_code=400,
+            detail="字段不存在或尚未采集: " + "、".join(unknown_columns),
+        )
 
 
 @router.post("/create", dependencies=[Depends(require_admin)])
@@ -60,6 +119,36 @@ async def update_agent_datasource_ids(
         request.get("datasource_ids", []),
     )
     return {"datasource_ids": ids, "message": "关联已保存"}
+
+
+@router.get("/{ds_id}/permissions/{agent_id}")
+async def get_datasource_permissions(
+    ds_id: int,
+    agent_id: int,
+    _: PublicUser = Depends(require_admin),
+):
+    """查看指定智能体在该数据源上的显式表/列权限规则。"""
+    await _validate_permission_scope(ds_id, agent_id)
+    configuration = await get_permission_service().get_permission_configuration(agent_id, ds_id)
+    return {"permissions": configuration.model_dump()}
+
+
+@router.put("/{ds_id}/permissions/{agent_id}")
+async def replace_datasource_permissions(
+    ds_id: int,
+    agent_id: int,
+    request: DatasourcePermissionReplace,
+    _: PublicUser = Depends(require_admin),
+):
+    """完整替换指定智能体在该数据源上的表/列权限规则。"""
+    await _validate_permission_scope(ds_id, agent_id)
+    await _validate_permission_rules(ds_id, request)
+    configuration = await get_permission_service().replace_permission_configuration(
+        agent_id,
+        ds_id,
+        request,
+    )
+    return {"permissions": configuration.model_dump(), "message": "访问权限已保存"}
 
 
 @router.put("/{ds_id}")

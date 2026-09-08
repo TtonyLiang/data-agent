@@ -58,6 +58,11 @@ globalThis.__axios = {
         axiosCalls.push(['put', url, body, next])
         return Promise.resolve({ data: {} })
       },
+      async patch(url, body, config = {}) {
+        const next = await instance.applyConfig(config)
+        axiosCalls.push(['patch', url, body, next])
+        return Promise.resolve({ data: {} })
+      },
       async delete(url, config = {}) {
         const next = await instance.applyConfig(config)
         axiosCalls.push(['delete', url, next])
@@ -86,6 +91,52 @@ function stripAxiosConfig(calls) {
     if (call[0] === 'get' || call[0] === 'delete') return call.slice(0, 2)
     return call.slice(0, 3)
   })
+}
+
+{
+  axiosCalls.length = 0
+  axiosGetData = { clients: [{ id: 8, client_key: 'cap_demo', name: '审批助手' }] }
+  axiosPostData = {
+    credential: {
+      client: { id: 8, client_key: 'cap_demo', name: '审批助手', status: 'active' },
+      client_key: 'cap_demo',
+      client_secret: 'one-time-secret',
+      secret_returned_once: true,
+    },
+  }
+  const clients = await api.fetchCapabilityClients()
+  const credential = await api.createCapabilityClient({ name: '审批助手' })
+  await api.updateCapabilityClientStatus(8, 'disabled')
+  axiosGetData = { grants: [{ id: 3, client_id: 8, domain_id: 7 }] }
+  const grants = await api.fetchCapabilityGrants(8)
+  await api.updateCapabilityGrant(8, {
+    domain_id: 7,
+    capability_key: 'query_loan_application',
+    execution_agent_id: 4,
+    status: 'active',
+  })
+  axiosGetData = { invocations: [{ id: 12, trace_id: 'trc_12' }] }
+  const audits = await api.fetchCapabilityInvocationAudits({ domain_id: 7, limit: 100 })
+
+  assert.equal(clients[0].client_key, 'cap_demo')
+  assert.equal(credential.client_secret, 'one-time-secret')
+  assert.equal(grants[0].domain_id, 7)
+  assert.equal(audits[0].trace_id, 'trc_12')
+  assert.deepEqual(stripAxiosConfig(axiosCalls), [
+    ['get', '/capability-clients'],
+    ['post', '/capability-clients', { name: '审批助手' }],
+    ['patch', '/capability-clients/8', { status: 'disabled' }],
+    ['get', '/capability-clients/8/grants'],
+    ['put', '/capability-clients/8/grants', {
+      domain_id: 7,
+      capability_key: 'query_loan_application',
+      execution_agent_id: 4,
+      status: 'active',
+    }],
+    ['get', '/capability-invocations'],
+  ])
+  axiosGetData = {}
+  axiosPostData = {}
 }
 
 {
@@ -405,6 +456,42 @@ assert.ok(
     ['post', '/users/14/reset-password', {
       password: 'Reset-Test-2026!',
       must_change_password: true,
+    }],
+  ])
+}
+
+{
+  axiosCalls.length = 0
+  axiosGetData = {
+    permissions: {
+      agent_id: 4,
+      datasource_id: 7,
+      table_permissions: [{ table_name: 'loan_application', allowed: true }],
+      column_permissions: [],
+    },
+  }
+  const permissions = await api.fetchDatasourcePermissions(7, 4)
+  await api.updateDatasourcePermissions(7, 4, {
+    table_permissions: [{ table_name: 'loan_application', allowed: true }],
+    column_permissions: [{
+      table_name: 'loan_application',
+      column_name: 'mobile',
+      allowed: true,
+      masking_policy: 'partial',
+    }],
+  })
+
+  assert.equal(permissions.agent_id, 4)
+  assert.deepEqual(stripAxiosConfig(axiosCalls), [
+    ['get', '/datasource/7/permissions/4'],
+    ['put', '/datasource/7/permissions/4', {
+      table_permissions: [{ table_name: 'loan_application', allowed: true }],
+      column_permissions: [{
+        table_name: 'loan_application',
+        column_name: 'mobile',
+        allowed: true,
+        masking_policy: 'partial',
+      }],
     }],
   ])
 }

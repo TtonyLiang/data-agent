@@ -9,3 +9,12 @@ assert.ok(source.includes('新密码至少需要8个字符'), 'password reset sh
 assert.ok(source.includes('不能超过72字节'), 'password reset should validate bcrypt byte length')
 assert.ok(source.includes('密码重置失败'), 'password reset should show API failures')
 assert.ok(source.includes(':loading="passwordSaving"'), 'password reset should show a loading state while submitting')
+
+assert.ok(
+  source.includes('可访问的验证客户端') &&
+    source.includes('验证客户端权限') &&
+    source.includes('验证客户端访问权限') &&
+    source.includes('派生普通用户可访问的业务领域和数据范围') &&
+    source.includes('验证客户端不拥有企业模型'),
+  'user permissions should describe Agent grants as compatibility access to validation clients and derived domains',
+)

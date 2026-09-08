@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 from copy import deepcopy
 from datetime import date, datetime, timezone
@@ -21,9 +22,17 @@ from app.models.ontology import (
     OntologyObjectPayload,
     OntologyObjectTypePayload,
 )
+from app.services.datasource_service import get_datasource_service
 from app.services.decision_audit_service import get_decision_audit_service
-from app.services.permission_service import get_permission_service
+from app.services.model_release_service import get_model_release_service
+from app.services.permission_service import (
+    ColumnPolicy,
+    PermissionService,
+    get_permission_service,
+    mask_value,
+)
 from app.utils.sql_validator import (
+    extract_table_references,
     find_top_level_keyword,
     normalize_sql_for_execution,
     tokenize_sql,
@@ -60,6 +69,18 @@ JSON_FALLBACKS: dict[str, Any] = {
     "validation_json": {},
     "definition_json": {},
 }
+
+_OBJECT_PERMISSION_FIELDS = {
+    "_permission_source_query",
+    "_permission_primary_property",
+    "_permission_display_property",
+}
+
+_MASKING_PRIORITY = {"none": 0, "partial": 1, "hash": 2, "redact": 3}
+
+
+logger = logging.getLogger(__name__)
+
 
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
@@ -493,6 +514,113 @@ class OntologyService:
         )
         return [_normalize_row(row) for row in rows]
 
+    async def _load_runtime_definition(
+        self, domain_id: int
+    ) -> tuple[
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+        list[dict[str, Any]],
+    ]:
+        """Load the active unified model's immutable Ontology definition.
+
+        Domains created before unified releases remain usable through an
+        explicit compatibility fallback to live definitions and the latest
+        Ontology release.  An active unified release is authoritative: a
+        missing or malformed linked Ontology release is treated as an error
+        instead of silently mixing versions.
+        """
+        model_release = await get_model_release_service().get_active_release(domain_id)
+        if model_release is None:
+            warning = {
+                "code": "enterprise_model_release_fallback",
+                "message": (
+                    "当前领域没有激活的企业模型版本，运行时回退到实时定义和最新 "
+                    "Ontology 发布。"
+                ),
+                "details": {"domain_id": domain_id},
+            }
+            logger.warning(
+                "enterprise model runtime fallback domain_id=%s reason=no_active_release",
+                domain_id,
+            )
+            release_rows = await get_management_db().execute_query(
+                "SELECT id, version, name, description, definition_hash, created_at "
+                "FROM ontology_release WHERE domain_id = :domain_id "
+                "ORDER BY version DESC LIMIT 1",
+                {"domain_id": domain_id},
+            )
+            ontology_release = (
+                _normalize_row(release_rows[0]) if release_rows else None
+            )
+            return None, None, ontology_release, None, [warning]
+
+        release_rows = await get_management_db().execute_query(
+            "SELECT id, domain_id, version, name, description, definition_json, "
+            "definition_hash, created_at FROM ontology_release "
+            "WHERE id = :release_id AND domain_id = :domain_id",
+            {
+                "release_id": int(model_release["ontology_release_id"]),
+                "domain_id": domain_id,
+            },
+        )
+        if not release_rows:
+            raise ValueError("激活企业模型版本关联的 Ontology 发布不存在")
+        release_row = _normalize_row(release_rows[0])
+        definition = release_row.pop("definition_json", None)
+        if not isinstance(definition, dict):
+            raise ValueError("激活企业模型版本关联的 Ontology 发布定义无效")
+        actual_definition_hash = _content_hash(definition)
+        release_definition_hash = str(release_row.get("definition_hash") or "")
+        model_definition_hash = str(
+            model_release.get("ontology_definition_hash") or ""
+        )
+        if (
+            not release_definition_hash
+            or release_definition_hash != actual_definition_hash
+            or model_definition_hash != actual_definition_hash
+        ):
+            raise ValueError("激活企业模型版本关联的 Ontology 发布定义完整性校验失败")
+        expected_model_hash = _content_hash(
+            {
+                "format": "wenqu-enterprise-model-release/v1",
+                "semantic_snapshot_hash": str(
+                    model_release.get("semantic_snapshot_hash") or ""
+                ),
+                "ontology_definition_hash": actual_definition_hash,
+            }
+        )
+        if str(model_release.get("model_hash") or "") != expected_model_hash:
+            raise ValueError("激活企业模型版本内容哈希校验失败")
+        ontology_release = {
+            key: release_row.get(key)
+            for key in (
+                "id",
+                "version",
+                "name",
+                "description",
+                "definition_hash",
+                "created_at",
+            )
+        }
+        model_metadata = {
+            key: model_release.get(key)
+            for key in (
+                "id",
+                "version",
+                "name",
+                "status",
+                "model_hash",
+                "activated_at",
+            )
+        }
+        semantic_snapshot = {
+            "id": int(model_release["semantic_snapshot_id"]),
+            "snapshot_hash": model_release.get("semantic_snapshot_hash"),
+        }
+        return model_metadata, semantic_snapshot, ontology_release, definition, []
+
     async def build_agent_context(
         self, domain_id: int, *, role: str = "user"
     ) -> dict[str, Any]:
@@ -505,32 +633,51 @@ class OntologyService:
         safe to pass as prompt/tool metadata and remains bounded as data grows.
         """
         domain = await self._require_domain(domain_id)
+        (
+            model_release,
+            semantic_snapshot,
+            ontology_release,
+            definition,
+            runtime_warnings,
+        ) = await self._load_runtime_definition(domain_id)
+        if definition is None:
+            raw_object_types = await self.list_object_types(domain_id)
+            raw_link_types = await self.list_link_types(domain_id)
+            raw_action_types = await self.list_action_types(domain_id)
+            released_domain: dict[str, Any] = {}
+        else:
+            raw_object_types = definition.get("object_types") or []
+            raw_link_types = definition.get("link_types") or []
+            raw_action_types = definition.get("action_types") or []
+            released_domain = definition.get("domain") or {}
+            if not all(
+                isinstance(items, list)
+                for items in (raw_object_types, raw_link_types, raw_action_types)
+            ) or not isinstance(released_domain, dict):
+                raise ValueError("激活企业模型版本关联的 Ontology 发布定义无效")
+
         object_types = [
-            item for item in await self.list_object_types(domain_id)
-            if item.get("status") == "active"
+            _normalize_row(item)
+            for item in raw_object_types
+            if isinstance(item, dict) and item.get("status") == "active"
         ]
         object_keys = {str(item.get("object_key")) for item in object_types}
         link_types = [
-            item
-            for item in await self.list_link_types(domain_id)
+            _normalize_row(item)
+            for item in raw_link_types
+            if isinstance(item, dict)
             if item.get("status") == "active"
             and item.get("source_object_key") in object_keys
             and item.get("target_object_key") in object_keys
         ]
         action_types = [
-            item
-            for item in await self.list_action_types(domain_id)
+            _normalize_row(item)
+            for item in raw_action_types
+            if isinstance(item, dict)
             if item.get("status") == "active"
             and item.get("target_object_key") in object_keys
             and role in (item.get("allowed_roles") or [])
         ]
-        release_rows = await get_management_db().execute_query(
-            "SELECT id, version, name, description, created_at "
-            "FROM ontology_release WHERE domain_id = :domain_id "
-            "ORDER BY version DESC LIMIT 1",
-            {"domain_id": domain_id},
-        )
-        release = _normalize_row(release_rows[0]) if release_rows else None
 
         # Keep only fields useful to query/action planning.  In particular,
         # object instances are fetched through the query tool on demand.
@@ -584,11 +731,19 @@ class OntologyService:
         return {
             "domain": {
                 "id": int(domain["id"]),
-                "domain_key": domain.get("domain_key"),
-                "name": domain.get("name"),
-                "description": domain.get("description") or "",
+                "domain_key": released_domain.get("domain_key")
+                or domain.get("domain_key"),
+                "name": released_domain.get("name") or domain.get("name"),
+                "description": released_domain.get("description")
+                or domain.get("description")
+                or "",
             },
-            "release": release,
+            "model_release": model_release,
+            "semantic_snapshot": semantic_snapshot,
+            "ontology_release": ontology_release,
+            # Compatibility alias retained for existing query-context consumers.
+            "release": ontology_release,
+            "warnings": runtime_warnings,
             "role": role,
             "object_types": compact_types,
             "link_types": compact_links,
@@ -881,6 +1036,267 @@ class OntologyService:
         )
         return [_normalize_row(row) for row in rows]
 
+    async def _load_object_permission_context(
+        self,
+        domain: dict[str, Any],
+        access_agent_id: int | None,
+    ) -> tuple[int, dict[str, bool], dict[tuple[str, str], ColumnPolicy]] | None:
+        datasource_id = int(domain.get("datasource_id") or 0)
+        if not datasource_id:
+            return None
+        if not access_agent_id:
+            raise PermissionError("对象数据访问缺少明确的权限主体")
+        if not await get_datasource_service().belongs_to_agent(datasource_id, access_agent_id):
+            raise PermissionError("当前权限主体无权访问领域数据源")
+        permission_service = get_permission_service()
+        return (
+            datasource_id,
+            await permission_service.get_table_permissions(access_agent_id, datasource_id),
+            await permission_service.get_column_permissions(access_agent_id, datasource_id),
+        )
+
+    @staticmethod
+    def _column_policy_for_sources(
+        property_key: str,
+        source_tables: list[str],
+        column_permissions: dict[tuple[str, str], ColumnPolicy],
+        result_column_policies: dict[str, ColumnPolicy] | None = None,
+    ) -> ColumnPolicy | None:
+        output_policy = (result_column_policies or {}).get(property_key.lower())
+        if output_policy is not None:
+            return output_policy
+        policies = [
+            column_permissions.get((table.lower(), property_key.lower()))
+            for table in source_tables
+        ]
+        matched = [policy for policy in policies if policy is not None]
+        if not matched:
+            return None
+        if any(not policy.allowed for policy in matched):
+            return ColumnPolicy(allowed=False, masking_policy="redact")
+        return max(
+            matched,
+            key=lambda policy: _MASKING_PRIORITY.get(policy.masking_policy, 3),
+        )
+
+    @staticmethod
+    def _permission_metadata(
+        row: dict[str, Any], object_type: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {
+            **row,
+            "_permission_source_query": object_type.get("source_query"),
+            "_permission_primary_property": object_type.get("primary_property"),
+            "_permission_display_property": object_type.get("display_property"),
+        }
+
+    @classmethod
+    def _validate_sync_key_permissions(
+        cls,
+        object_type: dict[str, Any],
+        link_types: list[dict[str, Any]],
+        source_tables: list[str],
+        column_permissions: dict[tuple[str, str], ColumnPolicy],
+        result_column_policies: dict[str, ColumnPolicy] | None = None,
+    ) -> None:
+        primary_property = str(object_type.get("primary_property") or "")
+        relation_properties = {
+            str(link_type.get("source_property") or "")
+            for link_type in link_types
+            if link_type.get("status") == "active"
+            and link_type.get("source_object_key") == object_type.get("object_key")
+        }
+        relation_properties.update(
+            str(link_type.get("target_property") or "")
+            for link_type in link_types
+            if link_type.get("status") == "active"
+            and link_type.get("target_object_key") == object_type.get("object_key")
+        )
+        for property_key, label in [
+            (primary_property, "主标识"),
+            *((property_key, "关系键") for property_key in sorted(relation_properties)),
+        ]:
+            if not property_key:
+                continue
+            policy = cls._column_policy_for_sources(
+                property_key,
+                source_tables,
+                column_permissions,
+                result_column_policies,
+            )
+            if policy is not None and (
+                not policy.allowed or policy.masking_policy != "none"
+            ):
+                raise ValueError(
+                    f"{label}字段 {property_key} 不得拒绝访问或脱敏"
+                )
+
+    @classmethod
+    def _protect_object_rows(
+        cls,
+        rows: list[dict[str, Any]],
+        permission_context: tuple[
+            int,
+            dict[str, bool],
+            dict[tuple[str, str], ColumnPolicy],
+        ]
+        | None,
+    ) -> list[dict[str, Any]]:
+        protected_rows: list[dict[str, Any]] = []
+        for raw_row in rows:
+            row = _normalize_row(raw_row)
+            source_query = str(row.pop("_permission_source_query", "") or "")
+            primary_property = str(row.pop("_permission_primary_property", "") or "")
+            display_property = str(row.pop("_permission_display_property", "") or "")
+            for field in _OBJECT_PERMISSION_FIELDS:
+                row.pop(field, None)
+            if permission_context is None:
+                protected_rows.append(row)
+                continue
+
+            datasource_id, table_permissions, column_permissions = permission_context
+            source_datasource_id = int(row.get("source_datasource_id") or 0)
+            database_backed = (
+                str(row.get("source_kind") or "").lower() == "database"
+                or source_datasource_id > 0
+            )
+            if not database_backed:
+                protected_rows.append(row)
+                continue
+            if source_datasource_id and source_datasource_id != datasource_id:
+                continue
+
+            source_tables = extract_table_references(source_query)
+            if source_tables and any(
+                not get_permission_service().table_allowed(table, table_permissions)
+                for table in source_tables
+            ):
+                continue
+            if not source_tables:
+                continue
+            try:
+                result_column_policies = (
+                    PermissionService.resolve_result_column_policies(
+                        source_query,
+                        source_tables,
+                        column_permissions,
+                    )
+                )
+            except ValueError:
+                continue
+
+            primary_policy = cls._column_policy_for_sources(
+                primary_property,
+                source_tables,
+                column_permissions,
+                result_column_policies,
+            )
+            if primary_policy is not None and (
+                not primary_policy.allowed or primary_policy.masking_policy != "none"
+            ):
+                continue
+
+            for field in ("properties", "source_properties", "overlay_properties"):
+                values = row.get(field)
+                if not isinstance(values, dict):
+                    continue
+                visible: dict[str, Any] = {}
+                for key, value in values.items():
+                    policy = cls._column_policy_for_sources(
+                        str(key),
+                        source_tables,
+                        column_permissions,
+                        result_column_policies,
+                    )
+                    if policy is not None and not policy.allowed:
+                        continue
+                    visible[key] = (
+                        mask_value(value, policy.masking_policy)
+                        if policy is not None and policy.masking_policy != "none"
+                        else value
+                    )
+                row[field] = visible
+
+            response_fields = {
+                "primary_value": primary_property,
+                "display_name": display_property or primary_property,
+            }
+            for response_field, property_key in response_fields.items():
+                if not property_key:
+                    continue
+                policy = cls._column_policy_for_sources(
+                    property_key,
+                    source_tables,
+                    column_permissions,
+                    result_column_policies,
+                )
+                if policy is None:
+                    continue
+                row[response_field] = (
+                    "***"
+                    if not policy.allowed
+                    else mask_value(row.get(response_field), policy.masking_policy)
+                    if policy.masking_policy != "none"
+                    else row.get(response_field)
+                )
+            protected_rows.append(row)
+        return protected_rows
+
+    @staticmethod
+    async def _allowed_database_object_type_ids(
+        domain_id: int,
+        table_permissions: dict[str, bool],
+        column_permissions: dict[tuple[str, str], ColumnPolicy],
+    ) -> list[int] | None:
+        rows = await get_management_db().execute_query(
+            "SELECT id, source_query, primary_property FROM ontology_object_type "
+            "WHERE domain_id = :domain_id",
+            {"domain_id": domain_id},
+        )
+        allowed_ids: list[int] = []
+        for row in rows:
+            source_tables = extract_table_references(
+                str(row.get("source_query") or "")
+            )
+            if not source_tables or any(
+                not get_permission_service().table_allowed(table, table_permissions)
+                for table in source_tables
+            ):
+                continue
+            primary_policy = OntologyService._column_policy_for_sources(
+                str(row.get("primary_property") or ""),
+                source_tables,
+                column_permissions,
+            )
+            if primary_policy is not None and (
+                not primary_policy.allowed
+                or primary_policy.masking_policy != "none"
+            ):
+                continue
+            allowed_ids.append(int(row["id"]))
+        return allowed_ids
+
+    @staticmethod
+    def _append_object_type_access_filter(
+        where: list[str],
+        params: dict[str, Any],
+        allowed_type_ids: list[int] | None,
+    ) -> None:
+        if allowed_type_ids is None:
+            return
+        manual_clause = "o.source_kind IS NULL OR o.source_kind <> 'database'"
+        if not allowed_type_ids:
+            where.append(f"({manual_clause})")
+            return
+        placeholders = []
+        for index, object_type_id in enumerate(allowed_type_ids):
+            key = f"allowed_type_{index}"
+            placeholders.append(f":{key}")
+            params[key] = object_type_id
+        where.append(
+            f"({manual_clause} OR o.object_type_id IN ({', '.join(placeholders)}))"
+        )
+
     async def list_objects(
         self,
         domain_id: int,
@@ -888,29 +1304,52 @@ class OntologyService:
         *,
         limit: int | None = None,
         offset: int = 0,
+        access_agent_id: int | None = None,
+        apply_permissions: bool = True,
     ) -> list[dict[str, Any]]:
-        await self._require_domain(domain_id)
+        domain = await self._require_domain(domain_id)
+        permission_context = (
+            await self._load_object_permission_context(domain, access_agent_id)
+            if apply_permissions
+            else None
+        )
         sql = (
-            "SELECT o.*, t.object_key AS object_type_key, t.name AS object_type_name "
+            "SELECT o.*, t.object_key AS object_type_key, t.name AS object_type_name, "
+            "t.source_query AS _permission_source_query, "
+            "t.primary_property AS _permission_primary_property, "
+            "t.display_property AS _permission_display_property "
             "FROM ontology_object o JOIN ontology_object_type t ON t.id = o.object_type_id "
-            "WHERE o.domain_id = :domain_id"
+            "WHERE "
         )
         params: dict[str, Any] = {"domain_id": domain_id}
+        where = ["o.domain_id = :domain_id"]
         if object_type_id is not None:
-            sql += " AND o.object_type_id = :object_type_id"
+            where.append("o.object_type_id = :object_type_id")
             params["object_type_id"] = object_type_id
+        allowed_type_ids = (
+            await self._allowed_database_object_type_ids(
+                domain_id,
+                permission_context[1],
+                permission_context[2],
+            )
+            if permission_context is not None
+            else None
+        )
+        self._append_object_type_access_filter(where, params, allowed_type_ids)
+        sql += " AND ".join(where)
         sql += " ORDER BY o.updated_at DESC, o.id DESC"
         if limit is not None:
             sql += " LIMIT :limit OFFSET :offset"
             params["limit"] = min(max(int(limit), 1), 1000)
             params["offset"] = max(int(offset), 0)
         rows = await get_management_db().execute_query(sql, params)
-        return [_normalize_row(row) for row in rows]
+        return self._protect_object_rows(rows, permission_context)
 
     async def sync_objects_from_datasource(
         self,
         domain_id: int,
         *,
+        access_agent_id: int | None = None,
         object_type_id: int | None = None,
         page: int = 1,
         page_size: int | None = None,
@@ -921,6 +1360,11 @@ class OntologyService:
         datasource_id = int(domain.get("datasource_id") or 0)
         if not datasource_id:
             raise ValueError("当前领域没有绑定默认数据源，无法同步对象实例")
+        permission_context = await self._load_object_permission_context(
+            domain, access_agent_id
+        )
+        if permission_context is None:
+            raise PermissionError("对象同步缺少明确的权限主体")
         object_types = await self.list_object_types(domain_id)
         if object_type_id is not None:
             object_types = [item for item in object_types if int(item["id"]) == object_type_id]
@@ -933,9 +1377,10 @@ class OntologyService:
         source_db = await get_datasource_db(datasource_id)
         permission_service = get_permission_service()
         action_types = await self.list_action_types(domain_id)
+        link_types = await self.list_link_types(domain_id)
         page_number = max(int(page), 1)
         results: list[dict[str, Any]] = []
-        synced_objects: list[dict[str, Any]] = []
+        raw_synced_objects: list[dict[str, Any]] = []
         total_rows = 0
 
         for object_type in sync_types:
@@ -960,10 +1405,25 @@ class OntologyService:
             try:
                 base_query = self._validated_source_query(source_query)
                 allowed, reason = await permission_service.validate_sql_access(
-                    int(domain.get("agent_id") or 0), datasource_id, base_query
+                    access_agent_id, datasource_id, base_query
                 )
                 if not allowed:
                     raise ValueError(reason)
+                source_tables = extract_table_references(base_query)
+                result_column_policies = (
+                    PermissionService.resolve_result_column_policies(
+                        base_query,
+                        source_tables,
+                        permission_context[2],
+                    )
+                )
+                self._validate_sync_key_permissions(
+                    object_type,
+                    link_types,
+                    source_tables,
+                    permission_context[2],
+                    result_column_policies,
+                )
                 count_rows = await source_db.execute_query(
                     f"SELECT COUNT(*) AS count FROM ({base_query}) AS ontology_source"
                 )
@@ -972,9 +1432,6 @@ class OntologyService:
                 rows = await source_db.execute_query(
                     f"{base_query}\nLIMIT :sync_limit OFFSET :sync_offset",
                     {"sync_limit": effective_page_size, "sync_offset": offset},
-                )
-                rows, _ = await permission_service.mask_rows(
-                    int(domain.get("agent_id") or 0), datasource_id, rows
                 )
                 effect_keys = {
                     str(effect.get("property"))
@@ -993,8 +1450,12 @@ class OntologyService:
                             effect_keys,
                         )
                         result[outcome] += 1
-                        result["objects"].append(synced)
-                        synced_objects.append(synced)
+                        protected = self._protect_object_rows(
+                            [self._permission_metadata(synced, object_type)],
+                            permission_context,
+                        )
+                        result["objects"].extend(protected)
+                        raw_synced_objects.append(synced)
                     except (TypeError, ValueError) as exc:
                         result["skipped"] += 1
                         result["errors"].append(f"第 {row_index} 行: {exc}")
@@ -1014,8 +1475,10 @@ class OntologyService:
             results.append(result)
 
         link_count = 0
-        if sync_links and synced_objects:
-            link_count = await self._sync_links_for_objects(domain_id, synced_objects)
+        if sync_links and raw_synced_objects:
+            link_count = await self._sync_links_for_objects(
+                domain_id, raw_synced_objects, link_types=link_types
+            )
         return {
             "domain_id": domain_id,
             "datasource_id": datasource_id,
@@ -1188,11 +1651,17 @@ class OntologyService:
         )
 
     async def _sync_links_for_objects(
-        self, domain_id: int, synced_objects: list[dict[str, Any]]
+        self,
+        domain_id: int,
+        synced_objects: list[dict[str, Any]],
+        *,
+        link_types: list[dict[str, Any]] | None = None,
     ) -> int:
         synced_ids = {int(item["id"]) for item in synced_objects}
         link_types = [
-            item for item in await self.list_link_types(domain_id) if item.get("status") == "active"
+            item
+            for item in (link_types or await self.list_link_types(domain_id))
+            if item.get("status") == "active"
         ]
         if not link_types:
             return 0
@@ -1307,6 +1776,7 @@ class OntologyService:
         self,
         domain_id: int,
         *,
+        access_agent_id: int | None = None,
         object_type_key: str | None = None,
         search: str | None = None,
         limit: int = 20,
@@ -1319,7 +1789,10 @@ class OntologyService:
         operators and keeping this contract portable across management DB
         adapters.
         """
-        await self._require_domain(domain_id)
+        domain = await self._require_domain(domain_id)
+        permission_context = await self._load_object_permission_context(
+            domain, access_agent_id
+        )
         safe_limit = min(max(int(limit), 1), 100)
         safe_offset = max(int(offset), 0)
         normalized_type = str(object_type_key or "").strip() or None
@@ -1332,6 +1805,16 @@ class OntologyService:
         if normalized_search:
             where.append("(o.display_name LIKE :search OR o.primary_value LIKE :search)")
             params["search"] = f"%{normalized_search}%"
+        allowed_type_ids = (
+            await self._allowed_database_object_type_ids(
+                domain_id,
+                permission_context[1],
+                permission_context[2],
+            )
+            if permission_context is not None
+            else None
+        )
+        self._append_object_type_access_filter(where, params, allowed_type_ids)
         where_sql = " AND ".join(where)
         db = get_management_db()
         count_rows = await db.execute_query(
@@ -1342,28 +1825,116 @@ class OntologyService:
         )
         total = int(count_rows[0].get("count") or 0) if count_rows else 0
         rows = await db.execute_query(
-            "SELECT o.*, t.object_key AS object_type_key, t.name AS object_type_name "
+            "SELECT o.*, t.object_key AS object_type_key, t.name AS object_type_name, "
+            "t.source_query AS _permission_source_query, "
+            "t.primary_property AS _permission_primary_property, "
+            "t.display_property AS _permission_display_property "
             "FROM ontology_object o JOIN ontology_object_type t ON t.id = o.object_type_id "
             f"WHERE {where_sql} ORDER BY o.updated_at DESC, o.id DESC "
             "LIMIT :limit OFFSET :offset",
             {**params, "limit": safe_limit, "offset": safe_offset},
         )
+        protected_rows = self._protect_object_rows(rows, permission_context)
         return {
-            "objects": [_normalize_row(row) for row in rows],
+            "objects": protected_rows,
             "total": total,
             "limit": safe_limit,
             "offset": safe_offset,
-            "has_more": safe_offset + len(rows) < total,
+            "has_more": safe_offset + len(protected_rows) < total,
         }
 
-    async def get_object(self, domain_id: int, object_id: int) -> dict[str, Any] | None:
+    async def get_object(
+        self,
+        domain_id: int,
+        object_id: int,
+        *,
+        access_agent_id: int | None = None,
+        apply_permissions: bool = False,
+    ) -> dict[str, Any] | None:
+        permission_context = None
+        if apply_permissions:
+            domain = await self._require_domain(domain_id)
+            permission_context = await self._load_object_permission_context(
+                domain, access_agent_id
+            )
         rows = await get_management_db().execute_query(
-            "SELECT o.*, t.object_key AS object_type_key, t.name AS object_type_name "
+            "SELECT o.*, t.object_key AS object_type_key, t.name AS object_type_name, "
+            "t.source_query AS _permission_source_query, "
+            "t.primary_property AS _permission_primary_property, "
+            "t.display_property AS _permission_display_property "
             "FROM ontology_object o JOIN ontology_object_type t ON t.id = o.object_type_id "
             "WHERE o.id = :id AND o.domain_id = :domain_id",
             {"id": object_id, "domain_id": domain_id},
         )
-        return _normalize_row(rows[0]) if rows else None
+        if not rows:
+            return None
+        protected = self._protect_object_rows(rows, permission_context)
+        return protected[0] if protected else None
+
+    async def _action_permission_context(
+        self,
+        domain_id: int,
+        target: dict[str, Any],
+        object_type: dict[str, Any],
+        access_agent_id: int | None,
+    ) -> tuple[int, dict[str, bool], dict[tuple[str, str], ColumnPolicy]] | None:
+        database_backed = (
+            str(target.get("source_kind") or "").lower() == "database"
+            or int(target.get("source_datasource_id") or 0) > 0
+        )
+        if not database_backed:
+            return None
+        domain = await self._require_domain(domain_id)
+        permission_context = await self._load_object_permission_context(
+            domain, access_agent_id
+        )
+        if permission_context is None:
+            raise PermissionError("动作执行缺少明确的权限主体")
+        protected = self._protect_object_rows(
+            [self._permission_metadata(target, object_type)],
+            permission_context,
+        )
+        if not protected:
+            raise PermissionError("当前权限主体无权访问目标对象")
+        return permission_context
+
+    @classmethod
+    def _protect_action_result(
+        cls,
+        result: dict[str, Any],
+        target: dict[str, Any],
+        object_type: dict[str, Any],
+        permission_context: tuple[
+            int,
+            dict[str, bool],
+            dict[tuple[str, str], ColumnPolicy],
+        ]
+        | None,
+    ) -> dict[str, Any]:
+        if permission_context is None:
+            return result
+        protected_result = dict(result)
+        for state_key in ("before_state", "after_state"):
+            state = result.get(state_key)
+            if not isinstance(state, dict):
+                continue
+            candidate = {
+                **target,
+                "properties": dict(state.get("properties") or {}),
+                "source_properties": {},
+                "overlay_properties": {},
+            }
+            protected = cls._protect_object_rows(
+                [cls._permission_metadata(candidate, object_type)],
+                permission_context,
+            )
+            if not protected:
+                raise PermissionError("当前权限主体无权访问目标对象")
+            protected_result[state_key] = {
+                **state,
+                "properties": protected[0].get("properties") or {},
+            }
+        return protected_result
 
     async def upsert_object(self, payload: OntologyObjectPayload) -> int:
         object_type = await self.get_object_type(
@@ -1510,19 +2081,101 @@ class OntologyService:
         )
         return True
 
-    async def list_links(self, domain_id: int) -> list[dict[str, Any]]:
-        await self._require_domain(domain_id)
+    @classmethod
+    def _protect_link_rows(
+        cls,
+        rows: list[dict[str, Any]],
+        permission_context: tuple[
+            int,
+            dict[str, bool],
+            dict[tuple[str, str], ColumnPolicy],
+        ]
+        | None,
+    ) -> list[dict[str, Any]]:
+        protected_links: list[dict[str, Any]] = []
+        for raw_row in rows:
+            row = _normalize_row(raw_row)
+            endpoints: dict[str, dict[str, Any]] = {}
+            visible = True
+            for endpoint in ("source", "target"):
+                endpoint_row = {
+                    "source_kind": row.pop(
+                        f"_permission_{endpoint}_source_kind", None
+                    ),
+                    "source_datasource_id": row.pop(
+                        f"_permission_{endpoint}_datasource_id", None
+                    ),
+                    "primary_value": row.get(f"{endpoint}_primary_value"),
+                    "display_name": row.get(f"{endpoint}_name"),
+                    "properties": {},
+                    "source_properties": {},
+                    "overlay_properties": {},
+                    "_permission_source_query": row.pop(
+                        f"_permission_{endpoint}_source_query", None
+                    ),
+                    "_permission_primary_property": row.pop(
+                        f"_permission_{endpoint}_primary_property", None
+                    ),
+                    "_permission_display_property": row.pop(
+                        f"_permission_{endpoint}_display_property", None
+                    ),
+                }
+                protected = cls._protect_object_rows(
+                    [endpoint_row], permission_context
+                )
+                if not protected:
+                    visible = False
+                    break
+                endpoints[endpoint] = protected[0]
+            if not visible:
+                continue
+            for endpoint, endpoint_row in endpoints.items():
+                row[f"{endpoint}_name"] = endpoint_row.get("display_name")
+                row[f"{endpoint}_primary_value"] = endpoint_row.get(
+                    "primary_value"
+                )
+            for key in list(row):
+                if key.startswith("_permission_"):
+                    row.pop(key, None)
+            protected_links.append(row)
+        return protected_links
+
+    async def list_links(
+        self,
+        domain_id: int,
+        *,
+        access_agent_id: int | None = None,
+        apply_permissions: bool = True,
+    ) -> list[dict[str, Any]]:
+        domain = await self._require_domain(domain_id)
+        permission_context = (
+            await self._load_object_permission_context(domain, access_agent_id)
+            if apply_permissions
+            else None
+        )
         rows = await get_management_db().execute_query(
             "SELECT l.*, t.link_key, t.name AS link_type_name, "
             "s.display_name AS source_name, s.primary_value AS source_primary_value, "
-            "d.display_name AS target_name, d.primary_value AS target_primary_value "
+            "d.display_name AS target_name, d.primary_value AS target_primary_value, "
+            "s.source_kind AS _permission_source_source_kind, "
+            "s.source_datasource_id AS _permission_source_datasource_id, "
+            "st.source_query AS _permission_source_source_query, "
+            "st.primary_property AS _permission_source_primary_property, "
+            "st.display_property AS _permission_source_display_property, "
+            "d.source_kind AS _permission_target_source_kind, "
+            "d.source_datasource_id AS _permission_target_datasource_id, "
+            "dt.source_query AS _permission_target_source_query, "
+            "dt.primary_property AS _permission_target_primary_property, "
+            "dt.display_property AS _permission_target_display_property "
             "FROM ontology_link l JOIN ontology_link_type t ON t.id = l.link_type_id "
             "JOIN ontology_object s ON s.id = l.source_object_id "
             "JOIN ontology_object d ON d.id = l.target_object_id "
+            "JOIN ontology_object_type st ON st.id = s.object_type_id "
+            "JOIN ontology_object_type dt ON dt.id = d.object_type_id "
             "WHERE l.domain_id = :domain_id ORDER BY l.id DESC",
             {"domain_id": domain_id},
         )
-        return [_normalize_row(row) for row in rows]
+        return self._protect_link_rows(rows, permission_context)
 
     async def create_link(self, payload: OntologyLinkPayload) -> int:
         link_type = next(
@@ -1572,10 +2225,48 @@ class OntologyService:
         action_type_id: int,
         payload: OntologyActionExecutePayload,
         user: dict[str, Any],
+        *,
+        access_agent_id: int | None = None,
     ) -> dict[str, Any]:
-        action = await self.get_action_type(domain_id, action_type_id)
-        if not action:
+        domain = await self._require_domain(domain_id)
+        if str(domain.get("status") or "active").lower() != "active":
+            raise ValueError("业务领域已停用，不能执行动作")
+        live_action = await self.get_action_type(domain_id, action_type_id)
+        if not live_action:
             raise ValueError("动作类型不存在")
+        (
+            model_release,
+            semantic_snapshot,
+            ontology_release,
+            definition,
+            runtime_warnings,
+        ) = await self._load_runtime_definition(domain_id)
+        released_object_type = None
+        if definition is None:
+            action = live_action
+        else:
+            action = next(
+                (
+                    _normalize_row(item)
+                    for item in definition.get("action_types") or []
+                    if isinstance(item, dict)
+                    and item.get("action_key") == live_action.get("action_key")
+                ),
+                None,
+            )
+            if action is None:
+                raise ValueError("动作未包含在当前激活的企业模型版本中")
+            released_object_type = next(
+                (
+                    _normalize_row(item)
+                    for item in definition.get("object_types") or []
+                    if isinstance(item, dict)
+                    and item.get("object_key") == action.get("target_object_key")
+                ),
+                None,
+            )
+            if released_object_type is None:
+                raise ValueError("动作目标对象未包含在当前激活的企业模型版本中")
         if action["status"] != "active":
             raise ValueError("只有 active 状态的动作可以执行")
         roles = action.get("allowed_roles") or []
@@ -1588,13 +2279,7 @@ class OntologyService:
             raise PermissionError("当前角色无权执行此动作")
         if action.get("requires_approval") and not payload.approval_reference:
             raise ValueError("该动作需要提供审批单号")
-        release = await get_management_db().execute_query(
-            "SELECT id, version, definition_hash FROM ontology_release "
-            "WHERE domain_id = :domain_id "
-            "ORDER BY version DESC LIMIT 1",
-            {"domain_id": domain_id},
-        )
-        if not release:
+        if not ontology_release:
             raise ValueError("Ontology 尚未发布，不能执行生产动作")
         target = await self.get_object(domain_id, payload.target_object_id)
         if not target:
@@ -1606,17 +2291,35 @@ class OntologyService:
             and int(target.get("version", 0)) != payload.expected_version
         ):
             raise ValueError("目标对象版本已变化，请刷新后重试")
+        object_type = released_object_type
+        if object_type is None:
+            object_type = await self.get_object_type(
+                domain_id, object_type_id=int(target["object_type_id"])
+            )
+        if not object_type:
+            raise ValueError("动作目标对象类型不存在")
+        permission_context = await self._action_permission_context(
+            domain_id,
+            target,
+            object_type,
+            access_agent_id,
+        )
 
         db = get_management_db()
         target_version = int(target.get("version") or 1)
         before_state = {"properties": target["properties"], "version": target_version}
         context = dict(payload.decision_context)
-        release_row = release[0]
         context["ontology_release"] = {
-            "id": int(release_row["id"]),
-            "version": release_row.get("version"),
-            "definition_hash": release_row.get("definition_hash"),
+            "id": int(ontology_release["id"]),
+            "version": ontology_release.get("version"),
+            "definition_hash": ontology_release.get("definition_hash"),
         }
+        if model_release is not None:
+            context["model_release"] = model_release
+        if semantic_snapshot is not None:
+            context["semantic_snapshot"] = semantic_snapshot
+        if runtime_warnings:
+            context["warnings"] = runtime_warnings
         if payload.approval_reference:
             context["approval_reference"] = payload.approval_reference
         parameters = validate_action_parameters(action["parameters"], payload.parameters)
@@ -1629,11 +2332,6 @@ class OntologyService:
             )
             updated_properties[effect["property"]] = effect_value
             updated_overlay[effect["property"]] = effect_value
-        object_type = await self.get_object_type(
-            domain_id, object_type_id=int(target["object_type_id"])
-        )
-        if not object_type:
-            raise ValueError("动作目标对象类型不存在")
         primary_property = object_type.get("primary_property")
         if primary_property and any(
             effect.get("property") == primary_property for effect in action["effects"]
@@ -1664,7 +2362,7 @@ class OntologyService:
                 ),
                 {
                     "domain_id": domain_id,
-                    "ontology_release_id": int(release_row["id"]),
+                    "ontology_release_id": int(ontology_release["id"]),
                     "action_type_id": action_type_id,
                     "target_object_id": payload.target_object_id,
                     "user_id": user.get("id"),
@@ -1704,7 +2402,7 @@ class OntologyService:
                 session,
                 domain_id=domain_id,
                 run_id=run_id,
-                release_id=int(release_row["id"]),
+                release_id=int(ontology_release["id"]),
                 action=action,
                 target_object_id=payload.target_object_id,
                 user=user,
@@ -1720,26 +2418,53 @@ class OntologyService:
                 "run_id": run_id,
                 "status": "succeeded",
                 "action": action["action_key"],
+                "model_release": model_release,
+                "semantic_snapshot": semantic_snapshot,
                 "ontology_release": context["ontology_release"],
+                "warnings": runtime_warnings,
                 "audit_event_id": audit_event_id,
                 "target_object_id": payload.target_object_id,
                 "before_state": before_state,
                 "after_state": after_state,
             }
 
-        return await db.execute_in_transaction(execute_in_transaction)
+        result = await db.execute_in_transaction(execute_in_transaction)
+        return self._protect_action_result(
+            result,
+            target,
+            object_type,
+            permission_context,
+        )
 
     async def list_action_runs(
-        self, domain_id: int, *, user_id: int | None = None, limit: int = 100
+        self,
+        domain_id: int,
+        *,
+        user_id: int | None = None,
+        limit: int = 100,
+        access_agent_id: int | None = None,
+        apply_permissions: bool = True,
     ) -> list[dict[str, Any]]:
-        await self._require_domain(domain_id)
+        domain = await self._require_domain(domain_id)
+        permission_context = (
+            await self._load_object_permission_context(domain, access_agent_id)
+            if apply_permissions
+            else None
+        )
         sql = (
             "SELECT r.*, a.action_key, a.name AS action_name, o.display_name AS target_name, "
+            "o.primary_value AS _permission_target_primary_value, "
+            "o.source_kind AS _permission_target_source_kind, "
+            "o.source_datasource_id AS _permission_target_datasource_id, "
+            "ot.source_query AS _permission_target_source_query, "
+            "ot.primary_property AS _permission_target_primary_property, "
+            "ot.display_property AS _permission_target_display_property, "
             "u.display_name AS user_name, u.username, rel.version AS ontology_release_version, "
             "rel.definition_hash AS ontology_release_hash "
             "FROM ontology_action_run r "
             "JOIN ontology_action_type a ON a.id = r.action_type_id "
             "LEFT JOIN ontology_object o ON o.id = r.target_object_id "
+            "LEFT JOIN ontology_object_type ot ON ot.id = o.object_type_id "
             "LEFT JOIN app_user u ON u.id = r.user_id "
             "LEFT JOIN ontology_release rel ON rel.id = r.ontology_release_id "
             "WHERE r.domain_id = :domain_id"
@@ -1750,7 +2475,47 @@ class OntologyService:
             params["user_id"] = user_id
         sql += " ORDER BY r.id DESC LIMIT :limit"
         rows = await get_management_db().execute_query(sql, params)
-        return [_normalize_row(row) for row in rows]
+        protected_runs: list[dict[str, Any]] = []
+        for raw_row in rows:
+            row = _normalize_row(raw_row)
+            target = {
+                "source_kind": row.pop("_permission_target_source_kind", None),
+                "source_datasource_id": row.pop(
+                    "_permission_target_datasource_id", None
+                ),
+                "primary_value": row.pop(
+                    "_permission_target_primary_value", None
+                ),
+                "display_name": row.get("target_name"),
+                "properties": {},
+                "source_properties": {},
+                "overlay_properties": {},
+            }
+            object_type = {
+                "source_query": row.pop("_permission_target_source_query", None),
+                "primary_property": row.pop(
+                    "_permission_target_primary_property", None
+                ),
+                "display_property": row.pop(
+                    "_permission_target_display_property", None
+                ),
+            }
+            protected_target = self._protect_object_rows(
+                [self._permission_metadata(target, object_type)],
+                permission_context,
+            )
+            if not protected_target:
+                continue
+            row["target_name"] = protected_target[0].get("display_name")
+            protected_runs.append(
+                self._protect_action_result(
+                    row,
+                    target,
+                    object_type,
+                    permission_context,
+                )
+            )
+        return protected_runs
 
     async def export_bundle(self, domain_id: int, include_instances: bool = True) -> dict[str, Any]:
         domain = await self._require_domain(domain_id)
@@ -1767,8 +2532,14 @@ class OntologyService:
             "action_types": await self.list_action_types(domain_id),
         }
         if include_instances:
-            bundle["objects"] = await self.list_objects(domain_id)
-            bundle["links"] = await self.list_links(domain_id)
+            bundle["objects"] = await self.list_objects(
+                domain_id,
+                access_agent_id=None,
+                apply_permissions=False,
+            )
+            bundle["links"] = await self.list_links(
+                domain_id, access_agent_id=None, apply_permissions=False
+            )
         return bundle
 
     async def import_bundle(

@@ -3,22 +3,9 @@
     <div class="page-header">
       <div>
         <h2>数据源管理</h2>
-        <p>维护可复用的数据连接，内置验证智能体的访问边界在验证配置中绑定。</p>
+        <p>维护公司可复用的数据连接；验证智能体只在配置数据访问权限时作为过渡适配。</p>
       </div>
       <div class="header-actions">
-        <el-select v-model="agentId" clearable placeholder="初始关联智能体" style="width: 180px">
-          <el-option
-            v-if="agents.length === 0"
-            label="默认智能体"
-            :value="agentId"
-          />
-          <el-option
-            v-for="agent in agents"
-            :key="agent.id"
-            :label="agent.name"
-            :value="agent.id"
-          />
-        </el-select>
         <el-button type="primary" @click="openCreate">
           <el-icon><Plus /></el-icon> 添加数据源
         </el-button>
@@ -202,12 +189,15 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="390" fixed="right">
+        <el-table-column label="操作" width="470" fixed="right">
           <template #default="{ row }">
             <el-button size="small" @click="openDatasourceDetail(row)">详情</el-button>
             <el-button size="small" @click="openEdit(row)">编辑</el-button>
             <el-button size="small" @click="handleTest(row.id)">测试连接</el-button>
             <el-button size="small" type="primary" plain @click="openSchemaPanel(row)">表结构</el-button>
+            <el-button size="small" type="warning" plain @click="openPermissionDrawer(row)">
+              访问权限
+            </el-button>
             <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -231,6 +221,148 @@
         <dt>已采集表</dt><dd>{{ schemaStatsByDatasource[selectedDatasourceDetail.id]?.table_count || 0 }}</dd>
         <dt>已采集字段</dt><dd>{{ schemaStatsByDatasource[selectedDatasourceDetail.id]?.column_count || 0 }}</dd>
       </dl>
+    </el-drawer>
+
+    <el-drawer
+      v-model="showPermissionDrawer"
+      title="数据访问权限"
+      size="860px"
+      append-to-body
+      class="permission-drawer"
+    >
+      <el-skeleton v-if="permissionLoading" :rows="8" animated />
+      <div v-else-if="permissionDatasource" class="permission-editor">
+        <div class="permission-context">
+          <div>
+            <span>数据源</span>
+            <strong>{{ permissionDatasource.name }} / {{ permissionDatasource.database_name }}</strong>
+          </div>
+          <div class="permission-adapter-field">
+            <span>验证权限适配（过渡）</span>
+            <el-select
+              v-model="permissionAgentId"
+              clearable
+              placeholder="选择已绑定当前数据源的验证智能体"
+              :disabled="permissionEligibleAgents.length === 0"
+              @change="loadDatasourcePermissions"
+            >
+              <el-option
+                v-for="agent in permissionEligibleAgents"
+                :key="agent.id"
+                :label="agent.name"
+                :value="agent.id"
+              />
+            </el-select>
+            <small>仅复用现有表列权限；数据源绑定仍在“调试与验证智能体”中维护。</small>
+          </div>
+          <el-tag type="warning" effect="plain">表白名单强制生效</el-tag>
+        </div>
+
+        <el-alert
+          v-if="permissionEligibleAgents.length === 0"
+          title="当前没有已绑定该数据源的验证权限适配。请先到“平台管理 > 调试与验证智能体”完成绑定。"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="permission-alert"
+        />
+        <el-alert
+          v-else
+          title="只有下方明确允许的表可被该智能体访问；未勾选和后续新接入的表默认不可访问。"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="permission-alert"
+        />
+
+        <el-empty
+          v-if="permissionEligibleAgents.length > 0 && !permissionAgentId"
+          description="请选择验证权限适配，再配置表和字段权限"
+          :image-size="72"
+        />
+        <el-empty
+          v-else-if="permissionAgentId && permissionTables.length === 0"
+          description="请先采集表结构，再配置访问权限"
+          :image-size="72"
+        />
+        <el-table
+          v-else
+          :data="permissionTables"
+          row-key="table_name"
+          border
+          size="small"
+          class="permission-table"
+        >
+          <el-table-column type="expand" width="44">
+            <template #default="{ row: table }">
+              <div class="column-permission-panel">
+                <div v-if="table.columns.length" class="column-permission-list">
+                  <div
+                    v-for="column in table.columns"
+                    :key="`${table.table_name}.${column.column_name}`"
+                    class="column-permission-row"
+                  >
+                    <div class="column-identity">
+                      <strong>{{ column.column_comment || column.column_name }}</strong>
+                      <code>{{ column.column_name }}</code>
+                      <span>{{ column.data_type || '-' }}</span>
+                    </div>
+                    <el-switch
+                      v-model="column.allowed"
+                      :disabled="!table.allowed"
+                      active-text="可见"
+                      inactive-text="不可见"
+                    />
+                    <el-select
+                      v-model="column.masking_policy"
+                      :disabled="!table.allowed || !column.allowed"
+                      aria-label="脱敏策略"
+                      style="width: 142px"
+                    >
+                      <el-option label="不脱敏" value="none" />
+                      <el-option label="完全隐藏" value="redact" />
+                      <el-option label="部分隐藏" value="partial" />
+                      <el-option label="哈希处理" value="hash" />
+                    </el-select>
+                  </div>
+                </div>
+                <el-empty v-else description="该表暂无已采集字段" :image-size="52" />
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="表" min-width="320">
+            <template #default="{ row: table }">
+              <div class="table-name-cell">
+                <strong>{{ table.table_comment || table.table_name }}</strong>
+                <code>{{ table.table_name }}</code>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="字段数" width="96">
+            <template #default="{ row: table }">{{ table.columns.length }}</template>
+          </el-table-column>
+          <el-table-column label="表访问" width="210">
+            <template #default="{ row: table }">
+              <el-switch
+                v-model="table.allowed"
+                active-text="允许"
+                inactive-text="拒绝"
+              />
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <template #footer>
+        <el-button @click="showPermissionDrawer = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="permissionSaving"
+          :disabled="permissionLoading || !permissionDatasource || !permissionAgentId"
+          @click="saveDatasourcePermissions"
+        >
+          保存权限
+        </el-button>
+      </template>
     </el-drawer>
 
     <el-drawer
@@ -322,11 +454,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   fetchAgents,
+  fetchAgentDatasourceIds,
   fetchAllDatasources,
   createDatasource,
   updateDatasource,
@@ -334,18 +467,39 @@ import {
   testConnection,
   collectSchema,
   uncollectSchema,
+  fetchDatasourceSchema,
   fetchDatasourceRemoteTables,
   fetchDatasourceSchemaStats,
   fetchDatasourceTableDetail,
+  fetchDatasourcePermissions,
+  updateDatasourcePermissions,
   type AgentItem,
+  type DatasourceMaskingPolicy,
+  type DatasourcePermissionConfig,
   type DatasourceItem,
   type DatasourceRemoteTable,
   type DatasourceSchemaStats,
   type DatasourceTableMeta,
 } from '../api'
 
-const agentId = ref<number | null>(Number(localStorage.getItem('wenqu_agent_id')) || 1)
+interface PermissionColumnDraft {
+  column_name: string
+  column_comment?: string | null
+  data_type?: string
+  allowed: boolean
+  masking_policy: DatasourceMaskingPolicy
+}
+
+interface PermissionTableDraft {
+  table_name: string
+  table_comment?: string | null
+  allowed: boolean
+  columns: PermissionColumnDraft[]
+}
+
+const permissionAgentId = ref<number | null>(null)
 const agents = ref<AgentItem[]>([])
+const agentDatasourceIds = ref<Record<number, number[]>>({})
 const datasources = ref<DatasourceItem[]>([])
 const datasourceTableRef = ref()
 const tableCatalogByDatasource = ref<Record<number, DatasourceRemoteTable[]>>({})
@@ -363,10 +517,15 @@ const selectedDatasourceDetail = ref<DatasourceItem | null>(null)
 const selectedTableDetail = ref<DatasourceTableMeta | null>(null)
 const columnSearch = ref('')
 const tableDetailLoading = ref(false)
+const showPermissionDrawer = ref(false)
+const permissionDatasource = ref<DatasourceItem | null>(null)
+const permissionTables = ref<PermissionTableDraft[]>([])
+const permissionLoading = ref(false)
+const permissionSaving = ref(false)
 const showDialog = ref(false)
 const editingDatasourceId = ref<number | null>(null)
 const form = ref({
-  agent_id: agentId.value as number | null,
+  agent_id: null as number | null,
   name: '',
   db_type: 'mysql',
   host: '127.0.0.1',
@@ -380,6 +539,14 @@ const form = ref({
 const selectedDatasourceName = computed(() => {
   const datasource = datasources.value.find(item => item.id === selectedDatasourceId.value)
   return datasource ? `${datasource.name} / ${datasource.database_name}` : '数据源'
+})
+
+const permissionEligibleAgents = computed(() => {
+  const datasourceId = permissionDatasource.value?.id
+  if (!datasourceId) return []
+  return agents.value.filter(agent => (
+    agentDatasourceIds.value[agent.id] || []
+  ).includes(datasourceId))
 })
 
 const filteredSelectedColumns = computed(() => {
@@ -399,7 +566,7 @@ onMounted(async () => {
 
 function defaultForm() {
   return {
-    agent_id: agentId.value,
+    agent_id: null,
     name: '',
     db_type: 'mysql',
     host: '127.0.0.1',
@@ -420,7 +587,7 @@ function openCreate() {
 function openEdit(ds: DatasourceItem) {
   editingDatasourceId.value = ds.id
   form.value = {
-    agent_id: ds.agent_id ?? null,
+    agent_id: null,
     name: ds.name,
     db_type: ds.db_type || 'mysql',
     host: ds.host,
@@ -444,22 +611,164 @@ async function openDatasourceDetail(ds: DatasourceItem) {
   }
 }
 
-watch(agentId, async (id) => {
-  if (id) localStorage.setItem('wenqu_agent_id', String(id))
-  form.value.agent_id = id
-  await loadDatasources()
-})
+function buildPermissionDraft(
+  schema: DatasourceTableMeta[],
+  permissions: DatasourcePermissionConfig,
+): PermissionTableDraft[] {
+  const tableRules = new Map(
+    permissions.table_permissions.map(rule => [rule.table_name.toLowerCase(), rule]),
+  )
+  const columnRules = new Map(
+    permissions.column_permissions.map(rule => [
+      `${rule.table_name.toLowerCase()}.${rule.column_name.toLowerCase()}`,
+      rule,
+    ]),
+  )
+  const tables = new Map<string, PermissionTableDraft>()
+  for (const table of schema) {
+    const tableKey = table.table_name.toLowerCase()
+    const tableRule = tableRules.get(tableKey)
+    tables.set(tableKey, {
+      table_name: table.table_name,
+      table_comment: table.table_comment,
+      allowed: Boolean(tableRule?.allowed),
+      columns: table.columns.map((column) => {
+        const rule = columnRules.get(`${tableKey}.${column.column_name.toLowerCase()}`)
+        return {
+          column_name: column.column_name,
+          column_comment: column.column_comment,
+          data_type: column.data_type,
+          allowed: rule?.allowed ?? true,
+          masking_policy: rule?.masking_policy ?? 'none',
+        }
+      }),
+    })
+  }
+
+  for (const rule of permissions.table_permissions) {
+    const tableKey = rule.table_name.toLowerCase()
+    if (!tables.has(tableKey)) {
+      tables.set(tableKey, {
+        table_name: rule.table_name,
+        allowed: rule.allowed,
+        columns: [],
+      })
+    }
+  }
+  for (const rule of permissions.column_permissions) {
+    const tableKey = rule.table_name.toLowerCase()
+    if (!tables.has(tableKey)) {
+      tables.set(tableKey, {
+        table_name: rule.table_name,
+        allowed: Boolean(tableRules.get(tableKey)?.allowed),
+        columns: [],
+      })
+    }
+    const table = tables.get(tableKey)!
+    if (!table.columns.some(column => column.column_name.toLowerCase() === rule.column_name.toLowerCase())) {
+      table.columns.push({
+        column_name: rule.column_name,
+        allowed: rule.allowed,
+        masking_policy: rule.masking_policy,
+      })
+    }
+  }
+
+  return [...tables.values()]
+    .map(table => ({
+      ...table,
+      columns: [...table.columns].sort((left, right) => left.column_name.localeCompare(right.column_name)),
+    }))
+    .sort((left, right) => left.table_name.localeCompare(right.table_name))
+}
+
+async function openPermissionDrawer(ds: DatasourceItem) {
+  permissionDatasource.value = ds
+  permissionAgentId.value = null
+  permissionTables.value = []
+  showPermissionDrawer.value = true
+}
+
+async function loadDatasourcePermissions() {
+  if (!permissionDatasource.value || !permissionAgentId.value) {
+    permissionTables.value = []
+    return
+  }
+  permissionLoading.value = true
+  try {
+    const [schema, permissions] = await Promise.all([
+      fetchDatasourceSchema(permissionDatasource.value.id),
+      fetchDatasourcePermissions(permissionDatasource.value.id, permissionAgentId.value),
+    ])
+    permissionTables.value = buildPermissionDraft(schema, permissions)
+  } catch (error) {
+    permissionTables.value = []
+    ElMessage.error(errorMessage(error, '访问权限加载失败'))
+  } finally {
+    permissionLoading.value = false
+  }
+}
+
+async function saveDatasourcePermissions() {
+  if (!permissionDatasource.value || !permissionAgentId.value) return
+  if (permissionTables.value.length === 0) {
+    ElMessage.warning('请先采集表结构，再配置表白名单')
+    return
+  }
+
+  const tablePermissions = permissionTables.value.map(table => ({
+    table_name: table.table_name,
+    allowed: table.allowed,
+  }))
+  const columnPermissions = permissionTables.value.flatMap(table => (
+    table.columns
+      .filter(column => !column.allowed || column.masking_policy !== 'none')
+      .map(column => ({
+        table_name: table.table_name,
+        column_name: column.column_name,
+        allowed: column.allowed,
+        masking_policy: column.allowed ? column.masking_policy : 'none' as DatasourceMaskingPolicy,
+      }))
+  ))
+
+  permissionSaving.value = true
+  try {
+    await updateDatasourcePermissions(permissionDatasource.value.id, permissionAgentId.value, {
+      table_permissions: tablePermissions,
+      column_permissions: columnPermissions,
+    })
+    ElMessage.success('访问权限已保存')
+    showPermissionDrawer.value = false
+  } catch {
+    ElMessage.error('访问权限保存失败')
+  } finally {
+    permissionSaving.value = false
+  }
+}
 
 async function loadAgents() {
   try {
     agents.value = await fetchAgents()
-    if (agents.value.length > 0 && !agents.value.some(agent => agent.id === agentId.value)) {
-      agentId.value = agents.value[0].id
-    }
+    const bindings = await Promise.all(agents.value.map(async agent => (
+      [agent.id, await fetchAgentDatasourceIds(agent.id).catch(() => [])] as const
+    )))
+    agentDatasourceIds.value = Object.fromEntries(bindings)
   } catch {
     ElMessage.error('智能体配置加载失败，请确认后端服务已启动')
     agents.value = []
+    agentDatasourceIds.value = {}
   }
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  const candidate = error as {
+    response?: { data?: { detail?: string | { message?: string } } }
+    message?: string
+  }
+  const detail = candidate?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  if (detail?.message) return detail.message
+  return candidate?.message || fallback
 }
 
 async function loadDatasources() {
@@ -568,7 +877,6 @@ async function handleSubmit() {
     return
   }
   try {
-    form.value.agent_id = agentId.value || null
     if (editingDatasourceId.value) {
       await updateDatasource(editingDatasourceId.value, form.value)
       ElMessage.success('更新成功')
@@ -653,7 +961,7 @@ async function handleUncollect(id: number, explicitTableNames?: string[]) {
 async function handleDelete(ds: DatasourceItem) {
   try {
     await ElMessageBox.confirm(
-      `确定删除数据源「${ds.name}」？已采集的 Schema 元数据也会一并删除。`,
+      `确定删除数据源「${ds.name}」？平台会删除连接、权限配置和已采集 Schema，但不会删除业务领域或企业模型；仍被领域使用时会阻止删除。`,
       '删除数据源',
       { type: 'warning' },
     )
@@ -898,6 +1206,104 @@ code {
   overflow-wrap: anywhere;
 }
 
+.permission-editor {
+  padding: 2px 2px 20px;
+}
+
+.permission-context {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid var(--wq-border);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.permission-context div {
+  min-width: 0;
+}
+
+.permission-context span,
+.permission-context strong {
+  display: block;
+}
+
+.permission-context span {
+  color: var(--wq-subtle);
+  font-size: 12px;
+}
+
+.permission-context strong {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--wq-text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.permission-adapter-field {
+  display: grid;
+  gap: 5px;
+}
+
+.permission-adapter-field small {
+  color: var(--wq-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.permission-alert {
+  margin-bottom: 12px;
+}
+
+.permission-table {
+  background: #fff;
+}
+
+.column-permission-panel {
+  padding: 8px 14px 12px 48px;
+  background: #f8fafc;
+}
+
+.column-permission-list {
+  border-top: 1px solid #dbe3ef;
+}
+
+.column-permission-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 150px 142px;
+  align-items: center;
+  gap: 16px;
+  min-height: 54px;
+  border-bottom: 1px solid #dbe3ef;
+}
+
+.column-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.column-identity strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--wq-text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.column-identity span {
+  flex: none;
+  color: var(--wq-subtle);
+  font-size: 12px;
+}
+
 .key-tags {
   display: flex;
   gap: 6px;
@@ -911,5 +1317,9 @@ code {
   .header-actions { justify-content: flex-start; }
   .schema-summary,
   .schema-filters { grid-template-columns: 1fr; }
+  .permission-context,
+  .column-permission-row { grid-template-columns: 1fr; }
+  .column-permission-panel { padding-left: 14px; }
+  .column-permission-row { gap: 8px; padding: 10px 0; }
 }
 </style>

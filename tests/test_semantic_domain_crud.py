@@ -1,13 +1,28 @@
 import pytest
 
+from app.models.knowledge import SemanticDomain
 from app.services import semantic_runtime
+from app.services.decision_audit_service import canonical_sha256
 from app.services.semantic_runtime import SemanticRuntimeService
+
+
+class FakeResult:
+    def __init__(self, rows=None):
+        self.rows = rows or []
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self.rows[0] if self.rows else None
 
 
 class RecordingDB:
     def __init__(self, rows_by_query=None):
         self.rows_by_query = rows_by_query or {}
         self.queries: list[tuple[str, dict | None]] = []
+        self.transaction_queries: list[tuple[str, dict | None]] = []
+        self.transaction_calls = 0
         self.insert_params: dict | None = None
 
     async def execute_query(self, sql: str, params: dict | None = None):
@@ -22,6 +37,19 @@ class RecordingDB:
         self.insert_params = params
         return 42
 
+    async def execute_transaction(self, statements):
+        for sql, params in statements:
+            self.queries.append((sql, params))
+
+    async def execute_in_transaction(self, callback):
+        self.transaction_calls += 1
+        return await callback(self)
+
+    async def execute(self, statement, params=None):
+        sql = str(statement)
+        self.transaction_queries.append((sql, params))
+        return FakeResult(await self.execute_query(sql, params))
+
 
 @pytest.mark.asyncio
 async def test_upsert_domain_updates_by_id(monkeypatch):
@@ -31,6 +59,7 @@ async def test_upsert_domain_updates_by_id(monkeypatch):
     domain_id = await SemanticRuntimeService().upsert_domain(
         {
             "id": 9,
+            "workspace_id": 999,
             "agent_id": 2,
             "datasource_id": 5,
             "domain_key": "loan_risk",
@@ -47,6 +76,7 @@ async def test_upsert_domain_updates_by_id(monkeypatch):
     assert "domain_key = :domain_key" in update_sql
     assert update_params["id"] == 9
     assert update_params["name"] == "贷款风控"
+    assert update_params["workspace_id"] == 42
 
 
 @pytest.mark.asyncio
@@ -58,6 +88,15 @@ async def test_delete_domain_removes_assets_and_unbinds_agents(monkeypatch):
 
     assert deleted is True
     statements = [sql for sql, _ in db.queries]
+    assert db.transaction_calls == 1
+    assert db.transaction_queries[0][0] == (
+        "SELECT id FROM semantic_domain WHERE id = :id FOR UPDATE"
+    )
+    assert "FOR UPDATE" in db.transaction_queries[1][0]
+    assert not any("EXISTS" in sql and sql.startswith("DELETE") for sql in statements)
+    assert "DELETE FROM semantic_domain_snapshot WHERE domain_id = :id" in statements
+    assert "DELETE FROM enterprise_model_release WHERE domain_id = :id" in statements
+    assert "DELETE FROM twin_sync_run WHERE domain_id = :id" in statements
     assert "DELETE FROM decision_audit_head WHERE domain_id = :id" in statements
     assert "DELETE FROM risk_issue WHERE domain_id = :id" in statements
     assert "DELETE FROM risk_report_version WHERE domain_id = :id" in statements
@@ -70,6 +109,40 @@ async def test_delete_domain_removes_assets_and_unbinds_agents(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_delete_domain_blocks_governed_history(monkeypatch):
+    db = RecordingDB(
+        {
+            "SELECT id FROM semantic_domain WHERE id": [{"id": 9}],
+            "SELECT sd.id FROM semantic_domain sd": [{"id": 9}],
+        }
+    )
+    monkeypatch.setattr(semantic_runtime, "get_management_db", lambda: db)
+
+    with pytest.raises(ValueError) as exc_info:
+        await SemanticRuntimeService().delete_domain(9)
+
+    assert str(exc_info.value) == (
+        "业务领域已产生版本、对象、运行或审计记录，不能直接删除；请改为停用"
+    )
+    assert db.transaction_calls == 1
+    assert all("FOR UPDATE" in sql for sql, _ in db.transaction_queries[:2])
+    assert not any(sql.startswith("DELETE") for sql, _ in db.queries)
+
+
+@pytest.mark.asyncio
+async def test_delete_domain_returns_false_when_target_does_not_exist(monkeypatch):
+    db = RecordingDB()
+    monkeypatch.setattr(semantic_runtime, "get_management_db", lambda: db)
+
+    deleted = await SemanticRuntimeService().delete_domain(9)
+
+    assert deleted is False
+    assert db.transaction_queries == [
+        ("SELECT id FROM semantic_domain WHERE id = :id FOR UPDATE", {"id": 9})
+    ]
+
+
+@pytest.mark.asyncio
 async def test_list_all_domains_orders_by_id(monkeypatch):
     db = RecordingDB()
     monkeypatch.setattr(semantic_runtime, "get_management_db", lambda: db)
@@ -77,6 +150,74 @@ async def test_list_all_domains_orders_by_id(monkeypatch):
     await SemanticRuntimeService().list_all_domains()
 
     assert db.queries[0][0] == "SELECT * FROM semantic_domain ORDER BY id ASC"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_runtime_rejects_datasource_drift(monkeypatch):
+    service = SemanticRuntimeService()
+
+    async def get_domain(_domain_id):
+        return SemanticDomain(
+            id=9,
+            agent_id=1,
+            datasource_id=5,
+            domain_key="loan_risk",
+            name="贷款风控",
+        )
+
+    async def get_snapshot(_domain_id, _snapshot_id):
+        return {
+            "snapshot_json": {
+                "domain": {
+                    "id": 9,
+                    "agent_id": 1,
+                    "datasource_id": 6,
+                    "domain_key": "loan_risk",
+                    "name": "贷款风控",
+                    "status": "active",
+                },
+                "assets": {},
+            }
+        }
+
+    monkeypatch.setattr(service, "get_domain", get_domain)
+    monkeypatch.setattr(service, "get_snapshot", get_snapshot)
+
+    with pytest.raises(ValueError, match="当前数据源已偏离激活企业模型版本"):
+        await service.build_runtime_from_snapshot(9, 3, agent_id=7)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_runtime_rejects_tampered_snapshot_hash(monkeypatch):
+    service = SemanticRuntimeService()
+    bundle = {
+        "domain": {
+            "id": 9,
+            "agent_id": 1,
+            "datasource_id": 5,
+            "domain_key": "loan_risk",
+            "name": "贷款风控",
+            "status": "active",
+        },
+        "assets": {},
+    }
+
+    async def get_domain(_domain_id):
+        return SemanticDomain(**bundle["domain"])
+
+    async def get_snapshot(_domain_id, _snapshot_id):
+        return {"snapshot_json": bundle}
+
+    monkeypatch.setattr(service, "get_domain", get_domain)
+    monkeypatch.setattr(service, "get_snapshot", get_snapshot)
+
+    with pytest.raises(ValueError, match="快照完整性校验失败"):
+        await service.build_runtime_from_snapshot(
+            9,
+            3,
+            agent_id=7,
+            expected_snapshot_hash=canonical_sha256({"tampered": True}),
+        )
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.agent.ontology_tools import (
+    ACTION_TOOL,
     QUERY_CAPABILITY_TOOL,
+    QUERY_TOOL,
     _load_query_runtime_context,
     build_ontology_tool_definitions,
     build_query_capability_definitions,
@@ -28,6 +30,7 @@ from app.models.user import PublicUser
 from app.services.datasource_service import get_datasource_service
 from app.services.ontology_service import get_ontology_service
 from app.services.semantic_runtime import get_semantic_runtime_service
+from app.services.twin_runtime_service import get_twin_runtime_service
 from app.services.user_service import get_user_service
 
 router = APIRouter()
@@ -59,6 +62,25 @@ async def list_accessible_domains(current_user: PublicUser = Depends(get_current
 
 def bad_request(exc: ValueError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
+
+
+async def _resolve_data_access_agent(
+    domain_id: int,
+    access_agent_id: int | None,
+) -> int | None:
+    """Resolve an explicit permission subject for domain-backed data access."""
+    runtime_service = get_semantic_runtime_service()
+    domain = await runtime_service.get_domain(domain_id)
+    if domain is None:
+        raise HTTPException(status_code=404, detail="企业业务领域不存在")
+    if domain.datasource_id is None:
+        return None
+    if isinstance(access_agent_id, int) and access_agent_id > 0:
+        return access_agent_id
+    resolved = await runtime_service.resolve_domain_agent(domain_id)
+    if resolved is None:
+        raise HTTPException(status_code=403, detail="领域没有可用于数据权限校验的智能体")
+    return resolved
 
 
 @router.get("/domains/{domain_id}/summary")
@@ -191,14 +213,19 @@ async def query_objects(
     current_user: PublicUser = Depends(get_current_user),
 ):
     """Search active Ontology objects for an application or Agent."""
-    await require_domain_access(domain_id, current_user)
-    return await get_ontology_service().query_objects(
-        domain_id,
-        object_type_key=object_type_key,
-        search=search,
-        limit=limit,
-        offset=offset,
-    )
+    access_agent_id = await require_domain_access(domain_id, current_user)
+    permission_agent_id = await _resolve_data_access_agent(domain_id, access_agent_id)
+    try:
+        return await get_ontology_service().query_objects(
+            domain_id,
+            access_agent_id=permission_agent_id,
+            object_type_key=object_type_key,
+            search=search,
+            limit=limit,
+            offset=offset,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.post("/domains/{domain_id}/agent-tools/{tool_name}")
@@ -218,6 +245,25 @@ async def run_agent_tool(
     """
     access_agent_id = await require_domain_access(domain_id, current_user)
     try:
+        permission_agent_id = None
+        if tool_name in {QUERY_TOOL, ACTION_TOOL}:
+            permission_agent_id = await _resolve_data_access_agent(
+                domain_id, access_agent_id
+            )
+        if tool_name == QUERY_TOOL:
+            args = dict(payload.arguments or {})
+            allowed = {"object_type_key", "search", "limit", "offset"}
+            unknown = sorted(set(args) - allowed)
+            if unknown:
+                raise ValueError(f"对象查询工具包含未知参数: {', '.join(unknown)}")
+            return await get_ontology_service().query_objects(
+                domain_id,
+                access_agent_id=permission_agent_id,
+                object_type_key=args.get("object_type_key"),
+                search=args.get("search"),
+                limit=args.get("limit", 20),
+                offset=args.get("offset", 0),
+            )
         query_context: dict[str, object] = {}
         if tool_name == QUERY_CAPABILITY_TOOL:
             context, runtime = await _load_query_runtime_context(
@@ -268,6 +314,7 @@ async def run_agent_tool(
             tool_name,
             payload.arguments,
             current_user.model_dump(),
+            access_agent_id=permission_agent_id,
             **query_context,
         )
     except PermissionError as exc:
@@ -368,16 +415,26 @@ async def sync_objects_from_datasource(
     payload: OntologySyncPayload,
     current_user: PublicUser = Depends(get_current_user),
 ):
-    """Read one source page and merge it with local Ontology action overlays."""
-    await require_domain_access(domain_id, current_user)
+    """Compatibility adapter for governed twin-runtime write synchronization."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="只有管理员可以启动写入型孪生同步")
+    access_agent_id = await require_domain_access(domain_id, current_user)
+    permission_agent_id = await _resolve_data_access_agent(domain_id, access_agent_id)
     try:
-        return await get_ontology_service().sync_objects_from_datasource(
-            domain_id,
+        response = await get_twin_runtime_service().execute_sync(
+            domain_id=domain_id,
+            access_agent_id=permission_agent_id,
+            created_by=current_user.id,
             object_type_id=payload.object_type_id,
             page=payload.page,
             page_size=payload.page_size,
             sync_links=payload.sync_links,
+            dry_run=False,
+            trace_id=None,
         )
+        return response["result"]
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise bad_request(exc) from exc
 
@@ -390,12 +447,20 @@ async def list_objects(
     offset: int = Query(default=0, ge=0),
     current_user: PublicUser = Depends(get_current_user),
 ):
-    await require_domain_access(domain_id, current_user)
-    return {
-        "objects": await get_ontology_service().list_objects(
-            domain_id, object_type_id, limit=limit, offset=offset
-        )
-    }
+    access_agent_id = await require_domain_access(domain_id, current_user)
+    permission_agent_id = await _resolve_data_access_agent(domain_id, access_agent_id)
+    try:
+        return {
+            "objects": await get_ontology_service().list_objects(
+                domain_id,
+                object_type_id,
+                limit=limit,
+                offset=offset,
+                access_agent_id=permission_agent_id,
+            )
+        }
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.post("/domains/{domain_id}/objects")
@@ -423,8 +488,15 @@ async def delete_object(domain_id: int, object_id: int, _: PublicUser = Depends(
 
 @router.get("/domains/{domain_id}/links")
 async def list_links(domain_id: int, current_user: PublicUser = Depends(get_current_user)):
-    await require_domain_access(domain_id, current_user)
-    return {"links": await get_ontology_service().list_links(domain_id)}
+    access_agent_id = await require_domain_access(domain_id, current_user)
+    permission_agent_id = await _resolve_data_access_agent(domain_id, access_agent_id)
+    try:
+        links = await get_ontology_service().list_links(
+            domain_id, access_agent_id=permission_agent_id
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return {"links": links}
 
 
 @router.post("/domains/{domain_id}/links")
@@ -457,10 +529,15 @@ async def execute_action(
     payload: OntologyActionExecutePayload,
     current_user: PublicUser = Depends(get_current_user),
 ):
-    await require_domain_access(domain_id, current_user)
+    access_agent_id = await require_domain_access(domain_id, current_user)
+    permission_agent_id = await _resolve_data_access_agent(domain_id, access_agent_id)
     try:
         return await get_ontology_service().execute_action(
-            domain_id, action_type_id, payload, current_user.model_dump()
+            domain_id,
+            action_type_id,
+            payload,
+            current_user.model_dump(),
+            access_agent_id=permission_agent_id,
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -474,10 +551,16 @@ async def list_action_runs(
     limit: int = Query(default=100, ge=1, le=500),
     current_user: PublicUser = Depends(get_current_user),
 ):
-    await require_domain_access(domain_id, current_user)
+    access_agent_id = await require_domain_access(domain_id, current_user)
+    permission_agent_id = await _resolve_data_access_agent(domain_id, access_agent_id)
     user_id = None if current_user.role == "admin" else current_user.id
-    return {
-        "runs": await get_ontology_service().list_action_runs(
-            domain_id, user_id=user_id, limit=limit
+    try:
+        runs = await get_ontology_service().list_action_runs(
+            domain_id,
+            user_id=user_id,
+            limit=limit,
+            access_agent_id=permission_agent_id,
         )
-    }
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return {"runs": runs}

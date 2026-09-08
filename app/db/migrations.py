@@ -18,9 +18,12 @@ import logging
 
 from app.agent.prompts import default_prompt_templates
 from app.config import get_settings
+from app.db.capability_access_schema import CAPABILITY_ACCESS_TABLE_STATEMENTS
+from app.db.model_release_schema import MODEL_RELEASE_TABLE_STATEMENTS
 from app.db.mysql import get_management_db
 from app.db.ontology_schema import ONTOLOGY_TABLE_STATEMENTS
 from app.db.risk_schema import RISK_WORKFLOW_TABLE_STATEMENTS
+from app.db.twin_schema import TWIN_RUNTIME_TABLE_STATEMENTS
 from app.services.user_service import hash_password
 
 logger = logging.getLogger(__name__)
@@ -33,6 +36,7 @@ async def run_management_migrations() -> None:
     statements = [
         *ONTOLOGY_TABLE_STATEMENTS,
         *RISK_WORKFLOW_TABLE_STATEMENTS,
+        *TWIN_RUNTIME_TABLE_STATEMENTS,
         """
         CREATE TABLE IF NOT EXISTS model_config (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -211,6 +215,8 @@ async def run_management_migrations() -> None:
             INDEX idx_task_checkpoint_status (status, updated_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent持久任务checkpoint'
         """,
+        *MODEL_RELEASE_TABLE_STATEMENTS,
+        *CAPABILITY_ACCESS_TABLE_STATEMENTS,
     ]
     for statement in statements:
         await db.execute_query(statement)
@@ -442,6 +448,26 @@ async def run_management_migrations() -> None:
         "idx_ontology_run_release",
         "ALTER TABLE ontology_action_run ADD INDEX idx_ontology_run_release "
         "(ontology_release_id, created_at)",
+    )
+    await add_column_if_missing(
+        "capability_invocation_audit",
+        "model_release_id",
+        "ALTER TABLE capability_invocation_audit "
+        "ADD COLUMN model_release_id BIGINT DEFAULT NULL "
+        "COMMENT '实际使用的统一企业模型版本ID' AFTER execution_agent_id",
+    )
+    await add_column_if_missing(
+        "capability_invocation_audit",
+        "semantic_snapshot_id",
+        "ALTER TABLE capability_invocation_audit "
+        "ADD COLUMN semantic_snapshot_id BIGINT DEFAULT NULL "
+        "COMMENT '实际使用的语义快照ID' AFTER model_release_id",
+    )
+    await create_index_if_missing(
+        "capability_invocation_audit",
+        "idx_capability_invocation_release",
+        "ALTER TABLE capability_invocation_audit "
+        "ADD INDEX idx_capability_invocation_release (model_release_id, created_at)",
     )
     await backfill_ontology_release_hashes()
     await backfill_decision_audit_heads()
@@ -770,6 +796,17 @@ async def seed_default_system_parameters() -> None:
 async def seed_default_prompt_templates() -> None:
     """Seed editable global prompt templates from app/agent/prompts/*.md."""
     db = get_management_db()
+    await db.execute_query(
+        "UPDATE prompt_template SET description = REPLACE(description, :old_term, :new_term) "
+        "WHERE prompt_key = 'nl2sql_fallback.system' "
+        "AND agent_id IS NULL AND model_config_id IS NULL AND semantic_domain_id IS NULL "
+        "AND description LIKE :legacy_description",
+        {
+            "old_term": "语义层未命中可执行指标时",
+            "new_term": "企业模型语义未命中可执行指标时",
+            "legacy_description": "语义层未命中可执行指标时%",
+        },
+    )
     statements = []
     for item in default_prompt_templates():
         exists = await db.execute_scalar(

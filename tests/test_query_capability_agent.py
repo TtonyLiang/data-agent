@@ -31,7 +31,13 @@ def _runtime() -> dict:
 
 def _context(*capabilities: QueryCapability) -> dict:
     return {
-        "ontology_context": {"object_types": [{"object_key": "LoanApplication"}]},
+        "ontology_context": {
+            "object_types": [{"object_key": "LoanApplication"}],
+            "model_release": {"id": 40, "version": 5},
+            "semantic_snapshot": {"id": 30},
+            "ontology_release": {"id": 4, "version": 2},
+            "warnings": [{"code": "runtime_warning", "message": "兼容告警"}],
+        },
         "query_capabilities": [item.model_dump() for item in capabilities],
     }
 
@@ -91,8 +97,9 @@ async def test_compile_delegates_through_facade_and_records_read_only_trace(monk
     capability = _capability()
     compiled = Mock()
     compiled.used_assets = ["metric:application_count"]
-    compiled.warnings = []
+    compiled.warnings = ["compile warning"]
     compiled.sql = "SELECT COUNT(*) FROM loan_application"
+    compiled.sql_params = {"lf_0": "现金贷"}
     compiled.model_dump.return_value = {"sql": compiled.sql}
 
     facade = Mock()
@@ -109,6 +116,7 @@ async def test_compile_delegates_through_facade_and_records_read_only_trace(monk
             "query_capability_key": capability.key,
             "query_capability_validation": {"capability_key": capability.key, "valid": True},
             "lf_validation": {"valid": True},
+            "execution_trace": {"trace_id": "trace-agent"},
         }
     )
 
@@ -116,6 +124,15 @@ async def test_compile_delegates_through_facade_and_records_read_only_trace(monk
     assert result["execution_trace"]["query_capability_key"] == capability.key
     assert result["execution_trace"]["target_object"] == "LoanApplication"
     assert result["execution_trace"]["read_only"] is True
+    assert result["execution_trace"]["trace_id"] == "trace-agent"
+    assert result["execution_trace"]["model_release"] == {"id": 40, "version": 5}
+    assert result["execution_trace"]["semantic_snapshot"] == {"id": 30}
+    assert result["execution_trace"]["ontology_release"] == {"id": 4, "version": 2}
+    assert result["execution_trace"]["warnings"] == [
+        {"code": "runtime_warning", "message": "兼容告警"},
+        "compile warning",
+    ]
+    assert result["sql_params"] == {"lf_0": "现金贷"}
 
 
 @pytest.mark.asyncio

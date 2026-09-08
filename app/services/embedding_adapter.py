@@ -191,7 +191,10 @@ def friendly_embedding_error_message(error: EmbeddingProviderError) -> str:
 
     last = error.attempts[-1] if error.attempts else {}
     message = str(last.get("message") or error.response_text or error)
-    if "InvalidEndpointOrModel.NotFound" in message or "does not exist or you do not have access" in message:
+    if (
+        "InvalidEndpointOrModel.NotFound" in message
+        or "does not exist or you do not have access" in message
+    ):
         return (
             "模型或 endpoint 不存在，或当前 API Key 无权访问。"
             "请确认模型名称填写的是控制台/API Explorer 里的 Model ID 或 Endpoint ID；"

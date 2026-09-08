@@ -48,13 +48,22 @@ async def test_action_tool_resolves_stable_key_and_builds_payload():
             assert (domain_id, action_key) == (7, "reallocate_material")
             return {"id": 9}
 
-        async def execute_action(self, domain_id, action_type_id, payload, user):
+        async def execute_action(
+            self,
+            domain_id,
+            action_type_id,
+            payload,
+            user,
+            *,
+            access_agent_id=None,
+        ):
             return {
                 "domain_id": domain_id,
                 "action_type_id": action_type_id,
                 "target_object_id": payload.target_object_id,
                 "parameters": payload.parameters,
                 "role": user["role"],
+                "access_agent_id": access_agent_id,
             }
 
     result = await invoke_ontology_tool(
@@ -67,6 +76,7 @@ async def test_action_tool_resolves_stable_key_and_builds_payload():
             "parameters": {"new_status": "reallocated"},
         },
         {"id": 2, "role": "user"},
+        access_agent_id=5,
     )
     assert result == {
         "domain_id": 7,
@@ -74,6 +84,7 @@ async def test_action_tool_resolves_stable_key_and_builds_payload():
         "target_object_id": 22,
         "parameters": {"new_status": "reallocated"},
         "role": "user",
+        "access_agent_id": 5,
     }
 
     with pytest.raises(ValueError, match="动作不存在"):

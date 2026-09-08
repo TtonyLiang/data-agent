@@ -20,9 +20,49 @@ assert.ok(
 
 assert.ok(
   source.includes('class="session-open"') &&
-    source.includes(':aria-pressed="s.session_id === sessionId"') &&
-    source.includes('aria-label="删除会话"'),
+    source.includes(':aria-current="s.session_id === sessionId ? \'page\' : undefined"') &&
+    source.includes(':aria-label="`删除会话：${s.last_question || \'新对话\'}`"'),
   'ChatView session rows should use keyboard-reachable open and delete actions',
+)
+
+assert.ok(
+  source.includes('aria-label="搜索历史会话"') &&
+    source.includes('<aside class="session-sidebar" aria-label="会话导航">') &&
+    source.includes('<nav class="session-list" aria-label="历史会话"') &&
+    source.includes('aria-label="选择验证智能体"') &&
+    source.includes('role="log"') &&
+    source.includes('aria-relevant="additions text"') &&
+    source.includes(':aria-busy="loading"') &&
+    source.includes('aria-label="输入查询问题"') &&
+    source.includes('aria-label="选择结果展示列"'),
+  'ChatView should label its keyboard controls and expose streaming messages as a live log',
+)
+
+assert.ok(
+  source.includes(':aria-controls="`analysis-flow-${msg.id}`"') &&
+    source.includes(':id="`analysis-flow-${msg.id}`"') &&
+    source.includes(':aria-expanded="Boolean(msg.showErrorDetail)"') &&
+    source.includes(':aria-controls="`error-detail-${msg.id}`"') &&
+    source.includes(':id="`error-detail-${msg.id}`"'),
+  'analysis and error disclosure controls should expose expanded state and controlled content',
+)
+
+assert.ok(
+  source.includes('ref="composerInput"') &&
+    source.includes('const composerInput = ref<{ focus: () => void }>()') &&
+    source.includes('function focusComposer()') &&
+    source.includes('composerInput.value?.focus()') &&
+    source.includes('newSession()') &&
+    source.includes('focusComposer()'),
+  'new sessions, quick queries, and loaded history should return keyboard focus to the composer',
+)
+
+assert.ok(
+  source.includes(':aria-label="`查看${columnTitle(col)}完整内容`"') &&
+    source.includes('@opened="focusRiskTitle"') &&
+    source.includes('ref="riskTitleInput"') &&
+    source.includes('riskTitleInput.value?.focus()'),
+  'table detail actions and the risk dialog should expose context and predictable initial focus',
 )
 
 assert.ok(
@@ -324,4 +364,15 @@ assert.ok(
     registerSource.includes(':disabled="loading"') &&
     registerSource.includes('@keyframes authContentIn'),
   'RegisterView should provide inline failure feedback, lock inputs during submission, and use restrained entry motion',
+)
+
+assert.ok(
+  loginSource.includes('让 AI 读懂公司的业务与数据') &&
+    loginSource.includes('企业模型连接业务语义、数据孪生与可复用能力') &&
+    loginSource.includes('使用公司内部账号继续') &&
+    registerSource.includes('创建公司内部账号') &&
+    registerSource.includes('验证客户端和业务数据访问范围') &&
+    !loginSource.includes('工作区') &&
+    !registerSource.includes('工作区'),
+  'authentication copy should introduce the single-company platform foundation instead of a risk workspace product',
 )

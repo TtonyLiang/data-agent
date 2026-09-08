@@ -40,6 +40,7 @@ def previous_task(**overrides):
         "logic_form": {"metrics": ["outstanding_balance"]},
         "lf_validation": {"valid": True},
         "compiled_sql": "SELECT SUM(balance) FROM loan_balance",
+        "sql_params": {"lf_0": "current"},
         "sql_executed": True,
         "sql_result": [{"outstanding_balance": 100}],
     }
@@ -96,6 +97,7 @@ def test_retry_clears_query_capability_artifacts_but_keeps_existing_sql():
     assert "query_capability_validation" not in state
     assert state["logic_form"] == previous_task()["logic_form"]
     assert state["compiled_sql"] == previous_task()["compiled_sql"]
+    assert state["sql_params"] == previous_task()["sql_params"]
     assert "query_context" in state["reused_artifacts"]
     assert "query_capability" not in state["reused_artifacts"]
 
@@ -111,6 +113,7 @@ def test_context_fingerprint_change_clears_query_context_and_dependent_artifacts
         "query_capability_validation",
         "logic_form",
         "compiled_sql",
+        "sql_params",
     ):
         assert field not in state
     assert {
@@ -139,6 +142,7 @@ def test_checkpoint_payload_round_trips_query_capability_fields_as_json():
     assert restored["query_context"] == state["query_context"]
     assert restored["query_capability_key"] == state["query_capability_key"]
     assert restored["query_capability_validation"] == state["query_capability_validation"]
+    assert restored["sql_params"] == state["sql_params"]
 
 
 def test_old_checkpoint_without_new_fields_remains_compatible():
@@ -160,3 +164,4 @@ def test_agent_state_declares_query_capability_fields():
     assert str(annotations["query_context"]) == "dict[str, typing.Any]"
     assert str(annotations["query_capability_key"]) == "str | None"
     assert str(annotations["query_capability_validation"]) == "dict[str, typing.Any]"
+    assert str(annotations["sql_params"]) == "dict[str, typing.Any]"

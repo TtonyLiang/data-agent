@@ -57,7 +57,7 @@ PROMPT_CATALOG: tuple[PromptCatalogItem, ...] = (
         "nl2sql_fallback.system.md",
         "nl2sql_fallback.system",
         "NL2SQL 兜底系统提示词",
-        "语义层未命中可执行指标时，基于已采集 schema 生成安全 SELECT。",
+        "企业模型语义未命中可执行指标时，基于已采集 schema 生成安全 SELECT。",
         "nl2sql_fallback",
     ),
     PromptCatalogItem(

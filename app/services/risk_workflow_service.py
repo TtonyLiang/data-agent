@@ -22,6 +22,7 @@ from app.services.decision_audit_service import (
     canonical_sha256,
     get_decision_audit_service,
 )
+from app.services.ontology_service import get_ontology_service
 
 JSON_FIELDS = {
     "detected_value",
@@ -169,11 +170,20 @@ def _review_state(review: dict[str, Any]) -> dict[str, Any]:
 
 
 def _release_lineage(release: dict[str, Any]) -> dict[str, Any]:
-    return {
+    lineage = {
         "id": int(release["id"]),
         "version": int(release["version"]),
         "definition_hash": release.get("definition_hash"),
     }
+    if release.get("model_release_id") is not None:
+        lineage["enterprise_model"] = {
+            "id": int(release["model_release_id"]),
+            "version": int(release.get("model_release_version") or 0),
+            "model_hash": release.get("model_hash"),
+            "semantic_snapshot_id": release.get("semantic_snapshot_id"),
+            "semantic_snapshot_hash": release.get("semantic_snapshot_hash"),
+        }
+    return lineage
 
 
 def _report_summary(report_payload: Any) -> dict[str, Any] | None:
@@ -299,28 +309,37 @@ class RiskWorkflowService:
     async def _require_current_release(self, session: Any, domain_id: int) -> dict[str, Any]:
         result = await session.execute(
             text(
-                "SELECT id, version, name, definition_hash, created_at FROM ontology_release "
-                "WHERE domain_id = :domain_id ORDER BY version DESC LIMIT 1"
+                "SELECT r.id, r.version, r.name, r.definition_hash, r.created_at, "
+                "m.id AS model_release_id, m.version AS model_release_version, "
+                "m.model_hash, m.semantic_snapshot_id, m.semantic_snapshot_hash "
+                "FROM enterprise_model_release m JOIN ontology_release r "
+                "ON r.id = m.ontology_release_id AND r.domain_id = m.domain_id "
+                "WHERE m.domain_id = :domain_id AND m.status = 'active' LIMIT 1"
             ),
             {"domain_id": domain_id},
         )
         release = _first(result)
         if release is None:
-            raise ValueError("当前领域尚未发布 Ontology release，不能创建决策记录")
+            raise ValueError("当前领域尚未激活统一企业模型版本，不能创建决策记录")
         return release
 
     async def _require_domain_agent(
         self, session: Any, domain_id: int, agent_id: int
     ) -> dict[str, Any]:
         result = await session.execute(
-            text("SELECT id, agent_id FROM semantic_domain WHERE id = :domain_id"),
-            {"domain_id": domain_id},
+            text(
+                "SELECT sd.id FROM semantic_domain sd "
+                "JOIN agent a ON a.id = :agent_id "
+                "LEFT JOIN agent_semantic_domain asd "
+                "ON asd.agent_id = a.id AND asd.domain_id = sd.id "
+                "WHERE sd.id = :domain_id AND (asd.domain_id IS NOT NULL "
+                "OR a.semantic_domain_id = sd.id OR sd.agent_id = a.id) LIMIT 1"
+            ),
+            {"domain_id": domain_id, "agent_id": agent_id},
         )
         domain = _first(result)
         if domain is None:
-            raise RiskWorkflowNotFound("Ontology 领域不存在")
-        if int(domain["agent_id"]) != agent_id:
-            raise ValueError("风险事项领域与问数智能体不一致")
+            raise ValueError("风险事项领域未授权给当前问数验证智能体")
         return domain
 
     async def _ensure_issue_key_available(
@@ -345,11 +364,15 @@ class RiskWorkflowService:
         actor_id: int | None,
         actor: str,
     ) -> dict[str, Any]:
+        source_context = dict(data.get("source_context") or {})
+        source_context["model_release"] = _release_lineage(release).get(
+            "enterprise_model"
+        )
         params = {
             **data,
             "ontology_release_id": int(release["id"]),
             "status": "open",
-            "source_context": canonical_json(data.get("source_context") or {}),
+            "source_context": canonical_json(source_context),
             "detected_value": canonical_json(data.get("detected_value")),
             "expected_value": canonical_json(data.get("expected_value")),
             "created_by": actor_id,
@@ -375,6 +398,7 @@ class RiskWorkflowService:
             "status": "open",
             "version": 1,
             "created_by": actor_id,
+            "source_context": source_context,
         }
         await self.audit.append_in_session(
             session,
@@ -551,8 +575,23 @@ class RiskWorkflowService:
         }
 
     async def _load_subject_snapshot(
-        self, session: Any, domain_id: int, object_id: int
+        self,
+        session: Any,
+        domain_id: int,
+        object_id: int,
+        *,
+        access_agent_id: int | None = None,
     ) -> dict[str, Any]:
+        if access_agent_id is not None:
+            subject = await get_ontology_service().get_object(
+                domain_id,
+                object_id,
+                access_agent_id=access_agent_id,
+                apply_permissions=True,
+            )
+            if subject is None:
+                raise PermissionError("当前权限主体无权访问风险事项绑定的对象")
+            return subject
         result = await session.execute(
             text(
                 "SELECT o.id, o.primary_value, o.display_name, o.properties, o.version, "
@@ -568,6 +607,29 @@ class RiskWorkflowService:
             raise ValueError("风险事项绑定的 Ontology 对象不存在")
         subject["properties"] = _loads(subject.get("properties"), {})
         return subject
+
+    async def _protect_issue_subject(
+        self,
+        issue: dict[str, Any],
+        access_agent_id: int | None,
+    ) -> dict[str, Any]:
+        if access_agent_id is None or issue.get("subject_object_id") is None:
+            return issue
+        subject = await get_ontology_service().get_object(
+            int(issue["domain_id"]),
+            int(issue["subject_object_id"]),
+            access_agent_id=access_agent_id,
+            apply_permissions=True,
+        )
+        protected = dict(issue)
+        if subject is None:
+            protected["subject_object_id"] = None
+            protected["subject_name"] = "无权查看关联对象"
+            protected["subject_type"] = None
+            return protected
+        protected["subject_name"] = subject.get("display_name")
+        protected["subject_type"] = subject.get("object_type_name")
+        return protected
 
     async def _get_issue(
         self, session: Any, domain_id: int, issue_id: int, *, for_update: bool = False
@@ -736,7 +798,11 @@ class RiskWorkflowService:
         )
 
     async def create_issue(
-        self, payload: RiskIssueCreatePayload, user: dict[str, Any]
+        self,
+        payload: RiskIssueCreatePayload,
+        user: dict[str, Any],
+        *,
+        access_agent_id: int | None = None,
     ) -> dict[str, Any]:
         actor_id, actor = _actor(user)
 
@@ -746,18 +812,28 @@ class RiskWorkflowService:
                 session, payload.domain_id, payload.issue_key
             )
             if payload.subject_object_id is not None:
-                subject = await session.execute(
-                    text(
-                        "SELECT id FROM ontology_object WHERE id = :object_id "
-                        "AND domain_id = :domain_id"
-                    ),
-                    {
-                        "object_id": payload.subject_object_id,
-                        "domain_id": payload.domain_id,
-                    },
-                )
-                if _first(subject) is None:
-                    raise ValueError("风险事项绑定的 Ontology 对象不存在")
+                if access_agent_id is not None:
+                    subject = await get_ontology_service().get_object(
+                        payload.domain_id,
+                        payload.subject_object_id,
+                        access_agent_id=access_agent_id,
+                        apply_permissions=True,
+                    )
+                    if subject is None:
+                        raise PermissionError("当前权限主体无权访问风险事项绑定的对象")
+                else:
+                    subject = await session.execute(
+                        text(
+                            "SELECT id FROM ontology_object WHERE id = :object_id "
+                            "AND domain_id = :domain_id"
+                        ),
+                        {
+                            "object_id": payload.subject_object_id,
+                            "domain_id": payload.domain_id,
+                        },
+                    )
+                    if _first(subject) is None:
+                        raise ValueError("风险事项绑定的 Ontology 对象不存在")
             return await self._insert_issue_in_session(
                 session,
                 data=payload.model_dump(),
@@ -769,7 +845,11 @@ class RiskWorkflowService:
         return await get_management_db().execute_in_transaction(callback)
 
     async def create_issue_from_chat(
-        self, payload: ChatRiskIssueCreatePayload, user: dict[str, Any]
+        self,
+        payload: ChatRiskIssueCreatePayload,
+        user: dict[str, Any],
+        *,
+        access_agent_id: int | None = None,
     ) -> dict[str, Any]:
         actor_id, actor = _actor(user)
 
@@ -783,7 +863,10 @@ class RiskWorkflowService:
             subject = None
             if payload.subject_object_id is not None:
                 subject = await self._load_subject_snapshot(
-                    session, payload.domain_id, payload.subject_object_id
+                    session,
+                    payload.domain_id,
+                    payload.subject_object_id,
+                    access_agent_id=access_agent_id,
                 )
 
             assistant = source["assistant"]
@@ -799,6 +882,7 @@ class RiskWorkflowService:
                 "trace_id": source["trace_id"],
                 "task_id": assistant.get("task_id"),
                 "turn_id": assistant.get("turn_id"),
+                "access_agent_id": access_agent_id,
             }
             issue = await self._insert_issue_in_session(
                 session,
@@ -877,6 +961,7 @@ class RiskWorkflowService:
                             "display_name": subject["display_name"],
                             "properties": subject["properties"],
                             "version": int(subject["version"]),
+                            "access_agent_id": access_agent_id,
                         },
                     )
                 )
@@ -908,6 +993,7 @@ class RiskWorkflowService:
         severity: str | None = None,
         limit: int = 100,
         offset: int = 0,
+        access_agent_id: int | None = None,
     ) -> list[dict[str, Any]]:
         filters = ["i.domain_id = :domain_id"]
         params: dict[str, Any] = {"domain_id": domain_id, "limit": limit, "offset": offset}
@@ -933,9 +1019,19 @@ class RiskWorkflowService:
             + " ORDER BY i.updated_at DESC, i.id DESC LIMIT :limit OFFSET :offset",
             params,
         )
-        return [normalize_workflow_row(row) for row in rows]
+        issues = [normalize_workflow_row(row) for row in rows]
+        return [
+            await self._protect_issue_subject(issue, access_agent_id)
+            for issue in issues
+        ]
 
-    async def get_issue(self, domain_id: int, issue_id: int) -> dict[str, Any]:
+    async def get_issue(
+        self,
+        domain_id: int,
+        issue_id: int,
+        *,
+        access_agent_id: int | None = None,
+    ) -> dict[str, Any]:
         db = get_management_db()
         rows = await db.execute_query(
             "SELECT i.*, r.version AS ontology_release_version, "
@@ -967,11 +1063,12 @@ class RiskWorkflowService:
             "ORDER BY v.created_at ASC, v.id ASC",
             {"issue_id": issue_id, "domain_id": domain_id},
         )
-        return {
+        issue = {
             **normalize_workflow_row(rows[0]),
             "evidence": [normalize_workflow_row(row) for row in evidence],
             "reviews": [normalize_workflow_row(row) for row in reviews],
         }
+        return await self._protect_issue_subject(issue, access_agent_id)
 
     async def add_evidence(
         self,
@@ -1448,8 +1545,11 @@ class RiskWorkflowService:
     async def get_summary(self, domain_id: int) -> dict[str, Any]:
         db = get_management_db()
         release_rows = await db.execute_query(
-            "SELECT id, version, name, definition_hash, created_at FROM ontology_release "
-            "WHERE domain_id = :domain_id ORDER BY version DESC LIMIT 1",
+            "SELECT r.id, r.version, r.name, r.definition_hash, r.created_at, "
+            "m.id AS model_release_id, m.version AS model_release_version, m.model_hash "
+            "FROM enterprise_model_release m JOIN ontology_release r "
+            "ON r.id = m.ontology_release_id AND r.domain_id = m.domain_id "
+            "WHERE m.domain_id = :domain_id AND m.status = 'active' LIMIT 1",
             {"domain_id": domain_id},
         )
         issue_rows = await db.execute_query(

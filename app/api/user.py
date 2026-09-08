@@ -3,7 +3,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import require_admin
-from app.models.user import PasswordResetRequest, PublicUser, UserAgentPermissionUpdate, UserCreate, UserUpdate
+from app.models.user import (
+    PasswordResetRequest,
+    UserAgentPermissionUpdate,
+    UserCreate,
+    UserUpdate,
+)
 from app.services.user_service import get_user_service, public_user_from_row
 
 router = APIRouter(dependencies=[Depends(require_admin)])

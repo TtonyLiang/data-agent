@@ -432,6 +432,69 @@ CREATE TABLE IF NOT EXISTS ontology_release (
     INDEX idx_ontology_release_domain (domain_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Ontology发布版本';
 
+-- 统一企业模型发布: 绑定语义快照与Ontology发布版本
+CREATE TABLE IF NOT EXISTS enterprise_model_release (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    domain_id BIGINT NOT NULL COMMENT '所属业务领域',
+    version INT NOT NULL COMMENT '领域内递增版本',
+    name VARCHAR(256) NOT NULL COMMENT '发布名称',
+    description TEXT COMMENT '发布说明',
+    semantic_snapshot_id BIGINT NOT NULL COMMENT '语义资产快照ID',
+    ontology_release_id BIGINT NOT NULL COMMENT 'Ontology发布版本ID',
+    status VARCHAR(32) NOT NULL DEFAULT 'draft' COMMENT 'draft/validated/active/retired',
+    semantic_snapshot_hash CHAR(64) NOT NULL COMMENT '语义资产快照SHA-256',
+    ontology_definition_hash CHAR(64) NOT NULL COMMENT 'Ontology定义SHA-256',
+    model_hash CHAR(64) NOT NULL COMMENT '统一企业模型SHA-256',
+    validation_json JSON DEFAULT NULL COMMENT '统一校验结果',
+    created_by BIGINT DEFAULT NULL COMMENT '创建用户ID',
+    validated_by BIGINT DEFAULT NULL COMMENT '校验用户ID',
+    activated_by BIGINT DEFAULT NULL COMMENT '激活用户ID',
+    retired_by BIGINT DEFAULT NULL COMMENT '停用用户ID',
+    previous_active_release_id BIGINT DEFAULT NULL COMMENT '激活前的活动版本ID',
+    validated_at TIMESTAMP NULL DEFAULT NULL,
+    activated_at TIMESTAMP NULL DEFAULT NULL,
+    retired_at TIMESTAMP NULL DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    active_domain_id BIGINT GENERATED ALWAYS AS (
+        CASE WHEN status = 'active' THEN domain_id ELSE NULL END
+    ) STORED,
+    UNIQUE KEY uk_enterprise_model_release_version (domain_id, version),
+    UNIQUE KEY uk_enterprise_model_release_components (
+        domain_id, semantic_snapshot_id, ontology_release_id
+    ),
+    UNIQUE KEY uk_enterprise_model_release_active (active_domain_id),
+    INDEX idx_enterprise_model_release_domain (domain_id, status, version),
+    INDEX idx_enterprise_model_release_semantic (semantic_snapshot_id),
+    INDEX idx_enterprise_model_release_ontology (ontology_release_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='统一企业模型发布版本';
+
+CREATE TABLE IF NOT EXISTS twin_sync_run (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    domain_id BIGINT NOT NULL,
+    object_type_id BIGINT DEFAULT NULL,
+    model_release_id BIGINT DEFAULT NULL,
+    datasource_id BIGINT NOT NULL,
+    caller_agent_id BIGINT DEFAULT NULL,
+    trace_id VARCHAR(128) NOT NULL,
+    trigger_type VARCHAR(32) NOT NULL DEFAULT 'manual',
+    dry_run TINYINT(1) NOT NULL DEFAULT 0,
+    status VARCHAR(32) NOT NULL DEFAULT 'running',
+    page INT NOT NULL DEFAULT 1,
+    page_size INT NOT NULL DEFAULT 200,
+    sync_links TINYINT(1) NOT NULL DEFAULT 1,
+    statistics_json JSON DEFAULT NULL,
+    error_summary TEXT DEFAULT NULL,
+    created_by BIGINT DEFAULT NULL,
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP NULL DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_twin_sync_run_domain (domain_id, created_at),
+    INDEX idx_twin_sync_run_status (status, created_at),
+    INDEX idx_twin_sync_run_trace (trace_id),
+    INDEX idx_twin_sync_run_release (model_release_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='孪生同步运行记录';
+
 -- 风险交付: 风险事项
 CREATE TABLE IF NOT EXISTS risk_issue (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -652,3 +715,63 @@ CREATE TABLE IF NOT EXISTS user_feedback (
     INDEX idx_feedback_agent_session (agent_id, session_id),
     INDEX idx_feedback_trace (trace_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户反馈';
+
+-- 第三方能力调用方；密钥只在创建时返回，管理库仅保存摘要
+CREATE TABLE IF NOT EXISTS capability_client (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    client_key VARCHAR(64) NOT NULL COMMENT '外部调用方公开标识',
+    name VARCHAR(256) NOT NULL COMMENT '调用方名称',
+    description TEXT COMMENT '调用方说明',
+    secret_hash VARCHAR(128) NOT NULL COMMENT '调用密钥SHA-256摘要',
+    status VARCHAR(32) NOT NULL DEFAULT 'active' COMMENT 'active/disabled',
+    created_by BIGINT DEFAULT NULL COMMENT '创建管理员ID',
+    last_used_at TIMESTAMP NULL DEFAULT NULL COMMENT '最近认证成功时间',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_capability_client_key (client_key),
+    INDEX idx_capability_client_status (status, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='第三方能力调用方';
+
+-- 外部调用方授权；execution_agent_id 只作为现有数据权限链路的内部适配
+CREATE TABLE IF NOT EXISTS capability_grant (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    client_id BIGINT NOT NULL COMMENT '能力调用方ID',
+    domain_id BIGINT NOT NULL COMMENT '授权业务领域ID',
+    capability_key VARCHAR(128) NOT NULL COMMENT '授权能力标识',
+    execution_agent_id BIGINT NOT NULL COMMENT '内部数据权限执行适配ID',
+    status VARCHAR(32) NOT NULL DEFAULT 'active' COMMENT 'active/revoked',
+    created_by BIGINT DEFAULT NULL COMMENT '创建管理员ID',
+    updated_by BIGINT DEFAULT NULL COMMENT '最近修改管理员ID',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_capability_grant (client_id, domain_id, capability_key),
+    INDEX idx_capability_grant_lookup (client_id, domain_id, capability_key, status),
+    INDEX idx_capability_grant_execution_agent (execution_agent_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='第三方调用方能力授权';
+
+-- 仅记录请求/结果摘要，不保存查询结果全文
+CREATE TABLE IF NOT EXISTS capability_invocation_audit (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    trace_id VARCHAR(64) NOT NULL COMMENT '能力调用链路ID',
+    client_id BIGINT NOT NULL COMMENT '能力调用方ID',
+    grant_id BIGINT DEFAULT NULL COMMENT '命中的授权ID',
+    domain_id BIGINT NOT NULL COMMENT '业务领域ID',
+    capability_key VARCHAR(128) NOT NULL COMMENT '能力标识',
+    execution_agent_id BIGINT DEFAULT NULL COMMENT '内部数据权限执行适配ID',
+    model_release_id BIGINT DEFAULT NULL COMMENT '实际使用的统一企业模型版本ID',
+    semantic_snapshot_id BIGINT DEFAULT NULL COMMENT '实际使用的语义快照ID',
+    ontology_release_id BIGINT DEFAULT NULL COMMENT '实际使用的Ontology版本ID',
+    status VARCHAR(32) NOT NULL COMMENT '调用结果状态',
+    latency_ms DECIMAL(12, 2) NOT NULL DEFAULT 0 COMMENT '端到端耗时毫秒',
+    row_count INT NOT NULL DEFAULT 0 COMMENT '返回结果行数',
+    error_category VARCHAR(64) DEFAULT NULL COMMENT '错误分类',
+    error_message TEXT DEFAULT NULL COMMENT '截断后的错误摘要',
+    request_summary JSON DEFAULT NULL COMMENT '不含过滤值的请求摘要',
+    result_summary JSON DEFAULT NULL COMMENT '不含结果全文的执行摘要',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_capability_invocation_trace (trace_id),
+    INDEX idx_capability_invocation_client (client_id, created_at),
+    INDEX idx_capability_invocation_domain (domain_id, capability_key, created_at),
+    INDEX idx_capability_invocation_release (model_release_id, created_at),
+    INDEX idx_capability_invocation_status (status, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='能力调用审计摘要';

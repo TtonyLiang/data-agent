@@ -1,7 +1,6 @@
 import pytest
 
-from app.services import embedding_adapter
-from app.services import embedding_service
+from app.services import embedding_adapter, embedding_service
 
 
 class FakeResponse:

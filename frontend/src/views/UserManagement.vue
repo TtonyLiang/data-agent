@@ -3,7 +3,7 @@
     <header class="page-header">
       <div>
         <h2>用户管理</h2>
-        <p>管理系统用户、角色状态和可访问智能体。</p>
+        <p>管理系统用户、角色状态和可访问的验证客户端。</p>
       </div>
       <el-button type="primary" @click="openCreate">新增用户</el-button>
     </header>
@@ -33,7 +33,7 @@
         <template #default="{ row }">
           <div class="action-row">
             <el-button text type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button text type="primary" @click="openAgentPermission(row)">智能体权限</el-button>
+            <el-button text type="primary" @click="openAgentPermission(row)">验证客户端权限</el-button>
             <el-button text type="warning" @click="openResetPassword(row)">重置密码</el-button>
             <el-button
               text
@@ -77,8 +77,8 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showAgentDialog" title="智能体访问权限" width="560px" align-center>
-      <p class="dialog-tip">普通用户只能看到并使用这里勾选的智能体。</p>
+    <el-dialog v-model="showAgentDialog" title="验证客户端访问权限" width="560px" align-center>
+      <p class="dialog-tip">当前兼容链路通过验证客户端派生普通用户可访问的业务领域和数据范围；验证客户端不拥有企业模型。</p>
       <el-checkbox-group v-model="selectedAgentIds" class="agent-checks">
         <el-checkbox v-for="agent in agents" :key="agent.id" :label="agent.id">
           {{ agent.name }}

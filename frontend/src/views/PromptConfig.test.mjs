@@ -38,3 +38,14 @@ assert.ok(
   source.includes('embedded-toolbar') && source.includes('还没有 Prompt 模板') && source.includes('新增模板'),
   'PromptConfig should remain usable when embedded in SystemParameterConfig',
 )
+
+assert.ok(
+  source.includes('业务领域和模型维护企业模型提示词') &&
+    source.includes('验证智能体范围仅用于兼容覆盖') &&
+    source.includes('业务领域：') &&
+    source.includes('label="业务领域"') &&
+    source.includes('验证智能体覆盖') &&
+    !source.includes('label="语义层"') &&
+    !source.includes('语义层：'),
+  'visible Prompt terminology should align semantic assets with business domains and treat Agent scope as compatibility only',
+)

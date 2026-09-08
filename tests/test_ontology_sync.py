@@ -1,14 +1,22 @@
 import copy
 import json
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
+from app.api import ontology as ontology_api
+from app.models.ontology import OntologySyncPayload
+from app.models.user import PublicUser
 from app.services import ontology_service
 from app.services.ontology_service import OntologyService
+from app.services.permission_service import ColumnPolicy
 
 DOMAIN_ID = 4
 DATASOURCE_ID = 42
+ADMIN = PublicUser(id=1, username="admin", role="admin", status="active")
+USER = PublicUser(id=2, username="reader", role="user", status="active")
 
 
 def _property(
@@ -59,6 +67,97 @@ def _loan_row(index: int, *, balance: int = 1000) -> dict[str, Any]:
         "collection_status": "not_started",
         "balance": balance,
     }
+
+
+@pytest.mark.asyncio
+async def test_legacy_sync_rejects_non_admin_before_runtime(monkeypatch):
+    runtime = AsyncMock()
+    monkeypatch.setattr(ontology_api, "get_twin_runtime_service", lambda: runtime)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await ontology_api.sync_objects_from_datasource(
+            DOMAIN_ID,
+            OntologySyncPayload(object_type_id=11, page=1, page_size=20),
+            USER,
+        )
+
+    assert exc_info.value.status_code == 403
+    runtime.execute_sync.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_legacy_sync_delegates_to_twin_runtime_and_preserves_result(monkeypatch):
+    result = {
+        "domain_id": DOMAIN_ID,
+        "types": [],
+        "objects": [],
+        "has_errors": False,
+    }
+    runtime = AsyncMock()
+    runtime.execute_sync.return_value = {
+        "run": {"id": 19, "trace_id": "sync_19", "status": "succeeded"},
+        "result": result,
+    }
+    monkeypatch.setattr(ontology_api, "get_twin_runtime_service", lambda: runtime)
+    monkeypatch.setattr(
+        ontology_api,
+        "require_domain_access",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        ontology_api,
+        "_resolve_data_access_agent",
+        AsyncMock(return_value=7),
+    )
+    payload = OntologySyncPayload(
+        object_type_id=11,
+        page=2,
+        page_size=20,
+        sync_links=False,
+    )
+
+    response = await ontology_api.sync_objects_from_datasource(
+        DOMAIN_ID,
+        payload,
+        ADMIN,
+    )
+
+    assert response == result
+    runtime.execute_sync.assert_awaited_once_with(
+        domain_id=DOMAIN_ID,
+        access_agent_id=7,
+        created_by=ADMIN.id,
+        object_type_id=11,
+        page=2,
+        page_size=20,
+        sync_links=False,
+        dry_run=False,
+        trace_id=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_sync_preserves_object_type_default_page_size(monkeypatch):
+    runtime = AsyncMock()
+    runtime.execute_sync.return_value = {
+        "run": {"id": 19, "trace_id": "sync_19", "status": "succeeded"},
+        "result": {"domain_id": DOMAIN_ID, "types": [], "objects": []},
+    }
+    monkeypatch.setattr(ontology_api, "get_twin_runtime_service", lambda: runtime)
+    monkeypatch.setattr(
+        ontology_api, "require_domain_access", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        ontology_api, "_resolve_data_access_agent", AsyncMock(return_value=7)
+    )
+
+    await ontology_api.sync_objects_from_datasource(
+        DOMAIN_ID,
+        OntologySyncPayload(object_type_id=11),
+        ADMIN,
+    )
+
+    assert runtime.execute_sync.await_args.kwargs["page_size"] is None
 
 
 class FakeSourceDB:
@@ -192,6 +291,44 @@ class AllowAllPermissionService:
         assert datasource_id == DATASOURCE_ID
         return rows, {}
 
+    async def get_table_permissions(self, agent_id, datasource_id):
+        assert (agent_id, datasource_id) == (7, DATASOURCE_ID)
+        return {
+            "loan_account_indicator": True,
+            "loan_application_indicator": True,
+        }
+
+    async def get_column_permissions(self, agent_id, datasource_id):
+        assert (agent_id, datasource_id) == (7, DATASOURCE_ID)
+        return {}
+
+    @staticmethod
+    def table_allowed(table_name, table_permissions):
+        return bool(table_permissions.get(table_name.lower(), False))
+
+
+class BoundDatasourceService:
+    async def belongs_to_agent(self, datasource_id, agent_id):
+        assert datasource_id == DATASOURCE_ID
+        assert agent_id == 7
+        return True
+
+
+def test_sync_key_permission_uses_projection_alias_lineage():
+    restricted = ColumnPolicy(allowed=True, masking_policy="hash")
+
+    with pytest.raises(ValueError, match="主标识字段 application_id"):
+        OntologyService._validate_sync_key_permissions(
+            {
+                "object_key": "LoanApplication",
+                "primary_property": "application_id",
+            },
+            [],
+            ["loan_application_indicator"],
+            {("loan_application_indicator", "id"): restricted},
+            {"application_id": restricted},
+        )
+
 
 def _configure_sync(
     monkeypatch,
@@ -202,12 +339,13 @@ def _configure_sync(
     object_types: list[dict[str, Any]],
     action_types: list[dict[str, Any]] | None = None,
     link_types: list[dict[str, Any]] | None = None,
+    permission_service=None,
 ) -> None:
     async def require_domain(domain_id: int):
         assert domain_id == DOMAIN_ID
         return {
             "id": DOMAIN_ID,
-            "agent_id": 7,
+            "agent_id": None,
             "datasource_id": DATASOURCE_ID,
         }
 
@@ -236,10 +374,13 @@ def _configure_sync(
     monkeypatch.setattr(
         ontology_service,
         "get_permission_service",
-        lambda: AllowAllPermissionService(),
+        lambda: permission_service or AllowAllPermissionService(),
     )
-
-
+    monkeypatch.setattr(
+        ontology_service,
+        "get_datasource_service",
+        lambda: BoundDatasourceService(),
+    )
 @pytest.mark.asyncio
 async def test_sync_uses_read_only_select_with_limit_offset_pagination(monkeypatch):
     source_db = FakeSourceDB(
@@ -257,6 +398,7 @@ async def test_sync_uses_read_only_select_with_limit_offset_pagination(monkeypat
 
     result = await service.sync_objects_from_datasource(
         DOMAIN_ID,
+        access_agent_id=7,
         page=2,
         page_size=2,
         sync_links=False,
@@ -278,6 +420,125 @@ async def test_sync_uses_read_only_select_with_limit_offset_pagination(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_sync_persists_real_values_and_masks_only_response(monkeypatch):
+    class MaskDisplayPermission(AllowAllPermissionService):
+        async def get_table_permissions(self, agent_id, datasource_id):
+            return {"loan_account_indicator": True}
+
+        async def get_column_permissions(self, agent_id, datasource_id):
+            return {
+                ("loan_account_indicator", "loan_no"): ColumnPolicy(
+                    allowed=True, masking_policy="partial"
+                ),
+                ("loan_account_indicator", "balance"): ColumnPolicy(
+                    allowed=True, masking_policy="redact"
+                ),
+            }
+
+        async def mask_rows(self, *_args, **_kwargs):
+            raise AssertionError("sync persistence must not consume masked source rows")
+
+    source_db = FakeSourceDB({"loan_account_indicator": [_loan_row(1, balance=1200)]})
+    management_db = FakeManagementDB()
+    service = OntologyService()
+    _configure_sync(
+        monkeypatch,
+        service,
+        source_db=source_db,
+        management_db=management_db,
+        object_types=[_loan_account_type()],
+        permission_service=MaskDisplayPermission(),
+    )
+
+    result = await service.sync_objects_from_datasource(
+        DOMAIN_ID, access_agent_id=7, sync_links=False
+    )
+
+    stored = next(iter(management_db.objects.values()))
+    assert stored["display_name"] == "LN-0001"
+    assert stored["source_properties"]["loan_no"] == "LN-0001"
+    assert stored["source_properties"]["balance"] == 1200.0
+    assert result["objects"][0]["display_name"] == "LN***01"
+    assert result["objects"][0]["properties"]["balance"] == "***"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("restricted_column", "expected_error"),
+    [
+        ("application_id", "主标识字段 application_id 不得拒绝访问或脱敏"),
+        ("customer_id", "关系键字段 customer_id 不得拒绝访问或脱敏"),
+    ],
+)
+async def test_sync_blocks_restricted_identity_and_relation_keys(
+    monkeypatch,
+    restricted_column,
+    expected_error,
+):
+    class RestrictedKeyPermission(AllowAllPermissionService):
+        async def get_table_permissions(self, agent_id, datasource_id):
+            return {"loan_application_indicator": True}
+
+        async def get_column_permissions(self, agent_id, datasource_id):
+            return {
+                ("loan_application_indicator", restricted_column): ColumnPolicy(
+                    allowed=True, masking_policy="hash"
+                )
+            }
+
+    application_type = {
+        "id": 20,
+        "domain_id": DOMAIN_ID,
+        "object_key": "LoanApplication",
+        "name": "贷款申请",
+        "primary_property": "application_id",
+        "display_property": "application_no",
+        "sync_enabled": True,
+        "source_query": (
+            "SELECT application_id, application_no, customer_id "
+            "FROM loan_application_indicator ORDER BY application_id"
+        ),
+        "sync_limit": 100,
+        "status": "active",
+        "properties": [
+            _property("application_id", "integer"),
+            _property("application_no"),
+            _property("customer_id", "integer"),
+        ],
+    }
+    link_type = {
+        "id": 31,
+        "link_key": "customer_has_application",
+        "source_object_key": "Customer",
+        "target_object_key": "LoanApplication",
+        "source_property": "customer_id",
+        "target_property": "customer_id",
+        "status": "active",
+    }
+    source_db = FakeSourceDB({"loan_application_indicator": []})
+    management_db = FakeManagementDB()
+    service = OntologyService()
+    _configure_sync(
+        monkeypatch,
+        service,
+        source_db=source_db,
+        management_db=management_db,
+        object_types=[application_type],
+        link_types=[link_type],
+        permission_service=RestrictedKeyPermission(),
+    )
+
+    result = await service.sync_objects_from_datasource(
+        DOMAIN_ID, access_agent_id=7, sync_links=True
+    )
+
+    assert result["has_errors"] is True
+    assert expected_error in result["types"][0]["errors"][0]
+    assert source_db.queries == []
+    assert management_db.objects == {}
+
+
+@pytest.mark.asyncio
 async def test_sync_rejects_non_select_source_query_before_business_execution(monkeypatch):
     source_db = FakeSourceDB({"loan_account_indicator": []})
     management_db = FakeManagementDB()
@@ -293,6 +554,7 @@ async def test_sync_rejects_non_select_source_query_before_business_execution(mo
 
     result = await service.sync_objects_from_datasource(
         DOMAIN_ID,
+        access_agent_id=7,
         sync_links=False,
     )
 
@@ -358,6 +620,7 @@ async def test_sync_keeps_action_overlay_over_fresh_source_properties(monkeypatc
 
     result = await service.sync_objects_from_datasource(
         DOMAIN_ID,
+        access_agent_id=7,
         sync_links=False,
     )
 
@@ -409,8 +672,12 @@ async def test_repeated_unchanged_sync_does_not_increment_version(monkeypatch):
         object_types=[_loan_account_type()],
     )
 
-    first = await service.sync_objects_from_datasource(DOMAIN_ID, sync_links=False)
-    second = await service.sync_objects_from_datasource(DOMAIN_ID, sync_links=False)
+    first = await service.sync_objects_from_datasource(
+        DOMAIN_ID, access_agent_id=7, sync_links=False
+    )
+    second = await service.sync_objects_from_datasource(
+        DOMAIN_ID, access_agent_id=7, sync_links=False
+    )
 
     assert first["types"][0]["unchanged"] == 1
     assert second["types"][0]["unchanged"] == 1
@@ -433,7 +700,20 @@ async def test_sync_requires_domain_datasource(monkeypatch):
     monkeypatch.setattr(ontology_service, "get_datasource_db", fail_datasource_lookup)
 
     with pytest.raises(ValueError, match="没有绑定默认数据源"):
-        await service.sync_objects_from_datasource(DOMAIN_ID)
+        await service.sync_objects_from_datasource(DOMAIN_ID, access_agent_id=7)
+
+
+@pytest.mark.asyncio
+async def test_sync_does_not_fallback_to_legacy_domain_agent(monkeypatch):
+    service = OntologyService()
+
+    async def require_domain(_domain_id: int):
+        return {"id": DOMAIN_ID, "agent_id": 7, "datasource_id": DATASOURCE_ID}
+
+    monkeypatch.setattr(service, "_require_domain", require_domain)
+
+    with pytest.raises(PermissionError, match="明确的权限主体"):
+        await service.sync_objects_from_datasource(DOMAIN_ID, access_agent_id=None)
 
 
 @pytest.mark.asyncio
@@ -452,9 +732,19 @@ async def test_sync_requires_at_least_one_enabled_object_type(monkeypatch):
     monkeypatch.setattr(service, "_require_domain", require_domain)
     monkeypatch.setattr(service, "list_object_types", list_object_types)
     monkeypatch.setattr(ontology_service, "get_datasource_db", fail_datasource_lookup)
+    monkeypatch.setattr(
+        ontology_service,
+        "get_datasource_service",
+        lambda: BoundDatasourceService(),
+    )
+    monkeypatch.setattr(
+        ontology_service,
+        "get_permission_service",
+        lambda: AllowAllPermissionService(),
+    )
 
     with pytest.raises(ValueError, match="没有启用业务库同步"):
-        await service.sync_objects_from_datasource(DOMAIN_ID)
+        await service.sync_objects_from_datasource(DOMAIN_ID, access_agent_id=7)
 
 
 @pytest.mark.asyncio
@@ -526,7 +816,9 @@ async def test_sync_rebuilds_relation_from_configured_join_properties(monkeypatc
         link_types=[link_type],
     )
 
-    result = await service.sync_objects_from_datasource(DOMAIN_ID, sync_links=True)
+    result = await service.sync_objects_from_datasource(
+        DOMAIN_ID, access_agent_id=7, sync_links=True
+    )
 
     assert result["links_synced"] == 1
     assert len(management_db.transactions) == 1

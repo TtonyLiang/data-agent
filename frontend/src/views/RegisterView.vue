@@ -1,5 +1,5 @@
 <template>
-  <main class="auth-page">
+  <main class="auth-page" :aria-busy="loading">
     <div class="auth-shell">
       <aside class="brand-panel" aria-label="问渠 WenQu 企业本体数字孪生与智能决策平台">
         <div class="brand-lockup">
@@ -13,13 +13,13 @@
         </div>
 
         <div class="brand-copy">
-          <h2>创建账号，进入工作区。</h2>
-          <p>账号注册后，由管理员分配风险交付、智能体与数据访问权限。</p>
+          <h2>创建公司内部账号。</h2>
+          <p>账号注册后，由管理员分配验证客户端和业务数据访问范围。</p>
         </div>
 
         <div class="access-note">
           <el-icon aria-hidden="true"><Lock /></el-icon>
-          <span>权限由工作区管理员分配</span>
+          <span>权限由平台管理员分配</span>
         </div>
       </aside>
 
@@ -51,7 +51,7 @@
 
         <el-form class="auth-form" :model="form" label-position="top" @submit.prevent="handleRegister">
           <el-form-item label="用户名">
-            <el-input v-model="form.username" autocomplete="username" placeholder="至少 3 位" :disabled="loading" name="username">
+            <el-input v-model="form.username" autocomplete="username" placeholder="至少 3 位" :disabled="loading" name="username" autofocus>
               <template #prefix>
                 <el-icon aria-hidden="true"><User /></el-icon>
               </template>
@@ -320,13 +320,13 @@ async function handleRegister() {
   padding: 1px 13px;
   border-radius: 8px;
   background: #ffffff;
-  box-shadow: 0 0 0 1px #c8d1dc inset !important;
+  box-shadow: 0 0 0 1px #7f8c9f inset !important;
   transition: box-shadow 0.18s ease, background-color 0.18s ease;
 }
 
 :deep(.el-input__wrapper:hover) {
   background: #fbfcfe;
-  box-shadow: 0 0 0 1px #8b9aae inset !important;
+  box-shadow: 0 0 0 1px #667085 inset !important;
 }
 
 :deep(.el-input__wrapper.is-focus) {

@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.agent import ontology_tools
 from app.agent.ontology_tools import (
     ACTION_TOOL,
     QUERY_CAPABILITY_TOOL,
@@ -57,6 +58,14 @@ def runtime() -> SemanticRuntime:
 def context() -> dict:
     return {
         "domain": {"id": 7, "domain_key": "loan_risk", "name": "贷款风控"},
+        "model_release": {
+            "id": 16,
+            "version": 4,
+            "model_hash": "c" * 64,
+            "status": "active",
+        },
+        "semantic_snapshot": {"id": 12, "snapshot_hash": "a" * 64},
+        "ontology_release": {"id": 6, "version": 3, "definition_hash": "b" * 64},
         "release": {"id": 6, "version": 3, "definition_hash": "b" * 64},
         "object_types": [
             {
@@ -96,6 +105,54 @@ def test_new_query_tool_is_isolated_while_legacy_default_list_stays_compatible()
     assert "compiled_plan_only" not in query_tool["description"]
     assert "真实业务数据" in query_tool["description"]
     assert "安全、权限和脱敏链路" in query_tool["description"]
+
+
+@pytest.mark.asyncio
+async def test_query_runtime_loads_semantic_assets_from_active_snapshot(monkeypatch):
+    active_context = {
+        **context(),
+        "semantic_snapshot": {"id": 12, "snapshot_hash": "a" * 64},
+    }
+
+    class FakeOntologyService:
+        async def build_agent_context(self, domain_id, role):
+            assert (domain_id, role) == (7, "user")
+            return active_context
+
+    class FakeRuntimeService:
+        async def get_domain(self, domain_id):
+            assert domain_id == 7
+            return runtime().domain
+
+        async def build_runtime_from_snapshot(
+            self,
+            domain_id,
+            snapshot_id,
+            *,
+            agent_id,
+            expected_snapshot_hash,
+        ):
+            assert (domain_id, snapshot_id, agent_id) == (7, 12, 11)
+            assert expected_snapshot_hash == "a" * 64
+            payload = runtime().model_dump(mode="python")
+            payload["metrics"][0]["name"] = "快照申请笔数"
+            return SemanticRuntime.model_validate(payload)
+
+        async def build_runtime(self, **_kwargs):
+            raise AssertionError("active release must not load live semantic assets")
+
+    monkeypatch.setattr(
+        ontology_tools,
+        "get_semantic_runtime_service",
+        lambda: FakeRuntimeService(),
+    )
+
+    loaded_context, loaded_runtime = await ontology_tools._load_query_runtime_context(
+        FakeOntologyService(), 7, user()
+    )
+
+    assert loaded_context == active_context
+    assert loaded_runtime.metrics[0].name == "快照申请笔数"
 
 
 @pytest.mark.asyncio
@@ -155,6 +212,8 @@ async def test_query_capability_executes_read_only_query_without_action_executio
     assert result["execution_trace"]["trace_id"] != "trace-query-capability"
     assert result["execution_trace"]["domain_id"] == 7
     assert result["execution_trace"]["datasource_id"] == 42
+    assert result["execution_trace"]["model_release"] == context()["model_release"]
+    assert result["execution_trace"]["semantic_snapshot"] == context()["semantic_snapshot"]
     assert result["execution_trace"]["ontology_release"] == context()["release"]
     assert len(execution_states) == 1
     assert execution_states[0]["agent_id"] == runtime().domain.agent_id

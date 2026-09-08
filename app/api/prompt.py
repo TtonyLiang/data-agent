@@ -2,8 +2,8 @@
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import require_admin
 from app.agent.prompts import default_prompt_templates
+from app.api.deps import require_admin
 from app.models.prompt import PromptTemplateCreate
 from app.services.prompt_service import get_prompt_service
 

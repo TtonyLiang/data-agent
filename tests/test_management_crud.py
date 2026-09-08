@@ -18,12 +18,30 @@ from app.services.model_config_service import (
 from app.services.secret_service import ENCRYPTED_PREFIX
 
 
+class FakeResult:
+    def __init__(self, rows=None):
+        self.rows = rows or []
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self.rows[0] if self.rows else None
+
+    def all(self):
+        return self.rows
+
+
 class RecordingDB:
     def __init__(self):
         self.queries: list[tuple[str, dict | None]] = []
+        self.transaction_queries: list[tuple[str, dict | None]] = []
+        self.transaction_calls = 0
 
     async def execute_query(self, sql: str, params: dict | None = None):
         self.queries.append((sql, params))
+        if sql.startswith("SELECT id FROM datasource WHERE"):
+            return [{"id": params["id"]}]
         if sql.startswith("SELECT * FROM agent"):
             return [
                 {
@@ -57,6 +75,15 @@ class RecordingDB:
                 }
             ]
         return []
+
+    async def execute_in_transaction(self, callback):
+        self.transaction_calls += 1
+        return await callback(self)
+
+    async def execute(self, statement, params=None):
+        sql = str(statement)
+        self.transaction_queries.append((sql, params))
+        return FakeResult(await self.execute_query(sql, params))
 
 
 @pytest.mark.asyncio
@@ -130,27 +157,39 @@ async def test_delete_datasource_removes_metadata_before_datasource(monkeypatch)
     await DatasourceService().delete(7)
 
     statements = [sql for sql, _ in db.queries]
-    assert any("DELETE FROM semantic_domain" in sql for sql in statements)
+    assert db.transaction_calls == 1
+    assert db.transaction_queries[0][0] == (
+        "SELECT id FROM datasource WHERE id = :id FOR UPDATE"
+    )
+    assert not any("DELETE FROM semantic_domain" in sql for sql in statements)
+    assert not any("DELETE FROM semantic_metric" in sql for sql in statements)
+    assert any("DELETE FROM agent_table_permission" in sql for sql in statements)
+    assert any("DELETE FROM agent_column_permission" in sql for sql in statements)
     assert any("DELETE FROM meta_column" in sql for sql in statements)
     assert any("DELETE FROM meta_table" in sql for sql in statements)
     assert "DELETE FROM datasource WHERE id = :id" in statements[-1]
 
 
 @pytest.mark.asyncio
-async def test_delete_datasource_is_blocked_when_decision_history_exists(monkeypatch):
-    class GovernedDatasourceDB(RecordingDB):
+async def test_delete_datasource_is_blocked_when_domain_is_still_bound(monkeypatch):
+    class BoundDatasourceDB(RecordingDB):
         async def execute_query(self, sql: str, params: dict | None = None):
-            self.queries.append((sql, params))
-            if sql.startswith("SELECT sd.id FROM semantic_domain"):
-                return [{"id": 21}]
-            return []
+            if sql.startswith("SELECT id, name FROM semantic_domain"):
+                self.queries.append((sql, params))
+                return [{"id": 21, "name": "贷款风控"}]
+            return await super().execute_query(sql, params)
 
-    db = GovernedDatasourceDB()
+    db = BoundDatasourceDB()
     monkeypatch.setattr("app.services.datasource_service.get_management_db", lambda: db)
 
-    with pytest.raises(ValueError, match="已有发布或决策历史"):
+    with pytest.raises(ValueError) as exc_info:
         await DatasourceService().delete(7)
 
+    assert str(exc_info.value) == (
+        "数据源仍有业务领域绑定（贷款风控），请先在企业模型中解除绑定"
+    )
+    assert db.transaction_calls == 1
+    assert all("FOR UPDATE" in sql for sql, _ in db.transaction_queries[:2])
     assert not any(sql.startswith("DELETE FROM") for sql, _ in db.queries)
 
 

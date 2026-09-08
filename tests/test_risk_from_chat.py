@@ -61,11 +61,13 @@ class ChatWorkflowSession:
         sql = " ".join(str(statement).split())
         params = params or {}
         self.executed.append((sql, dict(params)))
-        if sql.startswith("SELECT id, agent_id FROM semantic_domain"):
-            return FakeResult([{"id": params["domain_id"], "agent_id": self.domain_agent_id}])
-        if sql.startswith(
-            "SELECT id, version, name, definition_hash, created_at FROM ontology_release"
-        ):
+        if sql.startswith("SELECT sd.id FROM semantic_domain sd"):
+            return FakeResult(
+                [{"id": params["domain_id"]}]
+                if int(params["agent_id"]) == int(self.domain_agent_id)
+                else []
+            )
+        if sql.startswith("SELECT r.id, r.version, r.name, r.definition_hash"):
             return FakeResult(
                 [
                     {
@@ -73,6 +75,11 @@ class ChatWorkflowSession:
                         "version": 4,
                         "name": "贷款风控 V4",
                         "definition_hash": "a" * 64,
+                        "model_release_id": 43,
+                        "model_release_version": 5,
+                        "model_hash": "c" * 64,
+                        "semantic_snapshot_id": 53,
+                        "semantic_snapshot_hash": "b" * 64,
                     }
                 ]
             )
@@ -381,11 +388,66 @@ async def test_domain_agent_mismatch_and_duplicate_issue_key_are_rejected(monkey
         risk_workflow_service, "get_management_db", lambda: mismatch_db
     )
 
-    with pytest.raises(ValueError, match="智能体不一致"):
+    with pytest.raises(ValueError, match="未授权"):
         await service.create_issue_from_chat(
             payload(subject_object_id=None),
             {"id": 8, "username": "analyst", "role": "user"},
         )
+
+
+@pytest.mark.asyncio
+async def test_object_evidence_uses_permission_filtered_snapshot(monkeypatch):
+    session = ChatWorkflowSession(
+        assistants=[assistant_row()],
+        questions=[question_row()],
+        subject=None,
+    )
+    db = WorkflowDB(session)
+    service = RiskWorkflowService()
+    service.audit = RecordingAudit()
+
+    class ProtectedOntologyService:
+        async def get_object(
+            self,
+            domain_id,
+            object_id,
+            *,
+            access_agent_id,
+            apply_permissions,
+        ):
+            assert (domain_id, object_id, access_agent_id, apply_permissions) == (
+                4,
+                51,
+                12,
+                True,
+            )
+            return {
+                "id": 51,
+                "object_type_key": "LoanApplication",
+                "object_type_name": "贷款申请",
+                "primary_value": "L-001",
+                "display_name": "贷款申请 L-001",
+                "properties": {"mobile": "13****78"},
+                "version": 3,
+            }
+
+    monkeypatch.setattr(risk_workflow_service, "get_management_db", lambda: db)
+    monkeypatch.setattr(
+        risk_workflow_service,
+        "get_ontology_service",
+        lambda: ProtectedOntologyService(),
+    )
+
+    result = await service.create_issue_from_chat(
+        payload(),
+        {"id": 8, "username": "analyst", "role": "user"},
+        access_agent_id=12,
+    )
+
+    object_evidence = result["evidence"][2]["content"]
+    assert object_evidence["properties"] == {"mobile": "13****78"}
+    assert object_evidence["access_agent_id"] == 12
+    assert result["source"]["access_agent_id"] == 12
 
     duplicate_session = ChatWorkflowSession(duplicate=True)
     duplicate_db = WorkflowDB(duplicate_session)

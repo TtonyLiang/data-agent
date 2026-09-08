@@ -80,7 +80,9 @@ class UserService:
             },
         )
 
-    async def register_user(self, username: str, password: str, display_name: str | None = None) -> PublicUser:
+    async def register_user(
+        self, username: str, password: str, display_name: str | None = None
+    ) -> PublicUser:
         user_id = await self.create_user(
             UserCreate(
                 username=username,
@@ -199,7 +201,8 @@ class UserService:
         self, user_id: int, password: str, *, must_change_password: bool = True
     ) -> bool:
         await get_management_db().execute_query(
-            "UPDATE app_user SET password_hash = :password_hash, must_change_password = :must_change "
+            "UPDATE app_user SET password_hash = :password_hash, "
+            "must_change_password = :must_change "
             "WHERE id = :id",
             {
                 "id": user_id,
@@ -211,7 +214,8 @@ class UserService:
 
     async def get_user_agent_ids(self, user_id: int) -> list[int]:
         rows = await get_management_db().execute_query(
-            "SELECT agent_id FROM user_agent_permission WHERE user_id = :user_id ORDER BY agent_id ASC",
+            "SELECT agent_id FROM user_agent_permission "
+            "WHERE user_id = :user_id ORDER BY agent_id ASC",
             {"user_id": user_id},
         )
         return [int(row["agent_id"]) for row in rows]
@@ -223,7 +227,8 @@ class UserService:
         ]
         statements.extend(
             (
-                "INSERT INTO user_agent_permission (user_id, agent_id) VALUES (:user_id, :agent_id)",
+                "INSERT INTO user_agent_permission (user_id, agent_id) "
+                "VALUES (:user_id, :agent_id)",
                 {"user_id": user_id, "agent_id": agent_id},
             )
             for agent_id in ids

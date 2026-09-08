@@ -29,6 +29,8 @@ import logging
 import re
 from typing import Any
 
+from sqlalchemy import text
+
 from app.db.mysql import get_management_db
 from app.models.knowledge import (
     CompiledQuery,
@@ -43,6 +45,7 @@ from app.models.knowledge import (
     SemanticRule,
     SemanticRuntime,
 )
+from app.services.decision_audit_service import canonical_sha256
 from app.services.workspace_service import DEFAULT_WORKSPACE_KEY, DEFAULT_WORKSPACE_NAME
 from app.utils.logging_helpers import json_for_log, truncate_text
 
@@ -317,7 +320,6 @@ class SemanticRuntimeService:
         """Create or update an enterprise domain, optionally binding a consumer Agent."""
         db = get_management_db()
         domain = SemanticDomain(**data)
-        existing_row: dict[str, Any] | None = None
         if domain.id:
             existing = await db.execute_query(
                 "SELECT id FROM semantic_domain WHERE id = :id",
@@ -325,16 +327,9 @@ class SemanticRuntimeService:
             )
             if not existing:
                 raise ValueError(f"语义领域不存在: {domain.id}")
-            workspace_rows = await db.execute_query(
-                "SELECT workspace_id FROM semantic_domain WHERE id = :id",
-                {"id": domain.id},
-            )
-            existing_row = workspace_rows[0] if workspace_rows else None
-        workspace_id = await self._resolve_workspace_id(
-            domain.workspace_id
-            if domain.workspace_id is not None
-            else (existing_row or {}).get("workspace_id")
-        )
+        # Single-company product boundary: all new writes use the one internal
+        # compatibility container and never accept workspace ownership from clients.
+        workspace_id = await self._resolve_workspace_id(None)
         params = {
             "workspace_id": workspace_id,
             "agent_id": domain.agent_id,
@@ -379,17 +374,15 @@ class SemanticRuntimeService:
         return domain_id
 
     async def delete_domain(self, domain_id: int) -> bool:
-        """Delete a semantic domain and all child semantic assets."""
+        """Delete an unused draft domain without destroying governed history."""
         db = get_management_db()
-        existing = await db.execute_query(
-            "SELECT id FROM semantic_domain WHERE id = :id",
-            {"id": domain_id},
-        )
-        if not existing:
-            return False
+        statements: list[tuple[str, dict[str, int]]] = []
         for table in (
             "decision_audit_head",
             "decision_audit_event",
+            "capability_invocation_audit",
+            "capability_grant",
+            "twin_sync_run",
             "risk_evidence",
             "risk_issue_review",
             "risk_report_version",
@@ -398,22 +391,24 @@ class SemanticRuntimeService:
             "ontology_action_run",
             "ontology_link",
             "ontology_object",
+            "enterprise_model_release",
             "ontology_release",
+            "semantic_domain_snapshot",
             "ontology_action_type",
             "ontology_link_type",
         ):
-            await db.execute_query(
-                f"DELETE FROM {table} WHERE domain_id = :id",
+            statements.append(
+                (f"DELETE FROM {table} WHERE domain_id = :id", {"id": domain_id})
+            )
+        statements.append(
+            (
+                "DELETE p FROM ontology_property p JOIN ontology_object_type o "
+                "ON o.id = p.object_type_id WHERE o.domain_id = :id",
                 {"id": domain_id},
             )
-        await db.execute_query(
-            "DELETE p FROM ontology_property p JOIN ontology_object_type o "
-            "ON o.id = p.object_type_id WHERE o.domain_id = :id",
-            {"id": domain_id},
         )
-        await db.execute_query(
-            "DELETE FROM ontology_object_type WHERE domain_id = :id",
-            {"id": domain_id},
+        statements.append(
+            ("DELETE FROM ontology_object_type WHERE domain_id = :id", {"id": domain_id})
         )
         for table in (
             "logic_form_template",
@@ -423,23 +418,59 @@ class SemanticRuntimeService:
             "semantic_relation",
             "semantic_concept",
         ):
-            await db.execute_query(
-                f"DELETE FROM {table} WHERE domain_id = :id",
+            statements.append(
+                (f"DELETE FROM {table} WHERE domain_id = :id", {"id": domain_id})
+            )
+        statements.extend(
+            [
+                (
+                    "UPDATE agent SET semantic_domain_id = NULL "
+                    "WHERE semantic_domain_id = :id",
+                    {"id": domain_id},
+                ),
+                ("DELETE FROM agent_semantic_domain WHERE domain_id = :id", {"id": domain_id}),
+                ("DELETE FROM semantic_domain WHERE id = :id", {"id": domain_id}),
+            ]
+        )
+
+        async def callback(session):
+            existing = await session.execute(
+                text("SELECT id FROM semantic_domain WHERE id = :id FOR UPDATE"),
                 {"id": domain_id},
             )
-        await db.execute_query(
-            "UPDATE agent SET semantic_domain_id = NULL WHERE semantic_domain_id = :id",
-            {"id": domain_id},
-        )
-        await db.execute_query(
-            "DELETE FROM agent_semantic_domain WHERE domain_id = :id",
-            {"id": domain_id},
-        )
-        await db.execute_query(
-            "DELETE FROM semantic_domain WHERE id = :id",
-            {"id": domain_id},
-        )
-        return True
+            if existing.mappings().first() is None:
+                return False
+
+            governed = await session.execute(
+                text(
+                    "SELECT sd.id FROM semantic_domain sd WHERE sd.id = :id AND ("
+                    "EXISTS (SELECT 1 FROM semantic_domain_snapshot s "
+                    "WHERE s.domain_id = :id) OR "
+                    "EXISTS (SELECT 1 FROM ontology_release r WHERE r.domain_id = :id) OR "
+                    "EXISTS (SELECT 1 FROM enterprise_model_release m "
+                    "WHERE m.domain_id = :id) OR "
+                    "EXISTS (SELECT 1 FROM ontology_object o WHERE o.domain_id = :id) OR "
+                    "EXISTS (SELECT 1 FROM ontology_action_run a WHERE a.domain_id = :id) OR "
+                    "EXISTS (SELECT 1 FROM twin_sync_run t WHERE t.domain_id = :id) OR "
+                    "EXISTS (SELECT 1 FROM decision_audit_event e WHERE e.domain_id = :id) OR "
+                    "EXISTS (SELECT 1 FROM risk_issue i WHERE i.domain_id = :id) OR "
+                    "EXISTS (SELECT 1 FROM capability_grant g WHERE g.domain_id = :id) OR "
+                    "EXISTS (SELECT 1 FROM capability_invocation_audit c "
+                    "WHERE c.domain_id = :id)"
+                    ") LIMIT 1 FOR UPDATE"
+                ),
+                {"id": domain_id},
+            )
+            if governed.mappings().first() is not None:
+                raise ValueError(
+                    "业务领域已产生版本、对象、运行或审计记录，不能直接删除；请改为停用"
+                )
+
+            for sql, params in statements:
+                await session.execute(text(sql), params)
+            return True
+
+        return await db.execute_in_transaction(callback)
 
     async def export_domain_bundle(self, domain_id: int) -> dict[str, Any]:
         """Export a semantic domain and its assets as a portable bundle."""
@@ -479,7 +510,7 @@ class SemanticRuntimeService:
         for field in ("id", "created_at", "updated_at"):
             domain.pop(field, None)
         db = get_management_db()
-        workspace_id = await self._resolve_workspace_id(domain.get("workspace_id"))
+        workspace_id = await self._resolve_workspace_id(None)
         domain["workspace_id"] = workspace_id
         duplicate = await db.execute_query(
             "SELECT id FROM semantic_domain "
@@ -804,7 +835,7 @@ class SemanticRuntimeService:
 
     async def build_runtime(
         self,
-        agent_id: int,
+        agent_id: int | None,
         datasource_id: int | None = None,
         domain_key: str | None = None,
         domain_id: int | None = None,
@@ -818,12 +849,12 @@ class SemanticRuntimeService:
             domain_id,
         )
         domain = await self.get_domain(domain_id) if domain_id else None
-        if domain is None:
+        if domain is None and agent_id is not None:
             domain = await self.get_agent_bound_domain(agent_id)
-        if domain is None:
+        if domain is None and agent_id is not None:
             domain = await self.get_domain_by_key(agent_id, domain_key, datasource_id)
         if domain is None:
-            raise ValueError("未找到智能体绑定的语义层")
+            raise ValueError("未找到可用的企业业务领域")
 
         runtime = SemanticRuntime(
             domain=domain,
@@ -862,6 +893,51 @@ class SemanticRuntimeService:
             ),
         )
         return runtime
+
+    async def build_runtime_from_snapshot(
+        self,
+        domain_id: int,
+        snapshot_id: int,
+        *,
+        agent_id: int | None = None,
+        expected_snapshot_hash: str | None = None,
+    ) -> SemanticRuntime:
+        """Build an immutable runtime from one semantic-domain snapshot."""
+        domain = await self.get_domain(domain_id)
+        if domain is None:
+            raise ValueError("语义领域不存在")
+        snapshot = await self.get_snapshot(domain_id, snapshot_id)
+        bundle = snapshot.get("snapshot_json") or {}
+        if expected_snapshot_hash and canonical_sha256(bundle) != expected_snapshot_hash:
+            raise ValueError("激活企业模型版本关联的语义资产快照完整性校验失败")
+        assets = bundle.get("assets") or {}
+        snapshot_domain = bundle.get("domain") or {}
+        if not isinstance(assets, dict) or not isinstance(snapshot_domain, dict):
+            raise ValueError("语义资产快照无效")
+        current_datasource_id = int(domain.datasource_id or 0)
+        try:
+            snapshot_datasource_id = int(snapshot_domain.get("datasource_id") or 0)
+        except (TypeError, ValueError):
+            snapshot_datasource_id = 0
+        if snapshot_datasource_id != current_datasource_id:
+            raise ValueError("当前数据源已偏离激活企业模型版本")
+        if str(snapshot_domain.get("domain_key") or "") != domain.domain_key:
+            raise ValueError("当前业务领域标识已偏离激活企业模型版本")
+        domain_payload = dict(snapshot_domain)
+        domain_payload["id"] = domain_id
+        if agent_id is not None:
+            domain_payload["agent_id"] = agent_id
+        return SemanticRuntime.model_validate(
+            {
+                "domain": domain_payload,
+                "concepts": assets.get("concept") or [],
+                "relations": assets.get("relation") or [],
+                "metrics": assets.get("metric") or [],
+                "rules": assets.get("rule") or [],
+                "mappings": assets.get("mapping") or [],
+                "templates": assets.get("template") or [],
+            }
+        )
 
     def validate_logic_form(
         self,
@@ -976,6 +1052,7 @@ class SemanticRuntimeService:
         metrics = [metric_map[key] for key in logic_form.metrics]
         base_table = metrics[0].base_table
         metric_base_tables = {metric.base_table for metric in metrics}
+        sql_params: dict[str, Any] = {}
 
         # 判断是否跨表:不同指标来自不同事实表时,走标量子查询模式
         if len(metric_base_tables) > 1:
@@ -988,6 +1065,7 @@ class SemanticRuntimeService:
                 mapping_map=mapping_map,
                 used_assets=list(validation.used_assets),
                 warnings=validation.warnings,
+                sql_params=sql_params,
             )
             logger.info(
                 "semantic compile_logic_form result scalar sql=%s",
@@ -1059,18 +1137,24 @@ class SemanticRuntimeService:
         # 4a:指标自带的 default_filters(如风控指标默认只算存量)
         for metric in metrics:
             where_parts.extend(
-                self._compile_filter(item, mapping_map, ensure_table)
+                self._compile_filter(item, mapping_map, ensure_table, sql_params)
                 for item in metric.default_filters
             )
         # 4b:LogicForm 中的 filters(用户问题提取的过滤条件)
         for item in logic_form.filters:
-            where_parts.append(self._compile_filter(item.model_dump(), mapping_map, ensure_table))
+            where_parts.append(
+                self._compile_filter(
+                    item.model_dump(), mapping_map, ensure_table, sql_params
+                )
+            )
         # 4c:时间窗口(time_range → WHERE 日期谓词)
         if logic_form.time_range:
             time_field = metrics[0].time_field
             if time_field:
                 where_parts.extend(
-                    self._compile_time_range(time_field, logic_form.time_range, table_aliases)
+                    self._compile_time_range(
+                        time_field, logic_form.time_range, table_aliases, sql_params
+                    )
                 )
 
         # 第5步:组装 SQL 各子句
@@ -1098,6 +1182,7 @@ class SemanticRuntimeService:
         compiled = CompiledQuery(
             logic_form=logic_form,
             sql="\n".join(sql_parts),
+            sql_params=sql_params,
             used_assets=sorted(set(used_assets)),
             warnings=validation.warnings,
         )
@@ -1117,6 +1202,7 @@ class SemanticRuntimeService:
         mapping_map: dict[str, SemanticMapping],
         used_assets: list[str],
         warnings: list[str],
+        sql_params: dict[str, Any],
     ) -> CompiledQuery:
         """跨表标量指标编译 —— 多个指标来自不同事实表时,各指标独立子查询后 CROSS JOIN。
 
@@ -1152,11 +1238,13 @@ class SemanticRuntimeService:
                 return alias
 
             where_parts = [
-                self._compile_filter(item, mapping_map, ensure_table)
+                self._compile_filter(item, mapping_map, ensure_table, sql_params)
                 for item in metric.default_filters
             ]
             where_parts.extend(
-                self._compile_filter(item.model_dump(), mapping_map, ensure_table)
+                self._compile_filter(
+                    item.model_dump(), mapping_map, ensure_table, sql_params
+                )
                 for item in logic_form.filters
             )
             if logic_form.time_range and metric.time_field:
@@ -1164,7 +1252,10 @@ class SemanticRuntimeService:
                 ensure_table(time_table)
                 where_parts.extend(
                     self._compile_time_range(
-                        metric.time_field, logic_form.time_range, table_aliases
+                        metric.time_field,
+                        logic_form.time_range,
+                        table_aliases,
+                        sql_params,
                     )
                 )
 
@@ -1193,6 +1284,7 @@ class SemanticRuntimeService:
         return CompiledQuery(
             logic_form=logic_form,
             sql="SELECT " + ", ".join(select_parts) + "\nFROM " + "\nCROSS JOIN ".join(subqueries),
+            sql_params=sql_params,
             used_assets=sorted(set(used_assets)),
             warnings=scalar_warnings,
         )
@@ -1380,7 +1472,11 @@ class SemanticRuntimeService:
         return expression.format(base=alias, alias=alias)
 
     def _compile_filter(
-        self, item: dict[str, Any], mapping_map: dict[str, SemanticMapping], ensure_table
+        self,
+        item: dict[str, Any],
+        mapping_map: dict[str, SemanticMapping],
+        ensure_table,
+        sql_params: dict[str, Any],
     ) -> str:
         """把一个 LogicForm 过滤条件编译为 SQL WHERE 谓词。
 
@@ -1404,12 +1500,18 @@ class SemanticRuntimeService:
         if operator in {"in", "not in"}:
             if not isinstance(value, list) or not value:
                 raise ValueError(f"过滤字段 {field} 的 IN 值必须是非空列表")
-            values = ", ".join(self._sql_literal(item) for item in value)
+            values = ", ".join(
+                self._bind_sql_value(sql_params, item) for item in value
+            )
             return f"{expr} {operator.upper()} ({values})"
-        return f"{expr} {operator.upper()} {self._sql_literal(value)}"
+        return f"{expr} {operator.upper()} {self._bind_sql_value(sql_params, value)}"
 
     def _compile_time_range(
-        self, time_field: str, time_range, table_aliases: dict[str, str]
+        self,
+        time_field: str,
+        time_range,
+        table_aliases: dict[str, str],
+        sql_params: dict[str, Any],
     ) -> list[str]:
         """把相对时间窗口编译为 WHERE 日期谓词列表。
 
@@ -1425,8 +1527,8 @@ class SemanticRuntimeService:
         expr = f"{table_aliases[table]}.`{column}`"
         if time_range.start and time_range.end:
             return [
-                f"{expr} >= {self._sql_literal(time_range.start)}",
-                f"{expr} < {self._sql_literal(time_range.end)}",
+                f"{expr} >= {self._bind_sql_value(sql_params, time_range.start)}",
+                f"{expr} < {self._bind_sql_value(sql_params, time_range.end)}",
             ]
         if time_range.period == "this_month":
             return [
@@ -1442,21 +1544,12 @@ class SemanticRuntimeService:
             return [f"{expr} >= DATE_SUB(CURRENT_DATE, INTERVAL 3 MONTH)"]
         return []
 
-    def _sql_literal(self, value: Any) -> str:
-        """把 Python 值渲染为安全的 SQL 字面量。
-
-        - None → NULL
-        - bool → 1/0
-        - 数字 → 直接转字符串
-        - 字符串 → 单引号包裹(内部单引号转义为 '')
-        """
-        if value is None:
-            return "NULL"
-        if isinstance(value, bool):
-            return "1" if value else "0"
-        if isinstance(value, int | float):
-            return str(value)
-        return "'" + str(value).replace("'", "''") + "'"
+    @staticmethod
+    def _bind_sql_value(sql_params: dict[str, Any], value: Any) -> str:
+        """Store one LogicForm value as a named SQLAlchemy bind parameter."""
+        key = f"lf_{len(sql_params)}"
+        sql_params[key] = value
+        return f":{key}"
 
     def _assert_identifier(self, value: str) -> None:
         """Validate identifiers before interpolating them into SQL."""

@@ -87,7 +87,7 @@
 
 ### 能力发布中心
 
-把平台中的业务模型发布为第三方 Agent 和应用可调用的标准能力：`Query Capability` 负责只读对象查询与指标计算，`Action Capability` 负责有副作用的受控操作，`Decision Capability` 负责后续的规则或模型判断。当前已有对象查询、第一版 Query Capability 和 Action 工具；P0 先集中展示和调试验证，正式版本治理、调用身份、配额、灰度及统一网关后续补齐。
+把平台中的业务模型发布为第三方 Agent 和应用可调用的标准能力：`Query Capability` 负责只读对象查询与指标计算，`Action Capability` 负责有副作用的受控操作，`Decision Capability` 负责后续的规则或模型判断。当前外部 Query 已提供独立调用凭据、领域授权、稳定调用 API 和摘要审计；对象查询与 Action 工具仍只用于本项目内部验证，Decision/Action 外部出口、配额、灰度和 SDK 后续补齐。
 
 ### 风险报告交付闭环（垂直技术切片）
 
@@ -97,7 +97,7 @@
 
 ### Ontology 业务模型底座
 
-通过对象类型、属性、关系、状态和业务动作描述业务世界，支持模型校验、版本发布、对象实例、权限约束和运行审计。Ontology 是企业模型中心的核心，不是某个 Agent 的私有配置。
+通过对象类型、属性、关系、状态和业务动作描述业务世界，并支持模型校验与版本发布。对象实例、关系实例和动作执行记录在孪生运行中管理。Ontology 是企业模型中心的核心，不是某个 Agent 的私有配置。
 
 ### 受控 AI 智能问数
 
@@ -346,7 +346,8 @@ P0 通过业务领域归属和内置验证 Agent 的兼容绑定保留现有数�
 - **对象类型与属性**：定义客户、订单、贷款、案件等核心实体及其业务身份、字段和状态。
 - **关系类型**：表达对象之间的业务关联、基数约束和连接路径。
 - **业务动作**：定义动作参数、前置条件、授权角色、审批要求和状态效果。
-- **实例、发布与审计**：管理对象实例和关系实例，校验并发布本体版本，记录动作执行与状态变化。
+- **模型发布**：校验并发布不可变本体版本，再与查询语义快照组成统一企业模型版本。
+- **孪生运行与审计**：管理对象实例和关系实例，记录同步、动作执行与状态变化。
 
 #### 六类查询语义资产
 
@@ -561,10 +562,10 @@ sequenceDiagram
 
 | 页面 | 路由 | 功能 |
 |------|------|------|
-| 对话 | `/` | 内置验证 Agent 能力演示界面，含问数链路、SQL、结果表和报告展示 |
+| 对话验证 | `/` | 内置验证 Agent 能力演示界面，含问数链路、SQL、结果表和报告展示 |
 | 企业模型 | `/enterprise-model` | 统一进入查询语义与 Ontology 建模，按公司内部业务领域组织资产 |
-| 孪生运行 | `/twin-runtime` | 查看对象类型、实例和现有手动分页同步状态；不是后台定时同步 |
-| 能力发布中心 | `/capability-center` | 集中查看现有对象查询、Query Capability 和 Action Capability |
+| 孪生运行 | `/twin-runtime` | 查看同步任务、对象实例、关系实例和动作执行记录；不是后台定时同步 |
+| 能力发布中心 | `/capability-center` | 管理外部 Query 调用方、授权和审计；对象查询/Action 标记为内部验证 |
 | 调试与验证智能体 | `/agent` | 配置本项目内置验证 Agent，绑定模型、数据源和业务领域；第三方 Agent 不在此注册 |
 | 模型配置 | `/model-config` | 管理大语言模型和向量模型配置，测试连通性 |
 | 数据源 | `/datasource` | 数据源连接管理，表清单采集，字段详情查看 |
@@ -712,9 +713,8 @@ sequenceDiagram
 | 语义层 | `semantic_mapping` | 物理映射 |
 | 语义层 | `logic_form_template` | LogicForm 模板 |
 | 企业本体 | `ontology_object_type` / `ontology_property` | 对象类型与属性定义 |
-| 企业本体 | `ontology_link_type` / `ontology_link` | 关系类型与关系实例 |
-| 企业本体 | `ontology_action_type` / `ontology_action_run` | 动作定义与执行记录 |
-| 企业本体 | `ontology_object` / `ontology_release` | 对象实例与发布版本 |
+| 企业本体 | `ontology_link_type` / `ontology_action_type` / `ontology_release` | 关系、动作定义与本体发布版本 |
+| 孪生运行 | `ontology_object` / `ontology_link` / `ontology_action_run` / `twin_sync_run` | 对象实例、关系实例、动作执行和同步运行 |
 | 风险交付 | `risk_issue` / `risk_evidence` | 风险事项与证据 |
 | 风险交付 | `risk_issue_review` / `risk_report` / `risk_report_version` | 复核、报告和不可变版本 |
 | 决策审计 | `decision_audit_event` / `decision_audit_head` | 追加式审计事件与链头 |
@@ -882,7 +882,7 @@ uv run python examples/douyin_ecommerce/seed_douyin_ecommerce.py
 
 ## 路线图
 
-平台路线图详见 2026-09-04 版[Ontology 产品路线图](docs/ontology-product-roadmap.md)。[风险报告交付路线图](docs/risk-report-delivery-roadmap.md)保留为财税/贷款垂直场景的验证计划，不再代表整体产品路线。
+平台路线图详见 2026-09-08 版[Ontology 产品路线图](docs/ontology-product-roadmap.md)。[风险报告交付路线图](docs/risk-report-delivery-roadmap.md)保留为财税/贷款垂直场景的验证计划，不再代表整体产品路线。
 
 | 阶段 | 目标 | 验收门槛 |
 |------|------|----------|

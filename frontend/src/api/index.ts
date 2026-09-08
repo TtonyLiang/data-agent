@@ -130,6 +130,32 @@ export interface DatasourceSchemaStats {
   recommendation: string
 }
 
+export type DatasourceMaskingPolicy = 'none' | 'redact' | 'partial' | 'hash'
+
+export interface DatasourceTablePermissionRule {
+  table_name: string
+  allowed: boolean
+}
+
+export interface DatasourceColumnPermissionRule {
+  table_name: string
+  column_name: string
+  allowed: boolean
+  masking_policy: DatasourceMaskingPolicy
+}
+
+export interface DatasourcePermissionConfig {
+  agent_id: number
+  datasource_id: number
+  table_permissions: DatasourceTablePermissionRule[]
+  column_permissions: DatasourceColumnPermissionRule[]
+}
+
+export type DatasourcePermissionReplace = Pick<
+  DatasourcePermissionConfig,
+  'table_permissions' | 'column_permissions'
+>
+
 export interface AgentItem {
   id: number
   name: string
@@ -611,6 +637,28 @@ export async function fetchDatasourceSchemaStats(dsId: number): Promise<Datasour
   return data.stats
 }
 
+export async function fetchDatasourcePermissions(
+  dsId: number,
+  agentId: number,
+): Promise<DatasourcePermissionConfig> {
+  const { data } = await api.get<{ permissions: DatasourcePermissionConfig }>(
+    `/datasource/${dsId}/permissions/${agentId}`,
+  )
+  return data.permissions
+}
+
+export async function updateDatasourcePermissions(
+  dsId: number,
+  agentId: number,
+  permissions: DatasourcePermissionReplace,
+): Promise<DatasourcePermissionConfig> {
+  const { data } = await api.put<{ permissions: DatasourcePermissionConfig }>(
+    `/datasource/${dsId}/permissions/${agentId}`,
+    permissions,
+  )
+  return data.permissions
+}
+
 export interface SemanticDomain {
   id: number
   workspace_id?: number | null
@@ -620,6 +668,53 @@ export interface SemanticDomain {
   name: string
   description?: string
   status: string
+}
+
+export interface SemanticDomainSnapshot extends Record<string, unknown> {
+  id: number
+  domain_id: number
+  name: string
+  description?: string | null
+  asset_counts?: Record<string, number>
+  created_at?: string | null
+}
+
+export interface OntologyRelease extends Record<string, unknown> {
+  id: number
+  domain_id: number
+  version: number
+  name: string
+  description?: string | null
+  definition_hash: string
+  published_by?: number | null
+  created_at?: string | null
+}
+
+export interface EnterpriseModelRelease {
+  id: number
+  domain_id: number
+  version: number
+  name: string
+  description?: string | null
+  semantic_snapshot_id: number
+  ontology_release_id: number
+  status: 'draft' | 'validated' | 'active' | 'retired'
+  semantic_snapshot_hash: string
+  ontology_definition_hash: string
+  model_hash: string
+  validation?: Record<string, unknown> | null
+  previous_active_release_id?: number | null
+  created_at?: string | null
+  validated_at?: string | null
+  activated_at?: string | null
+  retired_at?: string | null
+}
+
+export interface EnterpriseModelReleaseCreate {
+  semantic_snapshot_id: number
+  ontology_release_id: number
+  name?: string
+  description?: string
 }
 
 export type SemanticDomainRequest = Omit<SemanticDomain, 'id'> & {
@@ -638,29 +733,9 @@ export async function fetchAllSemanticDomains(): Promise<SemanticDomain[]> {
   return data.domains || []
 }
 
-export interface EnterpriseWorkspace {
-  id: number
-  workspace_key: string
-  name: string
-  description?: string | null
-  status: string
-  created_at?: string | null
-  updated_at?: string | null
-}
-
 export interface AgentDomainBinding {
   domain_ids: number[]
   default_domain_id?: number | null
-}
-
-export async function fetchEnterpriseWorkspaces(): Promise<EnterpriseWorkspace[]> {
-  const { data } = await api.get<{ workspaces: EnterpriseWorkspace[] }>('/workspaces')
-  return data.workspaces || []
-}
-
-export async function fetchWorkspaceDomains(workspaceId: number): Promise<SemanticDomain[]> {
-  const { data } = await api.get<{ domains: SemanticDomain[] }>(`/workspaces/${workspaceId}/domains`)
-  return data.domains || []
 }
 
 export async function fetchAgentDomainBinding(agentId: number): Promise<AgentDomainBinding> {
@@ -711,9 +786,77 @@ export async function createSemanticSnapshot(domainId: number, payload: Record<s
   return data
 }
 
-export async function fetchSemanticSnapshots(domainId: number) {
-  const { data } = await api.get(`/semantic/domains/${domainId}/snapshots`)
+export async function fetchSemanticSnapshots(domainId: number): Promise<SemanticDomainSnapshot[]> {
+  const { data } = await api.get<{ snapshots: SemanticDomainSnapshot[] }>(
+    `/semantic/domains/${domainId}/snapshots`,
+  )
   return data.snapshots || []
+}
+
+export async function fetchEnterpriseModelReleases(
+  domainId: number,
+): Promise<EnterpriseModelRelease[]> {
+  const { data } = await api.get<{ releases: EnterpriseModelRelease[] }>(
+    `/model-releases/domains/${domainId}/releases`,
+  )
+  return data.releases || []
+}
+
+export async function createEnterpriseModelRelease(
+  domainId: number,
+  payload: EnterpriseModelReleaseCreate,
+): Promise<EnterpriseModelRelease> {
+  const { data } = await api.post<{ release: EnterpriseModelRelease }>(
+    `/model-releases/domains/${domainId}/releases`,
+    payload,
+  )
+  return data.release
+}
+
+export async function validateEnterpriseModelRelease(
+  domainId: number,
+  releaseId: number,
+  payload: {
+    errors?: string[]
+    warnings?: string[]
+    checks?: Record<string, unknown>
+  } = {},
+): Promise<EnterpriseModelRelease> {
+  const { data } = await api.post<{ release: EnterpriseModelRelease }>(
+    `/model-releases/domains/${domainId}/releases/${releaseId}/validate`,
+    payload,
+  )
+  return data.release
+}
+
+export async function activateEnterpriseModelRelease(
+  domainId: number,
+  releaseId: number,
+): Promise<EnterpriseModelRelease> {
+  const { data } = await api.post<{ release: EnterpriseModelRelease }>(
+    `/model-releases/domains/${domainId}/releases/${releaseId}/activate`,
+  )
+  return data.release
+}
+
+export async function deactivateEnterpriseModelRelease(
+  domainId: number,
+  releaseId: number,
+): Promise<EnterpriseModelRelease> {
+  const { data } = await api.post<{ release: EnterpriseModelRelease }>(
+    `/model-releases/domains/${domainId}/releases/${releaseId}/deactivate`,
+  )
+  return data.release
+}
+
+export async function rollbackEnterpriseModelRelease(
+  domainId: number,
+  releaseId: number,
+): Promise<EnterpriseModelRelease> {
+  const { data } = await api.post<{ release: EnterpriseModelRelease }>(
+    `/model-releases/domains/${domainId}/releases/${releaseId}/rollback`,
+  )
+  return data.release
 }
 
 export async function fetchSemanticSnapshot(domainId: number, snapshotId: number) {
@@ -948,7 +1091,23 @@ export interface OntologyAgentToolDefinition {
 
 export interface OntologyAgentContext {
   domain: SemanticDomain | Record<string, unknown>
+  model_release?: {
+    id: number
+    version: number
+    name?: string | null
+    status?: string
+    model_hash?: string
+    activated_at?: string | null
+  } | null
+  semantic_snapshot?: { id: number; snapshot_hash?: string | null } | null
+  ontology_release?: {
+    id: number
+    version: number
+    name?: string | null
+    definition_hash?: string | null
+  } | null
   release?: Record<string, unknown> | null
+  warnings?: Array<Record<string, unknown>>
   role: 'admin' | 'user' | string
   object_types: Array<Record<string, unknown>>
   link_types: Array<Record<string, unknown>>
@@ -1085,8 +1244,10 @@ export async function publishOntology(domainId: number, payload: Record<string, 
   return data
 }
 
-export async function fetchOntologyReleases(domainId: number) {
-  const { data } = await api.get(`/ontology/domains/${domainId}/releases`)
+export async function fetchOntologyReleases(domainId: number): Promise<OntologyRelease[]> {
+  const { data } = await api.get<{ releases: OntologyRelease[] }>(
+    `/ontology/domains/${domainId}/releases`,
+  )
   return data.releases || []
 }
 
@@ -1146,6 +1307,39 @@ export async function syncOntologyObjects(
 ): Promise<OntologySyncResult> {
   const { data } = await api.post(`/ontology/domains/${domainId}/sync`, payload)
   return data
+}
+
+export interface TwinSyncRun {
+  id: number
+  domain_id: number
+  object_type_id?: number | null
+  model_release_id?: number | null
+  datasource_id: number
+  trace_id: string
+  trigger_type: string
+  dry_run: boolean
+  status: 'running' | 'succeeded' | 'partial' | 'failed'
+  page: number
+  page_size: number
+  sync_links: boolean
+  statistics_json: Record<string, number | boolean>
+  error_summary?: string | null
+  completed_at?: string | null
+}
+
+export async function createTwinSyncRun(
+  domainId: number,
+  payload: OntologySyncRequest & { dry_run?: boolean },
+) {
+  const { data } = await api.post(`/twin/domains/${domainId}/sync-runs`, payload)
+  return data as { run: TwinSyncRun; result: OntologySyncResult & { dry_run?: boolean } }
+}
+
+export async function fetchTwinSyncRuns(domainId: number): Promise<TwinSyncRun[]> {
+  const { data } = await api.get<{ runs: TwinSyncRun[] }>(
+    `/twin/domains/${domainId}/sync-runs`,
+  )
+  return data.runs || []
 }
 
 export async function fetchOntologyObjects(
@@ -1525,4 +1719,109 @@ export async function deleteSession(agentId: number, sessionId: string) {
 export async function submitFeedback(feedback: FeedbackRequest) {
   const { data } = await api.post('/feedback', feedback)
   return data
+}
+
+export interface CapabilityClient {
+  id: number
+  client_key: string
+  name: string
+  description?: string | null
+  status: 'active' | 'disabled'
+  created_by?: number | null
+  last_used_at?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface CapabilityClientCredential {
+  client: CapabilityClient
+  client_key: string
+  client_secret: string
+  secret_returned_once: true
+}
+
+export interface CapabilityGrant {
+  id: number
+  client_id: number
+  domain_id: number
+  capability_key: string
+  execution_agent_id: number
+  status: 'active' | 'revoked'
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface CapabilityInvocationAudit {
+  id: number
+  trace_id: string
+  client_id: number
+  grant_id?: number | null
+  domain_id: number
+  capability_key: string
+  execution_agent_id?: number | null
+  model_release_id?: number | null
+  semantic_snapshot_id?: number | null
+  ontology_release_id?: number | null
+  status: string
+  latency_ms: number
+  row_count: number
+  error_category?: string | null
+  error_message?: string | null
+  request_summary: Record<string, unknown>
+  result_summary: Record<string, unknown>
+  created_at?: string | null
+}
+
+export async function fetchCapabilityClients(): Promise<CapabilityClient[]> {
+  const { data } = await api.get<{ clients: CapabilityClient[] }>('/capability-clients')
+  return data.clients || []
+}
+
+export async function createCapabilityClient(payload: { name: string; description?: string }) {
+  const { data } = await api.post<{ credential: CapabilityClientCredential }>(
+    '/capability-clients',
+    payload,
+  )
+  return data.credential
+}
+
+export async function updateCapabilityClientStatus(
+  clientId: number,
+  status: CapabilityClient['status'],
+) {
+  const { data } = await api.patch<{ client: CapabilityClient }>(
+    `/capability-clients/${clientId}`,
+    { status },
+  )
+  return data.client
+}
+
+export async function fetchCapabilityGrants(clientId: number): Promise<CapabilityGrant[]> {
+  const { data } = await api.get<{ grants: CapabilityGrant[] }>(
+    `/capability-clients/${clientId}/grants`,
+  )
+  return data.grants || []
+}
+
+export async function updateCapabilityGrant(
+  clientId: number,
+  grant: Pick<CapabilityGrant, 'domain_id' | 'capability_key' | 'execution_agent_id' | 'status'>,
+) {
+  const { data } = await api.put<{ grant: CapabilityGrant }>(
+    `/capability-clients/${clientId}/grants`,
+    grant,
+  )
+  return data.grant
+}
+
+export async function fetchCapabilityInvocationAudits(params?: {
+  client_id?: number
+  domain_id?: number
+  limit?: number
+}): Promise<CapabilityInvocationAudit[]> {
+  const { data } = await api.get<{ invocations: CapabilityInvocationAudit[] }>(
+    '/capability-invocations',
+    { params },
+  )
+  return data.invocations || []
 }

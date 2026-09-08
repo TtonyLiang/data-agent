@@ -39,6 +39,8 @@ _QUERY_CAPABILITY_SERVER_TRACE_FIELDS = frozenset(
         "trace_id",
         "domain_id",
         "datasource_id",
+        "model_release",
+        "semantic_snapshot",
         "ontology_release",
         "release",
         "query_capability_key",
@@ -182,10 +184,21 @@ async def _load_query_runtime_context(
     domain = await runtime_service.get_domain(domain_id)
     if domain is None:
         raise ValueError("语义领域不存在")
-    runtime = await runtime_service.build_runtime(
-        agent_id=domain.agent_id,
-        domain_id=domain_id,
-    )
+    if str(domain.status or "").lower() != "active":
+        raise ValueError("业务领域已停用，不能调用业务能力")
+    semantic_snapshot = context.get("semantic_snapshot")
+    if isinstance(semantic_snapshot, dict) and semantic_snapshot.get("id"):
+        runtime = await runtime_service.build_runtime_from_snapshot(
+            domain_id,
+            int(semantic_snapshot["id"]),
+            agent_id=domain.agent_id,
+            expected_snapshot_hash=str(semantic_snapshot.get("snapshot_hash") or ""),
+        )
+    else:
+        runtime = await runtime_service.build_runtime(
+            agent_id=domain.agent_id,
+            domain_id=domain_id,
+        )
     return context, runtime
 
 
@@ -270,7 +283,12 @@ async def _invoke_query_capability(
         )
     trace_id = _new_query_trace_id()
     datasource_id = semantic_runtime.domain.datasource_id
-    ontology_release = ontology_context.get("release")
+    model_release = ontology_context.get("model_release")
+    semantic_snapshot = ontology_context.get("semantic_snapshot")
+    ontology_release = ontology_context.get("ontology_release") or ontology_context.get(
+        "release"
+    )
+    runtime_warnings = list(ontology_context.get("warnings") or [])
     capabilities = build_query_capability_definitions(semantic_runtime, ontology_context)
     facade = QueryCapabilityFacade()
     for item in capabilities:
@@ -291,12 +309,15 @@ async def _invoke_query_capability(
         "trace_id": trace_id,
         "domain_id": domain_id,
         "datasource_id": datasource_id,
+        "model_release": model_release,
+        "semantic_snapshot": semantic_snapshot,
         "ontology_release": ontology_release,
         # Keep the context field name available for existing consumers.
         "release": ontology_release,
         "query_capability_key": capability.key,
         "target_object": capability.target_object,
         "read_only": True,
+        "warnings": runtime_warnings,
         "validation": validation_payload,
     }
     result: dict[str, Any] = {
@@ -394,10 +415,11 @@ async def _invoke_query_capability(
         "datasource_id": datasource_id,
         "compiled_sql": compiled.sql,
         "sql_text": compiled.sql,
+        "sql_params": compiled.sql_params,
         "execution_trace": {
             **capability_trace,
             "used_assets": list(compiled.used_assets),
-            "warnings": list(compiled.warnings),
+            "warnings": [*runtime_warnings, *compiled.warnings],
             "compile_strategy": "deterministic_logic_form",
         },
     }
@@ -433,13 +455,15 @@ async def _invoke_query_capability(
         "trace_id": trace_id,
         "domain_id": domain_id,
         "datasource_id": datasource_id,
+        "model_release": model_release,
+        "semantic_snapshot": semantic_snapshot,
         "ontology_release": ontology_release,
         "release": ontology_release,
         "query_capability_key": capability.key,
         "target_object": capability.target_object,
         "read_only": True,
         "used_assets": list(compiled.used_assets),
-        "warnings": list(compiled.warnings),
+        "warnings": [*runtime_warnings, *compiled.warnings],
         "executed_sql": actual_sql,
         "query_capability_execution": {
             "executed": executed,
@@ -482,6 +506,7 @@ async def invoke_ontology_tool(
     arguments: dict[str, Any] | None,
     user: dict[str, Any],
     *,
+    access_agent_id: int | None = None,
     ontology_context: dict[str, Any] | None = None,
     semantic_runtime: SemanticRuntime | None = None,
 ) -> dict[str, Any]:
@@ -498,13 +523,15 @@ async def invoke_ontology_tool(
         unknown = sorted(set(args) - allowed)
         if unknown:
             raise ValueError(f"对象查询工具包含未知参数: {', '.join(unknown)}")
-        return await service.query_objects(
-            domain_id,
-            object_type_key=args.get("object_type_key"),
-            search=args.get("search"),
-            limit=args.get("limit", 20),
-            offset=args.get("offset", 0),
-        )
+        query_args = {
+            "object_type_key": args.get("object_type_key"),
+            "search": args.get("search"),
+            "limit": args.get("limit", 20),
+            "offset": args.get("offset", 0),
+        }
+        if access_agent_id is not None:
+            query_args["access_agent_id"] = access_agent_id
+        return await service.query_objects(domain_id, **query_args)
     if name == ACTION_TOOL:
         allowed = {
             "action_key",
@@ -530,7 +557,17 @@ async def invoke_ontology_tool(
                 "expected_version": args.get("expected_version"),
             }
         )
-        return await service.execute_action(domain_id, int(action["id"]), payload, user)
+        if access_agent_id is None:
+            return await service.execute_action(
+                domain_id, int(action["id"]), payload, user
+            )
+        return await service.execute_action(
+            domain_id,
+            int(action["id"]),
+            payload,
+            user,
+            access_agent_id=access_agent_id,
+        )
     if name == QUERY_CAPABILITY_TOOL:
         return await _invoke_query_capability(
             service,

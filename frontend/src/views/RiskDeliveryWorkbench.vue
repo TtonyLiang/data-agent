@@ -1,16 +1,17 @@
 <template>
-  <div class="risk-delivery-page">
+  <div class="risk-delivery-page" :aria-busy="domainLoading || workspaceLoading || riskLoading || reportLoading || auditLoading">
     <header class="page-toolbar">
       <div class="title-group">
         <h2>风险与报告交付</h2>
-        <p v-if="currentDomain">{{ currentDomain.name }} · {{ currentDomain.domain_key || `domain-${currentDomain.id}` }}</p>
-        <p v-else>连接风险事项、证据、人工复核、报告版本与决策审计</p>
+        <p v-if="currentDomain">垂直验证场景 · {{ currentDomain.name }} · {{ currentDomain.domain_key || `domain-${currentDomain.id}` }}</p>
+        <p v-else>贷款/财税垂直验证场景，连接风险事项、证据、复核、报告与审计</p>
       </div>
       <div class="toolbar-actions">
         <el-select
           v-model="domainId"
           class="domain-select"
           placeholder="选择领域"
+          aria-label="选择风险交付业务领域"
           :loading="domainLoading"
           :disabled="domainLoading || domains.length === 0"
         >
@@ -46,7 +47,7 @@
 
     <el-empty
       v-if="!domainLoading && domains.length === 0"
-      description="暂无可用领域，请先完成领域和本体配置"
+      :description="isAdmin() ? '暂无可用领域，请先在企业模型中完成领域配置' : '暂无可访问业务领域，请联系管理员分配验证客户端权限'"
     >
       <el-button type="primary" :icon="Refresh" @click="loadDomains">重新加载</el-button>
     </el-empty>
@@ -67,7 +68,7 @@
               <div class="section-heading">
                 <div class="section-heading-copy">
                   <strong>风险事项</strong>
-                  <span>按严重度和状态优先处理，点击行查看详情</span>
+                  <span>按严重度和状态优先处理，可点击行或使用查看详情按钮</span>
                 </div>
                 <em>{{ filteredRiskIssues.length }} / {{ riskIssues.length }} 项</em>
               </div>
@@ -162,6 +163,20 @@
               <el-table-column label="更新时间" width="170">
                 <template #default="{ row }"><time class="table-time">{{ formatTime(field(row, 'updated_at', 'created_at')) }}</time></template>
               </el-table-column>
+              <el-table-column label="操作" width="80" fixed="right" align="center" header-align="center">
+                <template #default="{ row }">
+                  <el-tooltip content="查看详情" placement="top">
+                    <el-button
+                      class="table-action-btn is-view"
+                      text
+                      :icon="View"
+                      :aria-label="`查看风险事项详情：${textFieldOr(row, '未命名风险', 'title', 'name')}`"
+                      @keydown.enter.prevent.stop="openRiskDetail(row)" @keydown.space.prevent.stop="openRiskDetail(row)"
+                      @click.stop="openRiskDetail(row)"
+                    />
+                  </el-tooltip>
+                </template>
+              </el-table-column>
             </el-table>
           </section>
         </el-tab-pane>
@@ -230,7 +245,7 @@
                 <template #default="{ row }">
                   <div class="table-actions">
                     <el-tooltip content="查看版本" placement="top">
-                      <el-button class="table-action-btn is-view" text :icon="View" aria-label="查看报告版本" @click.stop="openReportVersions(row)" />
+                      <el-button class="table-action-btn is-view" text :icon="View" :aria-label="`查看报告版本：${textFieldOr(row, '未命名报告', 'title', 'name')}`" @keydown.enter.prevent.stop="openReportVersions(row)" @keydown.space.prevent.stop="openReportVersions(row)" @click.stop="openReportVersions(row)" />
                     </el-tooltip>
                     <el-tooltip content="创建新版本" placement="top">
                       <el-button
@@ -238,8 +253,9 @@
                         text
                         type="primary"
                         :icon="DocumentAdd"
-                        aria-label="创建报告新版本"
+                        :aria-label="`创建报告新版本：${textFieldOr(row, '未命名报告', 'title', 'name')}`"
                         :disabled="isFinalReport(row)"
+                        @keydown.enter.prevent.stop="openVersionDialog(row)" @keydown.space.prevent.stop="openVersionDialog(row)"
                         @click.stop="openVersionDialog(row)"
                       />
                     </el-tooltip>
@@ -249,8 +265,9 @@
                         text
                         type="success"
                         :icon="CircleCheck"
-                        aria-label="定稿报告"
+                        :aria-label="`定稿报告：${textFieldOr(row, '未命名报告', 'title', 'name')}`"
                         :disabled="isFinalReport(row)"
+                        @keydown.enter.prevent.stop="handleFinalizeReport(row)" @keydown.space.prevent.stop="handleFinalizeReport(row)"
                         @click.stop="handleFinalizeReport(row)"
                       />
                     </el-tooltip>
@@ -334,7 +351,11 @@
               <el-table-column label="事件哈希" min-width="260">
                 <template #default="{ row }">
                   <el-tooltip :content="String(field(row, 'event_hash', 'hash') || '-')" placement="top-start">
-                    <code class="hash-value">{{ shortHash(field(row, 'event_hash', 'hash'), 24) }}</code>
+                    <code
+                      class="hash-value"
+                      tabindex="0"
+                      :aria-label="`完整事件哈希：${String(field(row, 'event_hash', 'hash') || '-')}`"
+                    >{{ shortHash(field(row, 'event_hash', 'hash'), 24) }}</code>
                   </el-tooltip>
                 </template>
               </el-table-column>
@@ -456,11 +477,12 @@
       width="760px"
       :close-on-click-modal="false"
       destroy-on-close
+      @opened="focusControl(riskTitleInput)"
     >
       <el-form :model="riskForm" label-position="top">
         <div class="form-grid two">
           <el-form-item label="风险标题" required>
-            <el-input v-model="riskForm.title" placeholder="如 借款人近 30 天逾期次数异常" />
+            <el-input ref="riskTitleInput" v-model="riskForm.title" placeholder="如 借款人近 30 天逾期次数异常" />
           </el-form-item>
           <el-form-item label="风险标识" required>
             <el-input v-model="riskForm.issue_key" placeholder="如 high_dti_manual_review" />
@@ -518,11 +540,12 @@
       :title="`添加证据 · ${selectedIssueTitle}`"
       width="700px"
       :close-on-click-modal="false"
+      @opened="focusControl(evidenceTitleInput)"
     >
       <el-form :model="evidenceForm" label-position="top">
         <div class="form-grid two">
           <el-form-item label="证据标题" required>
-            <el-input v-model="evidenceForm.title" placeholder="如 近 30 天还款流水" />
+            <el-input ref="evidenceTitleInput" v-model="evidenceForm.title" placeholder="如 近 30 天还款流水" />
           </el-form-item>
           <el-form-item label="证据类型" required>
             <el-select v-model="evidenceForm.evidence_type">
@@ -560,6 +583,7 @@
       :title="`提交人工复核 · ${selectedIssueTitle}`"
       width="700px"
       :close-on-click-modal="false"
+      @opened="focusControl(reviewActionSelect)"
     >
       <el-form :model="reviewForm" label-position="top">
         <el-alert
@@ -569,7 +593,7 @@
           :title="`当前状态：${riskStatusLabel(textField(selectedIssue, 'status'))} · 版本：v${numberField(selectedIssue, 'version')}`"
         />
         <el-form-item label="复核动作" required>
-          <el-select v-model="reviewForm.action">
+          <el-select ref="reviewActionSelect" v-model="reviewForm.action">
             <el-option v-for="item in reviewActionOptions" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
         </el-form-item>
@@ -588,11 +612,12 @@
       title="新建报告并创建 V1"
       width="780px"
       :close-on-click-modal="false"
+      @opened="focusControl(reportNameInput)"
     >
       <el-form :model="reportForm" label-position="top">
         <div class="form-grid two">
           <el-form-item label="报告名称" required>
-            <el-input v-model="reportForm.name" placeholder="如 2026 年 8 月贷款风险复核报告" />
+            <el-input ref="reportNameInput" v-model="reportForm.name" placeholder="如 2026 年 8 月贷款风险复核报告" />
           </el-form-item>
           <el-form-item label="报告标识" required>
             <el-input v-model="reportForm.report_key" placeholder="如 loan_risk_2026_q3" />
@@ -640,6 +665,7 @@
       :title="`创建新版本 · ${selectedReportTitle}`"
       width="760px"
       :close-on-click-modal="false"
+      @opened="focusControl(versionIssueSelect)"
     >
       <el-form :model="versionForm" label-position="top" v-loading="versionsLoading">
         <el-alert
@@ -649,7 +675,7 @@
           :title="`将在 V${numberField(selectedReport, 'current_version') || 1} 基础上创建不可变新版本`"
         />
         <el-form-item label="纳入风险事项" required>
-          <el-select v-model="versionForm.issue_ids" multiple filterable collapse-tags placeholder="选择本版本覆盖的风险事项">
+          <el-select ref="versionIssueSelect" v-model="versionForm.issue_ids" multiple filterable collapse-tags placeholder="选择本版本覆盖的风险事项">
             <el-option v-for="item in riskIssues" :key="item.id" :label="riskIssueOptionLabel(item)" :value="item.id" />
           </el-select>
         </el-form-item>
@@ -921,6 +947,7 @@ import { formatDateTime, isDateTimeValue } from '../utils/datetime'
 type DomainOption = { id: number; name: string; domain_key?: string }
 type UnknownRecord = Record<string, unknown>
 type DisplayEntry = { label: string; value: string }
+type FocusableControl = { focus: () => void }
 
 const domains = ref<DomainOption[]>([])
 const domainId = ref<number | null>(null)
@@ -954,6 +981,11 @@ const reviewDialog = ref(false)
 const reportDialog = ref(false)
 const versionDialog = ref(false)
 const versionDrawer = ref(false)
+const riskTitleInput = ref<FocusableControl>()
+const evidenceTitleInput = ref<FocusableControl>()
+const reviewActionSelect = ref<FocusableControl>()
+const reportNameInput = ref<FocusableControl>()
+const versionIssueSelect = ref<FocusableControl>()
 const savingRisk = ref(false)
 const savingEvidence = ref(false)
 const savingReview = ref(false)
@@ -993,6 +1025,10 @@ const currentDomain = computed(() => domains.value.find((item) => item.id === do
 const selectedIssueTitle = computed(() => selectedIssue.value ? textFieldOr(selectedIssue.value, '风险事项', 'title', 'name') : '风险事项')
 const selectedReportTitle = computed(() => selectedReport.value ? textFieldOr(selectedReport.value, '报告', 'title', 'name') : '报告')
 const reviewActionOptions = computed(() => availableReviewActions(textField(selectedIssue.value, 'status')))
+
+function focusControl(control: FocusableControl | undefined) {
+  requestAnimationFrame(() => control?.focus())
+}
 const canFinalize = computed(() => isAdmin())
 const reportVersionViews = computed(() => reportVersions.value.map((version) => {
   const issues = reportVersionIssues(version)
@@ -2319,18 +2355,18 @@ onMounted(loadDomains)
 .metric-item { position: relative; min-height: 76px; padding: 13px 16px; background: var(--wq-surface); border-top: 3px solid transparent; transition: background-color 160ms ease; }
 .metric-item span { display: block; color: var(--wq-muted); font-size: 12px; }
 .metric-item strong { display: block; margin-top: 3px; color: var(--risk-ink); font-size: 25px; font-weight: 720; line-height: 1.1; }
-.metric-item .el-icon { position: absolute; right: 14px; top: 22px; color: #98a2b3; font-size: 24px; }
+.metric-item .el-icon { position: absolute; right: 14px; top: 22px; color: var(--wq-subtle); font-size: 24px; }
 .metric-item.has-value { background: #fcfdff; }
-.metric-item.is-empty strong, .metric-item.is-empty .el-icon { color: #98a2b3; }
-.metric-item.tone-danger { border-top-color: #f04438; }
+.metric-item.is-empty strong, .metric-item.is-empty .el-icon { color: var(--wq-subtle); }
+.metric-item.tone-danger { border-top-color: var(--wq-danger); }
 .metric-item.tone-danger strong, .metric-item.tone-danger .el-icon { color: #b42318; }
-.metric-item.tone-warning { border-top-color: #f79009; }
+.metric-item.tone-warning { border-top-color: var(--wq-warning); }
 .metric-item.tone-warning strong, .metric-item.tone-warning .el-icon { color: #b54708; }
-.metric-item.tone-primary { border-top-color: #528bff; }
+.metric-item.tone-primary { border-top-color: var(--wq-primary); }
 .metric-item.tone-primary strong, .metric-item.tone-primary .el-icon { color: #175cd3; }
-.metric-item.tone-success { border-top-color: #32d583; }
+.metric-item.tone-success { border-top-color: var(--wq-success); }
 .metric-item.tone-success strong, .metric-item.tone-success .el-icon { color: #067647; }
-.metric-item.tone-neutral { border-top-color: #98a2b3; }
+.metric-item.tone-neutral { border-top-color: var(--wq-border-strong); }
 
 .workspace-tabs { min-width: 0; min-height: 0; flex: 1; }
 .workspace-tabs :deep(.el-tabs__header) { margin: 0; }
@@ -2384,10 +2420,10 @@ onMounted(loadDomains)
 code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 
 .risk-title-cell { position: relative; padding-left: 12px; }
-.risk-title-cell::before { position: absolute; top: 2px; bottom: 2px; left: 0; width: 3px; border-radius: 2px; content: ''; background: #98a2b3; }
-.risk-title-cell.severity-critical::before { background: #d92d20; }
-.risk-title-cell.severity-high::before { background: #f79009; }
-.risk-title-cell.severity-medium::before { background: #528bff; }
+.risk-title-cell::before { position: absolute; top: 2px; bottom: 2px; left: 0; width: 3px; border-radius: 2px; content: ''; background: var(--wq-border-strong); }
+.risk-title-cell.severity-critical::before { background: var(--wq-danger); }
+.risk-title-cell.severity-high::before { background: var(--wq-warning); }
+.risk-title-cell.severity-medium::before { background: var(--wq-primary); }
 
 .severity-tag, .status-tag { min-width: 54px; justify-content: center; border-radius: 5px; font-weight: 650; }
 .severity-tag.severity-critical { --el-tag-bg-color: #fef3f2; --el-tag-border-color: #fecdca; --el-tag-text-color: #b42318; }
@@ -2401,11 +2437,11 @@ code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospa
 
 .object-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .object-cell strong { color: #344054; font-weight: 560; overflow-wrap: anywhere; }
-.object-cell span { color: #98a2b3; font-size: 11px; }
+.object-cell span { color: var(--wq-subtle); font-size: 11px; }
 
 .risk-basis-cell { display: grid; gap: 3px; min-width: 0; }
 .risk-basis-item { display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: start; gap: 6px; min-width: 0; }
-.risk-basis-item > span { color: #98a2b3; font-size: 11px; line-height: 1.55; }
+.risk-basis-item > span { color: var(--wq-subtle); font-size: 11px; line-height: 1.55; }
 .risk-basis-item > strong { color: #344054; font-size: 12px; font-weight: 600; line-height: 1.55; overflow-wrap: anywhere; }
 .risk-basis-item > strong.is-rule-key { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 560; }
 
@@ -2432,7 +2468,7 @@ code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospa
 .table-action-btn.is-view { color: #475467; background: #f2f4f7; }
 .table-empty { display: flex; min-height: 240px; align-items: center; justify-content: center; }
 .table-empty :deep(.el-empty) { padding: 28px 0; }
-.empty-note { display: block; max-width: 360px; color: #98a2b3; font-size: 12px; line-height: 1.6; }
+.empty-note { display: block; max-width: 360px; color: var(--wq-subtle); font-size: 12px; line-height: 1.6; }
 
 .risk-detail-drawer { min-height: 260px; padding-bottom: 20px; }
 .risk-detail-overview { padding: 2px 0 22px; border-bottom: 1px solid var(--wq-border); }
@@ -2441,10 +2477,10 @@ code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospa
 .risk-detail-heading .risk-title-cell strong { display: block; color: #182230; font-size: 17px; line-height: 1.45; }
 .risk-detail-heading .risk-title-cell code { display: block; margin-top: 4px; }
 .risk-detail-tags { display: flex; flex: 0 0 auto; gap: 6px; }
-.risk-detail-description { margin: 14px 0 0; padding: 11px 12px; color: #475467; background: #f8fafc; border-left: 3px solid #b2ddff; font-size: 13px; line-height: 1.7; }
+.risk-detail-description { margin: 14px 0 0; padding: 11px 12px; color: #475467; background: #f8fafc; border-left: 3px solid var(--wq-primary); font-size: 13px; line-height: 1.7; }
 .risk-detail-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; margin-top: 18px; border-top: 1px solid #eaecf0; border-left: 1px solid #eaecf0; }
 .risk-detail-facts > div { min-width: 0; padding: 10px 12px; border-right: 1px solid #eaecf0; border-bottom: 1px solid #eaecf0; }
-.risk-detail-facts dt { color: #98a2b3; font-size: 11px; }
+.risk-detail-facts dt { color: var(--wq-subtle); font-size: 11px; }
 .risk-detail-facts dd { margin: 3px 0 0; color: #344054; font-size: 12px; font-weight: 600; line-height: 1.55; overflow-wrap: anywhere; }
 .risk-detail-facts time { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 560; }
 .drawer-detail-section { padding: 20px 0; border-bottom: 1px solid var(--wq-border); }
@@ -2460,8 +2496,8 @@ code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospa
 .detail-list { min-width: 0; margin-top: 8px; border-top: 1px solid #dfe4ec; }
 .detail-record { min-width: 0; padding: 14px 12px; border-bottom: 1px solid #dfe4ec; background: #fcfdff; }
 .detail-record:first-child { border-top: 1px solid #dfe4ec; }
-.evidence-record { border-left: 3px solid #12b76a; }
-.review-record { border-left: 3px solid #f79009; }
+.evidence-record { border-left: 3px solid var(--wq-success); }
+.review-record { border-left: 3px solid var(--wq-warning); }
 .record-line { justify-content: space-between; gap: 10px; }
 .record-line strong { color: #344054; font-size: 13px; }
 .detail-record p { margin: 5px 0; color: #667085; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
@@ -2469,23 +2505,23 @@ code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospa
 .evidence-summary { display: flex; flex-wrap: wrap; gap: 8px 0; margin: 9px 0; padding: 9px 0; border-top: 1px solid #eaecf0; border-bottom: 1px solid #eaecf0; background: transparent; }
 .evidence-summary-item { min-width: 140px; max-width: 50%; padding: 0 12px; border-left: 2px solid #d0d5dd; background: transparent; }
 .evidence-summary-item:first-child { padding-left: 0; border-left: 0; }
-.evidence-summary-item span { display: block; color: #98a2b3; font-size: 10px; line-height: 1.4; }
+.evidence-summary-item span { display: block; color: var(--wq-subtle); font-size: 10px; line-height: 1.4; }
 .evidence-summary-item strong { display: block; margin-top: 2px; color: #344054; font-size: 12px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
 .review-section .detail-list { position: relative; padding-left: 17px; }
 .review-section .detail-list::before { position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; content: ''; background: #d0d5dd; }
 .review-record { position: relative; }
-.review-record::before { position: absolute; top: 19px; left: -17px; width: 9px; height: 9px; border: 2px solid #f7f9fc; border-radius: 50%; content: ''; background: #98a2b3; box-shadow: 0 0 0 1px #98a2b3; }
-.review-record.status-confirmed::before, .review-record.status-resolved::before { background: #12b76a; box-shadow: 0 0 0 1px #12b76a; }
-.review-record.status-needs_info::before, .review-record.status-in_review::before { background: #f79009; box-shadow: 0 0 0 1px #f79009; }
-.review-record.status-open::before { background: #f04438; box-shadow: 0 0 0 1px #f04438; }
+.review-record::before { position: absolute; top: 19px; left: -17px; width: 9px; height: 9px; border: 2px solid #f7f9fc; border-radius: 50%; content: ''; background: var(--wq-border-strong); box-shadow: 0 0 0 1px var(--wq-border-strong); }
+.review-record.status-confirmed::before, .review-record.status-resolved::before { background: var(--wq-success); box-shadow: 0 0 0 1px var(--wq-success); }
+.review-record.status-needs_info::before, .review-record.status-in_review::before { background: var(--wq-warning); box-shadow: 0 0 0 1px var(--wq-warning); }
+.review-record.status-open::before { background: var(--wq-danger); box-shadow: 0 0 0 1px var(--wq-danger); }
 
 .audit-event-cell { position: relative; padding-left: 11px; }
-.audit-event-cell::before { position: absolute; top: 3px; bottom: 3px; left: 0; width: 3px; border-radius: 2px; content: ''; background: #98a2b3; }
-.audit-event-cell.event-created::before { background: #528bff; }
-.audit-event-cell.event-evidence::before { background: #12b76a; }
-.audit-event-cell.event-reviewed::before { background: #f79009; }
+.audit-event-cell::before { position: absolute; top: 3px; bottom: 3px; left: 0; width: 3px; border-radius: 2px; content: ''; background: var(--wq-border-strong); }
+.audit-event-cell.event-created::before { background: var(--wq-primary); }
+.audit-event-cell.event-evidence::before { background: var(--wq-success); }
+.audit-event-cell.event-reviewed::before { background: var(--wq-warning); }
 .audit-event-cell.event-report::before { background: #7f56d9; }
-.audit-entity-cell code { color: #98a2b3; }
+.audit-entity-cell code { color: var(--wq-subtle); }
 
 .hash-value { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
 
@@ -2505,19 +2541,19 @@ code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospa
 .report-reading-kicker { color: var(--risk-accent); font-size: 11px; font-weight: 750; letter-spacing: .04em; }
 .report-overview-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin-top: 10px; background: var(--wq-border); border: 1px solid var(--wq-border); border-radius: 6px; overflow: hidden; }
 .report-overview-grid > div { min-width: 0; padding: 10px 11px; background: #fff; }
-.report-overview-grid span, .report-issue-facts span { display: block; color: #98a2b3; font-size: 11px; line-height: 1.45; }
+.report-overview-grid span, .report-issue-facts span { display: block; color: var(--wq-subtle); font-size: 11px; line-height: 1.45; }
 .report-overview-grid strong { display: block; margin-top: 3px; color: var(--risk-ink); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .report-overview-section { padding-top: 14px; }
 .version-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .version-section-heading h4 { margin: 0; color: #344054; font-size: 14px; }
-.version-section-heading span { color: #98a2b3; font-size: 11px; line-height: 1.5; text-align: right; }
+.version-section-heading span { color: var(--wq-subtle); font-size: 11px; line-height: 1.5; text-align: right; }
 .report-issue-list { display: grid; gap: 9px; margin-top: 9px; }
-.report-issue-summary { min-width: 0; padding: 11px 12px; background: #fff; border: 1px solid #eaecf0; border-left: 3px solid #f79009; border-radius: 6px; }
+.report-issue-summary { min-width: 0; padding: 11px 12px; background: #fff; border: 1px solid #eaecf0; border-left: 3px solid var(--wq-warning); border-radius: 6px; }
 .report-issue-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .report-issue-heading > strong { min-width: 0; color: #182230; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
 .report-issue-tags { display: flex; flex: 0 0 auto; justify-content: flex-end; gap: 5px; flex-wrap: wrap; }
 .snapshot-source-tag { font-weight: 650; }
-.report-issue-snapshot-note { margin: 8px 0 0; padding: 7px 9px; color: #b54708; background: #fffaeb; border-left: 3px solid #fdb022; font-size: 11px; line-height: 1.55; }
+.report-issue-snapshot-note { margin: 8px 0 0; padding: 7px 9px; color: #b54708; background: #fffaeb; border-left: 3px solid var(--wq-warning); font-size: 11px; line-height: 1.55; }
 .report-issue-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin-top: 9px; padding-top: 9px; border-top: 1px solid #f0f2f5; }
 .report-issue-facts > div { min-width: 0; }
 .report-issue-facts strong { display: block; margin-top: 2px; color: #475467; font-size: 12px; font-weight: 600; line-height: 1.55; overflow-wrap: anywhere; }
@@ -2534,7 +2570,7 @@ code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospa
 .report-md-list ul { list-style: disc; }
 .report-md-list ol { list-style: decimal; }
 .report-md-list li + li { margin-top: 3px; }
-.report-md-code pre { margin: 0; padding: 10px 12px; overflow: auto; color: #344054; background: #f8fafc; border: 1px solid #eaecf0; border-left: 3px solid #84adff; border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.report-md-code pre { margin: 0; padding: 10px 12px; overflow: auto; color: #344054; background: #f8fafc; border: 1px solid #eaecf0; border-left: 3px solid var(--wq-primary); border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .report-md-code code { color: #475467; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.65; }
 .report-data-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid #eaecf0; border-radius: 5px; }
 .report-data-table { width: 100%; min-width: 420px; border-collapse: collapse; color: #344054; font-size: 12px; }
@@ -2553,8 +2589,8 @@ code { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, monospa
 .version-section { padding-top: 12px; }
 .version-section h4 { margin: 0 0 6px; color: #344054; font-size: 13px; }
 .version-section p, .version-section pre { margin: 0; color: #475467; font-size: 13px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
-.version-section pre { padding: 10px; background: #f8fafc; border-left: 3px solid #84adff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.form-help { margin: 5px 0 0; color: #98a2b3; font-size: 11px; line-height: 1.5; }
+.version-section pre { padding: 10px; background: #f8fafc; border-left: 3px solid var(--wq-primary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.form-help { margin: 5px 0 0; color: var(--wq-subtle); font-size: 11px; line-height: 1.5; }
 
 @media (max-width: 1100px) {
   .page-toolbar { align-items: flex-start; }

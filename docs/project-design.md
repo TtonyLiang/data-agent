@@ -104,15 +104,15 @@ flowchart LR
 #### 前端
 
 - `/enterprise-model`：企业模型统一入口，聚合查询语义和 Ontology 建模资产。
-- `/twin-runtime`：孪生运行入口，复用现有对象同步和实例查询 API 展示当前运行状态。
-- `/capability-center`：能力发布中心入口，聚合现有对象查询、Query Capability 和 Action 工具。
+- `/twin-runtime`：孪生运行入口，集中展示同步任务、对象实例、关系实例和动作执行记录。
+- `/capability-center`：能力发布中心入口，明确区分已对外发布的 Query Capability 与仅供内部验证的对象查询、Action 工具。
 - `ChatView`：能力验证界面，负责会话、流式过程、SQL、结果表、报告展示。
 - `AgentList`：内置验证 Agent 配置，绑定模型、数据源和可消费业务领域；不代表外部 Agent 注册中心。
 - `ModelConfig`：模型配置，区分大语言模型和向量模型。
-- `PromptConfig`：Prompt 模板配置，按节点、智能体、模型和语义层覆盖系统提示词。
+- `PromptConfig`：Prompt 模板配置，按节点、业务领域、模型和验证智能体兼容作用域覆盖系统提示词。
 - `SystemParameterConfig`：系统参数配置，当前用于调整数据定位召回阈值和最多候选表数。
-- `DatasourceConfig`：数据源管理，读取表清单、选择采集表、查看字段详情。
-- `KnowledgeConfig`：语义层配置，维护领域、指标、映射、规则、关系和模板。
+- `DatasourceConfig`：数据源管理，读取表清单、选择采集表、查看字段详情，并在需要时选择验证权限适配维护表列边界；创建数据源不依赖 Agent。
+- `KnowledgeConfig`：企业模型“语义与数据”子区，维护指标、映射、规则、关系和模板。
 
 #### 后端
 
@@ -182,11 +182,11 @@ erDiagram
 
 `ENTERPRISE_MODEL_ASSET` 在产品上包含对象、属性、关系、事件、状态、指标、规则、映射、模板和动作。P0 为兼容现有代码，可以继续复用 `semantic_domain`、Ontology 和查询语义表；公司内部的业务领域是资产主体，内置验证 Agent 和外部 Agent 都只是消费方。
 
-实现注意：当前产品入口统一不等于底层存储或版本已经统一。`semantic_domain_snapshot` 只覆盖查询语义资产，`ontology_release` 只覆盖 Ontology 定义；两者尚无共同的激活指针。Agent 上下文目前还会读取 `active` 定义，因此真实业务上线前必须补齐“草稿→校验→激活版本”的绑定，避免未发布修改漂移到运行时。
+实现注意：`semantic_domain_snapshot` 仍只覆盖查询语义资产，`ontology_release` 仍只覆盖 Ontology 定义；`enterprise_model_release` 已把两者绑定为统一版本，并提供草稿、服务端联合校验、激活、停用和回滚。运行加载会重新计算语义快照、Ontology 定义和统一模型 hash；孪生运行、风险工作流和外部 Query 强制使用激活版本，历史兼容领域的实时定义回退会显式留出警告。
 
 P0 实现对应：`semantic_domain` 保存公司内部业务领域，`agent_semantic_domain` 保存内置验证 Agent 的消费绑定；`enterprise_workspace`、`semantic_domain.workspace_id`、`semantic_domain.agent_id` 和 `agent.semantic_domain_id` 仅作为历史兼容字段保留。`/api/workspaces` 只提供内部兼容读取，不是业务产品入口。
 
-共享领域构建语义运行时时，当前仍会按内置验证 Agent 生成隔离向量集合；这是兼容实现，不是企业模型的所有权边界。后续能力出口应直接以 `domain_id + release_id + caller context` 解析调用方，不要求外部 Agent 先创建内部 Agent。
+企业模型查询运行时可以直接按 `domain_id` 构建，不要求先绑定 Agent。语义向量仍按内置验证 Agent 的模型配置生成隔离集合；没有验证 Agent 时只跳过验证检索索引，不阻断企业模型建设。后续能力出口继续以 `domain_id + release_id + caller context` 解析调用方。
 
 当前 Chat 页面是内置验证客户端，不代表第三方 Agent 的调用方式；它仍按默认 `semantic_domain_id` 和数据源运行。首个真实试点应固定一个默认领域和一个业务数据源，外部调用则以能力合同和调用方上下文为准。
 

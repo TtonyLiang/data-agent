@@ -85,15 +85,21 @@ class SystemParameterService:
                 _param_value(rows, SCHEMA_RECALL_MAX_TABLES, defaults.schema_recall_max_tables)
             ),
             required_score_ratio=float(
-                _param_value(rows, SCHEMA_RECALL_REQUIRED_RATIO, defaults.schema_recall_required_score_ratio)
+                _param_value(
+                    rows, SCHEMA_RECALL_REQUIRED_RATIO, defaults.schema_recall_required_score_ratio
+                )
             ),
             optional_score_ratio=float(
-                _param_value(rows, SCHEMA_RECALL_OPTIONAL_RATIO, defaults.schema_recall_optional_score_ratio)
+                _param_value(
+                    rows, SCHEMA_RECALL_OPTIONAL_RATIO, defaults.schema_recall_optional_score_ratio
+                )
             ),
         )
         logger.info(
             "system_parameter schema_recall max_tables=%s required=%s optional=%s",
-            settings.max_tables, settings.required_score_ratio, settings.optional_score_ratio,
+            settings.max_tables,
+            settings.required_score_ratio,
+            settings.optional_score_ratio,
         )
         return settings
 

@@ -19,6 +19,16 @@ class FakeOntologyContextDB:
             "definition_hash": "a" * 64,
             "created_at": "2026-08-20T11:00:00",
         }
+        self.model_release = {
+            "id": 21,
+            "version": 4,
+            "model_hash": "c" * 64,
+            "semantic_snapshot_id": 31,
+            "semantic_snapshot_hash": "b" * 64,
+            "ontology_release_id": 11,
+            "ontology_definition_hash": "a" * 64,
+            "activated_at": "2026-09-07T10:00:00",
+        }
         self.missing_ontology_tables = False
         self.missing_release_hash = False
         self.queries = []
@@ -75,6 +85,8 @@ class FakeOntologyContextDB:
                     "created_at": self.release["created_at"],
                 }
             ]
+        if normalized.startswith("SELECT id, version, model_hash"):
+            return [dict(self.model_release)] if self.model_release else []
         raise AssertionError(f"unexpected SQL: {normalized}")
 
 
@@ -125,6 +137,18 @@ async def test_release_version_or_hash_change_updates_fingerprint(ontology_db, r
     current = await service.context(agent_id=1, datasource_id=7)
 
     assert current["fingerprint"] != previous["fingerprint"]
+
+
+@pytest.mark.asyncio
+async def test_active_enterprise_model_release_change_updates_fingerprint(ontology_db):
+    service = TaskCheckpointService()
+    previous = await service.context(agent_id=1, datasource_id=7)
+
+    ontology_db.model_release.update({"id": 22, "version": 5, "model_hash": "d" * 64})
+    current = await service.context(agent_id=1, datasource_id=7)
+
+    assert current["fingerprint"] != previous["fingerprint"]
+    assert current["enterprise_model_version"]["release"]["id"] == 22
 
 
 @pytest.mark.asyncio

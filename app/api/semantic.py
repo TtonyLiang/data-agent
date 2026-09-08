@@ -75,9 +75,12 @@ async def upsert_domain(payload: SemanticDomain, _: PublicUser = Depends(require
 
 @router.delete("/domains/{domain_id}")
 async def delete_domain(domain_id: int, _: PublicUser = Depends(require_admin)):
-    """删除语义领域及其全部子资产。"""
+    """删除尚未产生版本或运行历史的空闲业务领域。"""
     svc = get_semantic_runtime_service()
-    deleted = await svc.delete_domain(domain_id)
+    try:
+        deleted = await svc.delete_domain(domain_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="语义领域不存在")
     return {"deleted": True, "id": domain_id, "message": "业务领域已删除"}
@@ -297,7 +300,11 @@ async def build_runtime(request: dict, _: PublicUser = Depends(require_admin)):
     """手动构建语义运行时(调试用)。"""
     svc = get_semantic_runtime_service()
     try:
-        agent_id = await resolve_runtime_agent_id(svc, request)
+        agent_id = (
+            None
+            if request.get("domain_id") is not None and request.get("agent_id") is None
+            else await resolve_runtime_agent_id(svc, request)
+        )
         runtime = await svc.build_runtime(
             agent_id=agent_id,
             datasource_id=request.get("datasource_id"),
@@ -315,7 +322,11 @@ async def validate_logic_form(request: dict, _: PublicUser = Depends(require_adm
     svc = get_semantic_runtime_service()
     logic_form = LogicForm(**request.get("logic_form", request))
     try:
-        agent_id = await resolve_runtime_agent_id(svc, request)
+        agent_id = (
+            None
+            if request.get("domain_id") is not None and request.get("agent_id") is None
+            else await resolve_runtime_agent_id(svc, request)
+        )
         runtime = await svc.build_runtime(
             agent_id=agent_id,
             datasource_id=request.get("datasource_id"),
@@ -355,11 +366,9 @@ async def sync_domain_to_vector(domain_id: int, _: PublicUser = Depends(require_
     if domain is None:
         raise HTTPException(status_code=404, detail="语义领域不存在")
     execution_agent_ids = await svc.get_domain_agent_ids(domain_id)
-    if not execution_agent_ids:
-        raise HTTPException(status_code=400, detail="领域尚未绑定可执行的智能体")
 
     runtime = await svc.build_runtime(
-        agent_id=execution_agent_ids[0],
+        agent_id=execution_agent_ids[0] if execution_agent_ids else None,
         datasource_id=domain.datasource_id,
         domain_key=domain.domain_key,
         domain_id=domain.id,
@@ -411,6 +420,14 @@ async def sync_domain_to_vector(domain_id: int, _: PublicUser = Depends(require_
         )
 
     # 第3步:每个消费 Agent 有独立向量模型和 collection，逐一同步
+    if not execution_agent_ids:
+        return {
+            "synced": 0,
+            "asset_count": len(records),
+            "agent_ids": [],
+            "skipped": True,
+            "message": "企业模型已读取；当前没有验证智能体，暂未生成验证检索索引",
+        }
     vec_store = get_vector_store()
     if not records:
         for agent_id in execution_agent_ids:

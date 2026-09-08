@@ -126,6 +126,11 @@ class WorkflowSession:
                 "version": 3,
                 "name": "贷款风控 V3",
                 "definition_hash": "a" * 64,
+                "model_release_id": 19,
+                "model_release_version": 4,
+                "model_hash": "c" * 64,
+                "semantic_snapshot_id": 29,
+                "semantic_snapshot_hash": "b" * 64,
             }
             if release
             else None
@@ -140,9 +145,7 @@ class WorkflowSession:
         sql = " ".join(str(statement).split())
         params = params or {}
         self.executed.append((sql, dict(params)))
-        if sql.startswith(
-            "SELECT id, version, name, definition_hash, created_at FROM ontology_release"
-        ):
+        if sql.startswith("SELECT r.id, r.version, r.name, r.definition_hash"):
             return FakeResult([self.release] if self.release else [])
         if sql.startswith("SELECT id FROM risk_issue WHERE domain_id"):
             return FakeResult([])
@@ -265,7 +268,7 @@ async def test_issue_creation_requires_a_published_release(monkeypatch):
         risk_workflow_service, "get_management_db", lambda: WorkflowDB(session)
     )
 
-    with pytest.raises(ValueError, match="尚未发布 Ontology release"):
+    with pytest.raises(ValueError, match="尚未激活统一企业模型版本"):
         await service.create_issue(
             RiskIssueCreatePayload(
                 domain_id=4,
@@ -275,6 +278,42 @@ async def test_issue_creation_requires_a_published_release(monkeypatch):
                 title="借款人负债率偏高",
             ),
             {"id": 8, "username": "analyst"},
+        )
+
+    assert not any(sql.startswith("INSERT INTO risk_issue") for sql, _ in session.executed)
+
+
+@pytest.mark.asyncio
+async def test_manual_issue_subject_respects_object_permission(monkeypatch):
+    session = WorkflowSession()
+    service = RiskWorkflowService()
+    service.audit = RecordingAudit()
+
+    class HiddenOntologyService:
+        async def get_object(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(
+        risk_workflow_service, "get_management_db", lambda: WorkflowDB(session)
+    )
+    monkeypatch.setattr(
+        risk_workflow_service,
+        "get_ontology_service",
+        lambda: HiddenOntologyService(),
+    )
+
+    with pytest.raises(PermissionError, match="无权访问"):
+        await service.create_issue(
+            RiskIssueCreatePayload(
+                domain_id=4,
+                subject_object_id=22,
+                issue_key="loan.hidden_subject",
+                category="credit_risk",
+                severity="high",
+                title="隐藏对象风险",
+            ),
+            {"id": 8, "username": "analyst", "role": "user"},
+            access_agent_id=12,
         )
 
     assert not any(sql.startswith("INSERT INTO risk_issue") for sql, _ in session.executed)
@@ -430,6 +469,13 @@ async def test_report_creation_freezes_issue_snapshot_and_creates_v1(monkeypatch
         "id": 9,
         "version": 3,
         "definition_hash": "a" * 64,
+        "enterprise_model": {
+            "id": 19,
+            "version": 4,
+            "model_hash": "c" * 64,
+            "semantic_snapshot_id": 29,
+            "semantic_snapshot_hash": "b" * 64,
+        },
     }
     assert snapshot["issues"][0]["status"] == "open"
     assert snapshot["issues"][0]["detected_value"] == {"ratio": 0.72}
@@ -471,13 +517,16 @@ class WorkflowReadDB:
             return [evidence_row()]
         if "FROM risk_issue_review v LEFT JOIN ontology_release" in sql:
             return [review_row()]
-        if sql.startswith("SELECT id, version, name, definition_hash, created_at"):
+        if sql.startswith("SELECT r.id, r.version, r.name, r.definition_hash"):
             return [
                 {
                     "id": 9,
                     "version": 3,
                     "name": "贷款风控 V3",
                     "definition_hash": "a" * 64,
+                    "model_release_id": 19,
+                    "model_release_version": 4,
+                    "model_hash": "c" * 64,
                 }
             ]
         if "GROUP BY status, severity" in sql:
@@ -523,6 +572,32 @@ async def test_issue_detail_and_summary_response_contract(monkeypatch):
     assert summary["status_counts"] == {"open": 2, "confirmed": 1, "needs_info": 3}
     assert summary["severity_counts"] == {"high": 2, "critical": 1, "medium": 3}
     assert summary["report_status_counts"] == {"draft": 1, "finalized": 1}
+
+
+@pytest.mark.asyncio
+async def test_issue_list_uses_permission_filtered_subject_name(monkeypatch):
+    class ProtectedOntologyService:
+        async def get_object(self, domain_id, object_id, **kwargs):
+            assert (domain_id, object_id) == (4, 22)
+            assert kwargs == {"access_agent_id": 12, "apply_permissions": True}
+            return {
+                "display_name": "贷款申请 ***1234",
+                "object_type_name": "贷款申请",
+            }
+
+    monkeypatch.setattr(
+        risk_workflow_service, "get_management_db", lambda: WorkflowReadDB()
+    )
+    monkeypatch.setattr(
+        risk_workflow_service,
+        "get_ontology_service",
+        lambda: ProtectedOntologyService(),
+    )
+
+    issues = await RiskWorkflowService().list_issues(4, access_agent_id=12)
+
+    assert issues[0]["subject_name"] == "贷款申请 ***1234"
+    assert issues[0]["subject_type"] == "贷款申请"
 
 
 class AuditSession:

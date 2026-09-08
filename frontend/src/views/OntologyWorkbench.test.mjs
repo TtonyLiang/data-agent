@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const source = readFileSync(new URL('./OntologyWorkbench.vue', import.meta.url), 'utf8')
+const templateSource = source.split('<script setup')[0]
 const themeSource = readFileSync(new URL('../theme.css', import.meta.url), 'utf8')
 const apiSource = readFileSync(new URL('../api/index.ts', import.meta.url), 'utf8')
 const routerSource = readFileSync(new URL('../router/index.ts', import.meta.url), 'utf8')
@@ -14,9 +15,65 @@ const siblingPageSources = [
   'PromptConfig.vue',
 ].map((name) => readFileSync(new URL(`./${name}`, import.meta.url), 'utf8'))
 
-for (const tab of ['本体图谱', '对象类型', '关系类型', '动作类型', '对象实例', '决策活动']) {
-  assert.ok(source.includes(tab), `Ontology workbench should include ${tab}`)
+function sourceSection(start, end) {
+  const startIndex = source.indexOf(start)
+  const endIndex = source.indexOf(end, startIndex + start.length)
+  assert.ok(startIndex >= 0 && endIndex > startIndex, `source section should exist: ${start}`)
+  return source.slice(startIndex, endIndex)
 }
+
+const refreshAllSource = sourceSection('async function refreshAll()', 'async function handleTabChange')
+const domainWatchSource = sourceSection('watch(domainId, () => {', 'onMounted(async () => {')
+
+assert.ok(
+  source.includes('defineProps') &&
+    source.includes('domainId: number | null') &&
+    source.includes('currentDomain: SemanticDomain | null') &&
+    !source.includes('fetchOntologyDomains') &&
+    !source.includes('class="domain-select"'),
+  'ontology workbench should consume the shared enterprise-model domain context',
+)
+
+assert.ok(
+  refreshAllSource.includes('Promise.all([') &&
+    refreshAllSource.includes('fetchOntologySummary(id)') &&
+    refreshAllSource.includes('fetchOntologyObjectTypes(id)') &&
+    refreshAllSource.includes('fetchOntologyLinkTypes(id)') &&
+    refreshAllSource.includes('fetchOntologyActionTypes(id)') &&
+    refreshAllSource.includes('fetchOntologyReleases(id)') &&
+    domainWatchSource.includes("activeTab.value = 'graph'"),
+  'ontology refresh should load definition assets and reset domain changes to the graph tab',
+)
+
+for (const tab of ['本体图谱', '对象类型', '关系类型', '动作类型']) {
+  assert.ok(templateSource.includes(`label="${tab}"`), `Ontology workbench should include ${tab}`)
+}
+for (const runtimeTab of ['对象实例', '关系实例', '动作执行记录', '决策活动']) {
+  assert.ok(
+    !templateSource.includes(`<el-tab-pane label="${runtimeTab}"`),
+    `Ontology workbench should not retain the runtime tab ${runtimeTab}`,
+  )
+}
+
+assert.ok(
+  source.includes("{ label: '对象实例'") &&
+    source.includes("{ label: '动作执行记录'") &&
+    source.includes("target: 'twin-instances'") &&
+    source.includes("target: 'twin-audit'") &&
+    source.includes("path: '/twin-runtime'") &&
+    source.includes("view: target === 'twin-instances' ? 'instances' : 'audit'"),
+  'runtime metrics should navigate to the corresponding twin-runtime views',
+)
+
+assert.ok(
+    !source.includes('fetchOntologyObjects') &&
+    !source.includes('fetchOntologyLinks') &&
+    !source.includes('fetchOntologyActionRuns') &&
+    !source.includes('saveOntologyObject,') &&
+    !source.includes('saveOntologyLink,') &&
+    !source.includes('executeOntologyAction'),
+  'ontology workbench should only manage model definitions, not runtime records',
+)
 
 assert.ok(
   appSource.includes('问渠 WenQu') &&
@@ -39,8 +96,6 @@ for (const workflow of [
   'saveObjectType',
   'saveLinkType',
   'saveActionType',
-  'saveObjectInstance',
-  'runAction',
   'handleValidate',
   'handlePublish',
   'handleImport',
@@ -50,8 +105,15 @@ for (const workflow of [
 }
 
 assert.ok(
-  source.includes('before_state') && source.includes('after_state') && source.includes('decision_context'),
-  'decision activity should render context and before/after state',
+  source.includes('校验模型') &&
+    source.includes('发布本体版本') &&
+    source.includes('更多') &&
+    source.includes('导入本体包') &&
+    source.includes('导出本体包') &&
+    source.includes('@command="handleModelCommand"') &&
+    !templateSource.includes('>导入</el-button>') &&
+    !templateSource.includes('>导出</el-button>'),
+  'ontology workbench should keep validate and publish visible while grouping package import/export under more',
 )
 
 assert.ok(
@@ -65,12 +127,36 @@ assert.ok(
 )
 
 assert.ok(
+  source.includes(':aria-busy="loading"') &&
+    source.includes('aria-label="企业模型资产概览"') &&
+    source.includes(':aria-label="`${metric.label} ${metric.value}`"') &&
+    source.includes('role="img" :aria-label="graphAriaLabel"') &&
+    source.includes('const graphAriaLabel = computed') &&
+    source.includes('详细定义可通过对象类型、关系类型和动作类型页签查看'),
+  'ontology overview and graph should expose a useful non-visual description',
+)
+
+assert.ok(
+  source.includes('tabindex="0"') &&
+    source.includes('无需审批单号，执行时仍受角色、状态和前置条件限制') &&
+    source.includes(':aria-label="`移除属性 ${property.name || property.property_key || index + 1}`"') &&
+    source.includes(':aria-label="`移除动作参数 ${parameter.name || parameter.parameter_key || index + 1}`"') &&
+    source.includes(':aria-label="`移除前置条件 ${index + 1}`"') &&
+    source.includes(':aria-label="`移除状态效果 ${index + 1}`"') &&
+    source.includes('role="status" aria-live="polite"') &&
+    source.includes('@opened="focusControl(objectKeyInput)"') &&
+    source.includes('@opened="focusControl(linkKeyInput)"') &&
+    source.includes('@opened="focusControl(actionKeyInput)"') &&
+    source.includes('requestAnimationFrame(() => control?.focus())'),
+  'ontology builders and validation output should remain operable and understandable by keyboard',
+)
+
+assert.ok(
   source.includes('class="section-heading-note"') &&
     source.includes('定义实体/业务记录、属性和数据来源') &&
     source.includes('描述对象之间的业务连接和基数') &&
-    source.includes('定义可执行动作、权限和状态效果') &&
-    source.includes('追踪动作执行结果、决策上下文和状态变化'),
-  'ontology tabs should expose concise contextual descriptions without flattening all toolbar content',
+    source.includes('定义可执行动作、权限和状态效果'),
+  'definition tabs should expose concise contextual descriptions',
 )
 
 assert.ok(
@@ -85,47 +171,6 @@ assert.ok(
 )
 
 assert.ok(
-  source.includes('objectPropertyEntries(row.properties)') &&
-    source.includes('class="audit-field-list object-property-list object-property-trigger"') &&
-    source.includes('class="audit-field-value object-property-value"') &&
-    source.includes('objectPropertyPreview(row.properties)') &&
-    source.includes('hiddenPropertyCount(row.properties)') &&
-    source.includes('const PROPERTY_PREVIEW_LIMIT = 4') &&
-    source.includes('popper-class="object-property-tooltip"') &&
-    source.includes('transition="object-property-popover-fade"') &&
-    source.includes('class="object-property-tooltip-heading"') &&
-    source.includes('完整属性') &&
-    source.includes('<template #content>') &&
-    source.includes('object-property-tooltip-list') &&
-    source.includes('function objectPropertyEntries') &&
-    !source.includes('properties-tooltip') &&
-    !source.includes('popper-class="properties-tooltip"'),
-  'object properties should truncate long values and reveal the full value on hover',
-)
-
-assert.ok(
-  source.includes('.object-property-trigger:hover') &&
-    source.includes(':global(.object-property-tooltip.el-popper)') &&
-    source.includes('border: 1px solid #98a2b3') &&
-    source.includes('box-shadow: 0 16px 36px') &&
-    source.includes(':global(.object-property-popover-fade-enter-active)') &&
-    source.includes('translateY(6px) scale(0.98)') &&
-    source.includes('max-height: min(420px, calc(100vh - 120px))'),
-  'object property hover popover should have contrast, motion, and bounded scrolling for large records',
-)
-
-assert.ok(
-  source.includes('role="button" tabindex="0" aria-label="查看完整属性"') &&
-    source.includes('class="object-property-preview-heading"') &&
-    source.includes('class="instance-toolbar-context"') &&
-    source.includes('class="instance-toolbar-actions"') &&
-    source.includes('class="activity-primary-cell"') &&
-    source.includes('compact-audit-list') &&
-    source.includes('compact-state-list'),
-  'object instances and decision activities should provide keyboard-aware previews and compact primary/secondary information layers',
-)
-
-assert.ok(
   source.includes('.ontology-table :deep(.el-table__body tr:hover > td.el-table__cell)') &&
     source.includes('.table-action-btn:active') &&
     source.includes('@media (max-width: 760px)') &&
@@ -135,7 +180,7 @@ assert.ok(
 )
 
 assert.ok(
-    source.includes('max-width: var(--wq-page-max-width)') &&
+  source.includes('max-width: var(--wq-page-max-width)') &&
     source.includes('margin: 0 auto') &&
     source.includes('padding-inline: var(--wq-page-gutter)') &&
     source.includes('padding-bottom: var(--wq-page-bottom-gap)') &&
@@ -147,30 +192,6 @@ assert.ok(
     themeSource.includes('.page-shell.embedded') &&
     themeSource.includes('padding: 0 !important'),
   'functional pages should share centered width, bottom spacing, and height-safe table sizing',
-)
-
-assert.ok(
-  source.includes("function formatStateValue(value: unknown, key = '')") &&
-    source.includes("value === undefined || value === null") &&
-    source.includes("return '未设置'") &&
-    source.includes("return formatDateTime(value, '未设置')"),
-  'decision activity should render missing before/after values as unset instead of undefined',
-)
-
-assert.ok(
-  source.includes('decisionContextEntries(row.decision_context)') &&
-    source.includes('stateChangeEntries(row.before_state, row.after_state)') &&
-    source.includes('audit-field-key') &&
-    source.includes('tone-status') &&
-    source.includes('state-value is-after'),
-  'decision activity should render context and state fields as color-coded structured entries',
-)
-
-assert.ok(
-  source.includes('format="YYYY-MM-DD HH:mm:ss"') &&
-    source.includes('formatDateTime(row.created_at)') &&
-    source.includes("formatStateValue(change.after, change.key)"),
-  'ontology timestamps should display consistently to seconds in forms and audit records',
 )
 
 assert.ok(
@@ -197,46 +218,7 @@ assert.ok(
     source.includes('syncStatusLabel(row)') &&
     source.includes('row.last_sync_total || row.last_sync_count') &&
     source.includes('counts.source_objects || summary.value?.counts.objects'),
-  'object types should expose sync configuration and prefer source totals while retaining cached-object compatibility',
-)
-
-assert.ok(
-  source.includes("if (name === 'instances')") &&
-    source.includes('@change="handleInstanceTypeChange"') &&
-    source.includes('@click="syncAndLoadInstances(true)"') &&
-    source.includes('@current-change="handleInstancePageChange"') &&
-    source.includes('@size-change="handleInstancePageSizeChange"') &&
-    source.includes('object_type_id: objectType.id') &&
-    source.includes('page: instancePage.value') &&
-    source.includes('page_size: instancePageSize.value') &&
-    source.includes('sync_links: true'),
-  'entering, refreshing, switching types, and paging should synchronize exactly one server-side page',
-)
-
-assert.ok(
-  source.includes('class="instance-table"') &&
-    source.includes('<section class="table-section instance-table-section">') &&
-    source.includes('height="100%"') &&
-    source.includes('.instance-table-section { grid-template-rows: auto minmax(0, 1fr) auto;') &&
-    source.includes('.instance-pagination { position: relative; z-index: 2; min-height: 62px;'),
-  'the instance table should reserve visible space for pagination inside the tab viewport',
-)
-
-assert.ok(
-  !source.includes('fetchOntologyObjects(id)') &&
-    source.includes('fetchOntologyObjects(domainId.value, instanceTypeId.value, pageSize, offset)') &&
-    source.includes('const INSTANCE_CHOICE_LIMIT = 200') &&
-    source.includes('fetchOntologyObjects(domainId.value!, typeId, INSTANCE_CHOICE_LIMIT, 0)'),
-  'the workbench should avoid loading every object into the browser and keep auxiliary choices bounded',
-)
-
-assert.ok(
-  source.includes("row.source_kind === 'database'") &&
-    source.includes('>业务库</el-tag>') &&
-    source.includes('>本地</el-tag>') &&
-    source.includes('>本地覆盖</el-tag>') &&
-    source.includes('row.overlay_properties'),
-  'object instances should distinguish database, local, and local-overlay data',
+  'object types should expose sync configuration and source totals without hosting runtime instances',
 )
 
 assert.ok(
@@ -278,14 +260,10 @@ assert.ok(
 )
 
 assert.ok(
-  source.includes("initLayout: 'circular'"),
-  'ontology graph should use a stable centered initial layout',
-)
-
-assert.ok(
-  source.includes('top: 24, right: 24, bottom: 60, left: 24') &&
+  source.includes("initLayout: 'circular'") &&
+    source.includes('top: 24, right: 24, bottom: 60, left: 24') &&
     source.includes('height: 100%; min-height: 0; overflow: hidden;'),
-  'ontology graph should keep the legend and bottom labels inside the visible workspace',
+  'ontology graph should use a stable centered layout and remain inside the workspace',
 )
 
 assert.ok(
@@ -297,7 +275,6 @@ assert.ok(
 assert.ok(
   !source.includes('height="calc(100vh - 312px)"') &&
     source.includes('class="ontology-table"') &&
-    source.includes('.table-section { height: 100%; min-height: 0; display: grid;') &&
-    source.includes('.instance-table-section { grid-template-rows: auto minmax(0, 1fr) auto;'),
-  'ontology tables should stay within the tab viewport instead of overflowing below it',
+    source.includes('.table-section { height: 100%; min-height: 0; display: grid;'),
+  'ontology definition tables should stay within the tab viewport',
 )

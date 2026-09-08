@@ -1,6 +1,6 @@
 <template>
   <div class="chat-layout">
-    <div class="session-sidebar">
+    <aside class="session-sidebar" aria-label="会话导航">
       <div class="sidebar-header">
         <div class="sidebar-heading">
           <strong>历史会话</strong>
@@ -21,9 +21,9 @@
         </div>
       </div>
       <div class="session-search">
-        <el-input v-model="sessionSearch" :prefix-icon="Search" placeholder="搜索历史会话" clearable />
+        <el-input v-model="sessionSearch" :prefix-icon="Search" placeholder="搜索历史会话" aria-label="搜索历史会话" clearable />
       </div>
-      <div class="session-list" aria-live="polite" :aria-busy="sessionsLoading">
+      <nav class="session-list" aria-label="历史会话" aria-live="polite" :aria-busy="sessionsLoading">
         <div class="session-group">
           <span>最近会话</span>
           <small v-if="sessionSearch">{{ filteredSessions.length }} 个匹配</small>
@@ -46,7 +46,7 @@
               class="session-open"
               type="button"
               :disabled="loading || sessionLoadingId === s.session_id"
-              :aria-pressed="s.session_id === sessionId"
+              :aria-current="s.session_id === sessionId ? 'page' : undefined"
               @click="loadSession(s.session_id)"
             >
               <div class="session-title">{{ s.last_question || '新对话' }}</div>
@@ -58,7 +58,7 @@
             <button
               class="session-delete"
               type="button"
-              aria-label="删除会话"
+              :aria-label="`删除会话：${s.last_question || '新对话'}`"
               title="删除会话"
               :disabled="loading || sessionLoadingId === s.session_id"
               @click.stop="handleDeleteSession(s.session_id)"
@@ -71,11 +71,11 @@
             <span>{{ sessionSearch ? '没有找到匹配会话' : '暂无历史会话' }}</span>
           </div>
         </template>
-      </div>
+      </nav>
       <div class="session-footer">
         <span>历史记录按当前智能体自动保存</span>
       </div>
-    </div>
+    </aside>
 
     <div class="chat-container">
       <div class="workspace-toolbar">
@@ -90,6 +90,7 @@
             style="width: 260px"
             size="small"
             :disabled="loading || agents.length === 0"
+            aria-label="选择验证智能体"
           >
             <el-option v-if="agents.length === 0" label="暂无可用智能体" :value="0" disabled />
             <el-option
@@ -102,17 +103,25 @@
         </div>
       </div>
 
-      <div class="chat-messages" ref="messagesRef" @scroll="handleMessagesScroll">
+      <div
+        class="chat-messages"
+        ref="messagesRef"
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions text"
+        :aria-busy="loading"
+        @scroll="handleMessagesScroll"
+      >
         <div v-if="agentsLoading" class="empty-hint chat-loading-state" aria-live="polite">
           <div class="empty-icon"><el-icon class="is-loading" :size="24"><Loading /></el-icon></div>
           <h3>正在加载可用智能体</h3>
-          <p>正在准备当前工作区的查询权限和语义配置。</p>
+          <p>正在准备当前验证智能体的业务领域和数据权限。</p>
         </div>
 
         <div v-else-if="agentsLoadError" class="empty-hint chat-loading-state" aria-live="assertive">
           <div class="empty-icon error"><el-icon :size="24"><WarningFilled /></el-icon></div>
           <h3>智能体暂时不可用</h3>
-          <p>请确认服务正常后重试，或联系管理员检查工作区权限。</p>
+          <p>请确认服务正常后重试，或联系管理员检查验证客户端与数据权限。</p>
           <el-button type="primary" size="small" :loading="agentsLoading" @click="loadAgents">重新加载</el-button>
         </div>
 
@@ -147,6 +156,7 @@
                   class="analysis-process-toggle"
                   type="button"
                   :aria-expanded="!msg.chainCollapsed"
+                  :aria-controls="`analysis-flow-${msg.id}`"
                   @click="toggleChain(msg.id)"
                 >
                   <el-icon><ArrowRight v-if="msg.chainCollapsed" /><ArrowDown v-else /></el-icon>
@@ -154,7 +164,7 @@
                   <small>{{ processBrief(msg) }}</small>
                 </button>
 
-                <div v-if="isAssistantStreaming(msg) || !msg.chainCollapsed" class="analysis-flow">
+                <div v-if="isAssistantStreaming(msg) || !msg.chainCollapsed" :id="`analysis-flow-${msg.id}`" class="analysis-flow">
                   <section
                     v-for="(step, stepIndex) in narrativeSteps(msg)"
                     :key="`${msg.id}-${step.node}`"
@@ -338,11 +348,17 @@
                   <div class="run-error-suggestion">{{ friendlyErrorSuggestion(msg) }}</div>
                 </div>
                 <div v-if="msg.error?.detail || msg.error?.node" class="run-error-detail-panel">
-                  <button class="detail-toggle" type="button" @click="toggleErrorDetail(msg.id)">
+                  <button
+                    class="detail-toggle"
+                    type="button"
+                    :aria-expanded="Boolean(msg.showErrorDetail)"
+                    :aria-controls="`error-detail-${msg.id}`"
+                    @click="toggleErrorDetail(msg.id)"
+                  >
                     <el-icon><ArrowRight v-if="!msg.showErrorDetail" /><ArrowDown v-else /></el-icon>
                     <span>{{ msg.showErrorDetail ? '收起技术明细' : '查看技术明细' }}</span>
                   </button>
-                  <div v-if="msg.showErrorDetail" class="run-error-detail">
+                  <div v-if="msg.showErrorDetail" :id="`error-detail-${msg.id}`" class="run-error-detail">
                     <div><strong>出错阶段：</strong>{{ errorStageText(msg) }}</div>
                     <div v-if="msg.error?.node"><strong>节点标识：</strong>{{ msg.error.node }}</div>
                     <div v-if="msg.error?.detail"><strong>技术明细：</strong>{{ msg.error.detail }}</div>
@@ -525,6 +541,7 @@
                         v-if="isLongCellValue(row[col], col)"
                         class="result-cell-button"
                         type="button"
+                        :aria-label="`查看${columnTitle(col)}完整内容`"
                         @click="previewCellValue(col, row[col])"
                       >
                         {{ renderCellText(col, row[col]) }}
@@ -551,8 +568,10 @@
 
       <div class="query-composer">
           <el-input
+            ref="composerInput"
             v-model="inputText"
             type="textarea"
+            aria-label="输入查询问题"
             :placeholder="hasSelectedAgent ? '输入你的问题，支持自然语言查询数据...' : '请先选择可用智能体'"
             :autosize="{ minRows: 2, maxRows: 4 }"
             :disabled="loading || !hasSelectedAgent"
@@ -640,6 +659,7 @@
                 collapse-tags
                 collapse-tags-tooltip
                 placeholder="选择展示列"
+                aria-label="选择结果展示列"
               >
                 <el-option
                   v-for="col in latestColumns"
@@ -669,6 +689,7 @@
                     v-if="isLongCellValue(row[col], col)"
                     class="result-cell-button"
                     type="button"
+                    :aria-label="`查看${columnTitle(col)}完整内容`"
                     @click="previewCellValue(col, row[col])"
                   >
                     {{ renderCellText(col, row[col]) }}
@@ -757,6 +778,7 @@
       :close-on-click-modal="!riskSubmitting"
       :close-on-press-escape="!riskSubmitting"
       :show-close="!riskSubmitting"
+      @opened="focusRiskTitle"
       @closed="resetRiskIssueDialog"
     >
       <el-alert
@@ -775,7 +797,7 @@
       >
         <div class="risk-form-grid">
           <el-form-item label="风险事项标题" prop="title" class="risk-form-wide">
-            <el-input v-model="riskForm.title" maxlength="256" show-word-limit />
+            <el-input ref="riskTitleInput" v-model="riskForm.title" maxlength="256" show-word-limit />
           </el-form-item>
           <el-form-item label="事项标识" prop="issue_key">
             <el-input v-model="riskForm.issue_key" maxlength="128" />
@@ -1046,6 +1068,7 @@ const sessionsLoadError = ref(false)
 const sessionLoadingId = ref('')
 const sessionId = ref<string>('')
 const messagesRef = ref<HTMLElement>()
+const composerInput = ref<{ focus: () => void }>()
 const semanticLabels = ref<Record<string, string>>({})
 const semanticExampleQueries = ref<string[]>([])
 const semanticHint = ref('')
@@ -1057,6 +1080,7 @@ const cellDetailTitle = ref('')
 const cellDetailValue = ref('')
 const showRiskIssueDialog = ref(false)
 const riskFormRef = ref<FormInstance>()
+const riskTitleInput = ref<{ focus: () => void }>()
 const riskSubmitting = ref(false)
 const riskObjectLoading = ref(false)
 const riskObjects = ref<OntologyObject[]>([])
@@ -1332,7 +1356,7 @@ async function loadSemanticLabels() {
     const assets = await fetchSemanticAssets(domain.id)
     semanticLabels.value = buildSemanticLabels(assets)
     semanticExampleQueries.value = buildSemanticExamples(assets)
-    semanticHint.value = domain.description || `${domain.name} 语义层已启用。`
+    semanticHint.value = domain.description || `${domain.name} 业务领域已启用。`
   } catch {
     semanticLabels.value = {}
     semanticExampleQueries.value = []
@@ -1377,13 +1401,23 @@ function resetConversation() {
   streamState.value = createChatStreamState()
 }
 
+function focusComposer() {
+  nextTick(() => composerInput.value?.focus())
+}
+
+function focusRiskTitle() {
+  requestAnimationFrame(() => riskTitleInput.value?.focus())
+}
+
 function newSession() {
   cancelActiveStream()
   resetConversation()
+  focusComposer()
 }
 
 function useQuickQuery(query: string) {
   inputText.value = query
+  focusComposer()
 }
 
 async function copyLatestSql() {
@@ -1459,6 +1493,7 @@ async function loadSession(sid: string) {
       messages: history.map((item, index) => historyToMessage(item, sid, index)),
     }
     scrollToBottom()
+    focusComposer()
   } catch {
     ElMessage.error('会话加载失败，请稍后重试')
   } finally {
@@ -1888,7 +1923,7 @@ function stepLeadLine(step: ChatReasoningStep) {
     return step.summary
   }
   if (step.node === 'nl2sql_fallback') {
-    if (getOutputString(output, 'compiled_sql')) return '语义层未命中，已使用数据定位上下文生成兜底 SQL'
+    if (getOutputString(output, 'compiled_sql')) return '企业模型语义未命中，已使用数据定位上下文生成兜底 SQL'
     if (getOutputString(output, 'error')) return `兜底生成失败：${getOutputString(output, 'error')}`
     return step.summary
   }
@@ -3101,7 +3136,7 @@ function friendlyErrorSummary(message: ChatMessage) {
 
 function friendlyErrorSuggestion(message: ChatMessage) {
   const raw = `${message.error?.message || ''} ${message.error?.detail || ''}`.trim()
-  if (/不支持维度/.test(raw)) return '建议更换一个支持的维度，或到语义层里为该指标补充可切维度配置。'
+  if (/不支持维度/.test(raw)) return '建议更换一个支持的维度，或到企业模型的“语义与数据”中补充可切维度配置。'
   if (/时间字段|time_field|时间口径/.test(raw)) return '建议检查指标默认时间字段、映射层时间字段，以及问题里引用的时间口径是否一致。'
   if (/SQL为空/.test(raw)) return '建议先查看分析链路里的 LogicForm 与校验结果，确认指标、维度和规则是否能成功编译。'
   if (/sql/i.test(raw) && /执行|失败|error|异常/.test(raw)) return '建议优先检查生成 SQL、表字段映射和数据源表结构是否一致。'
@@ -3405,7 +3440,7 @@ onUnmounted(() => {
   bottom: 104px;
   z-index: 5;
   padding: 7px 12px;
-  border: 1px solid #c7d7fe;
+  border: 1px solid #7489ca;
   border-radius: 999px;
   background: #fff;
   color: var(--wq-primary);
@@ -3759,7 +3794,7 @@ onUnmounted(() => {
   display: grid;
   place-items: center;
   border-radius: 8px;
-  color: #079455;
+  color: #067647;
   background: #ecfdf3;
   border: 1px solid #abefc6;
 }
@@ -3822,7 +3857,7 @@ onUnmounted(() => {
 
 .answer-kpi code {
   margin-top: 5px;
-  color: #98a2b3;
+  color: var(--wq-subtle);
   font-size: 11px;
   font-family: "SFMono-Regular", Consolas, monospace;
 }
@@ -3843,7 +3878,7 @@ onUnmounted(() => {
 
 .asset-chip {
   min-width: 0;
-  border: 1px solid var(--wq-border);
+  border: 1px solid var(--wq-border-strong);
   border-radius: 8px;
   background: #fbfcff;
   padding: 10px 12px;
@@ -3852,7 +3887,7 @@ onUnmounted(() => {
 }
 
 .asset-chip:hover {
-  border-color: #b9c8ff;
+  border-color: #7489ca;
   background: var(--wq-primary-soft);
 }
 
@@ -3977,7 +4012,7 @@ onUnmounted(() => {
 }
 
 .column-heading small {
-  color: #98a2b3;
+  color: var(--wq-subtle);
   font-size: 11px;
   font-weight: 400;
   letter-spacing: 0;
@@ -3991,7 +4026,7 @@ onUnmounted(() => {
 }
 
 .query-composer {
-  border: 1px solid #b9c8ff;
+  border: 1px solid #7489ca;
   border-radius: 8px;
   padding: 10px;
   background: #fff;
@@ -4038,7 +4073,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid #dbe6f5;
+  border: 1px solid var(--wq-border-strong);
   border-radius: 8px;
   padding: 10px 12px;
   background: #fff;
@@ -4049,7 +4084,7 @@ onUnmounted(() => {
 }
 
 .analysis-process-toggle:hover {
-  border-color: #b9c8ff;
+  border-color: #7489ca;
   background: #f8fbff;
 }
 
@@ -4112,7 +4147,7 @@ onUnmounted(() => {
 .analysis-step.done .analysis-step-number,
 .analysis-step.done .analysis-step-icon {
   background: #ecfdf3;
-  color: #079455;
+  color: #067647;
 }
 
 .analysis-step-state {
@@ -4259,7 +4294,7 @@ onUnmounted(() => {
 
 .analysis-table th small {
   margin-top: 2px;
-  color: #98a2b3;
+  color: var(--wq-subtle);
   font-weight: 400;
 }
 
@@ -5142,7 +5177,7 @@ onUnmounted(() => {
 .session-sidebar,
 .insight-panel {
   background: var(--chat-soft);
-  border-color: var(--wq-border);
+  border-color: var(--wq-border-strong);
 }
 
 .sidebar-header {
@@ -5153,7 +5188,7 @@ onUnmounted(() => {
 .sidebar-header :deep(.el-button) {
   min-width: 34px;
   min-height: 34px;
-  border-color: var(--wq-border);
+  border-color: var(--wq-border-strong);
   background: var(--chat-raised);
   color: var(--wq-muted);
   box-shadow: none;
@@ -5197,7 +5232,7 @@ onUnmounted(() => {
 .workspace-toolbar :deep(.el-select__wrapper) {
   min-height: 34px;
   background: var(--chat-raised);
-  box-shadow: 0 0 0 1px var(--wq-border) inset;
+  box-shadow: 0 0 0 1px var(--wq-border-strong) inset;
 }
 
 .session-search :deep(.el-input__wrapper.is-focus),
@@ -5331,7 +5366,7 @@ onUnmounted(() => {
 .jump-latest-button {
   right: 26px;
   bottom: 108px;
-  border-color: var(--wq-border);
+  border-color: var(--wq-border-strong);
   border-radius: 999px;
   background: var(--chat-raised);
   color: var(--wq-primary);
@@ -5381,7 +5416,7 @@ onUnmounted(() => {
 .quick-query-list :deep(.el-button) {
   min-height: 32px;
   margin: 0;
-  border-color: var(--wq-border);
+  border-color: var(--wq-border-strong);
   background: var(--chat-raised);
   color: var(--wq-muted);
   font-size: 13px;
@@ -5613,7 +5648,7 @@ onUnmounted(() => {
 }
 
 .asset-chip {
-  border-color: var(--wq-border);
+  border-color: var(--wq-border-strong);
   border-radius: calc(var(--chat-radius) - 1px);
   background: var(--chat-soft);
 }
@@ -5678,7 +5713,7 @@ onUnmounted(() => {
 
 .analysis-process-toggle {
   padding: 10px 12px;
-  border-color: var(--wq-border);
+  border-color: var(--wq-border-strong);
   background: var(--chat-soft);
   color: var(--wq-text);
   box-shadow: none;
@@ -5769,7 +5804,7 @@ onUnmounted(() => {
 }
 
 .query-composer {
-  border-color: var(--wq-border);
+  border-color: var(--wq-border-strong);
   border-radius: var(--chat-radius);
   background: var(--chat-surface);
   box-shadow: 0 4px 18px rgba(16, 24, 40, 0.06);
@@ -5846,7 +5881,7 @@ onUnmounted(() => {
 .panel-actions :deep(.el-button),
 .result-column-tools :deep(.el-button),
 .empty-result-card :deep(.el-button) {
-  border-color: var(--wq-border);
+  border-color: var(--wq-border-strong);
   background: var(--chat-raised);
   color: var(--wq-muted);
 }
@@ -5896,7 +5931,7 @@ onUnmounted(() => {
 
 .result-column-tools :deep(.el-select__wrapper) {
   background: var(--chat-raised);
-  box-shadow: 0 0 0 1px var(--wq-border) inset;
+  box-shadow: 0 0 0 1px var(--wq-border-strong) inset;
 }
 
 .result-grid,
@@ -6187,7 +6222,7 @@ onUnmounted(() => {
   content: '技术追溯';
   display: block;
   margin: -2px 0 9px;
-  color: #98a2b3;
+  color: var(--wq-subtle);
   font-size: 11px;
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }

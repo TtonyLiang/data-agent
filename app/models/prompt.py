@@ -27,8 +27,12 @@ class PromptTemplateBase(BaseModel):
     name: str = Field(description="模板展示名称")
     description: str | None = Field(default=None, description="模板说明")
     agent_id: int | None = Field(default=None, description="适用智能体;为空表示对所有 agent 生效")
-    model_config_id: int | None = Field(default=None, description="适用模型配置;为空表示对所有模型生效")
-    semantic_domain_id: int | None = Field(default=None, description="适用语义层;为空表示对所有语义层生效")
+    model_config_id: int | None = Field(
+        default=None, description="适用模型配置;为空表示对所有模型生效"
+    )
+    semantic_domain_id: int | None = Field(
+        default=None, description="适用语义层;为空表示对所有语义层生效"
+    )
     template_text: str = Field(description="模板正文,支持 {variable} 占位符")
     status: str = Field(default="active", description="状态:active/disabled")
 

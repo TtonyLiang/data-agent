@@ -71,3 +71,60 @@ async def test_get_datasource_db_serializes_concurrent_initialization(monkeypatc
     assert created == 1
     mysql._datasource_dbs.clear()
     mysql._datasource_locks.clear()
+
+
+@pytest.mark.asyncio
+async def test_get_datasource_db_rejects_inactive_datasource(monkeypatch):
+    class FakeDatasourceService:
+        async def get(self, _datasource_id):
+            return type(
+                "Datasource",
+                (),
+                {
+                    "status": "inactive",
+                    "db_type": "mysql",
+                    "username": "u",
+                    "password": "p",
+                    "host": "h",
+                    "port": 3306,
+                    "database_name": "d",
+                },
+            )()
+
+    monkeypatch.setattr(
+        "app.services.datasource_service.get_datasource_service",
+        lambda: FakeDatasourceService(),
+    )
+    mysql._datasource_dbs.clear()
+    mysql._datasource_locks.clear()
+
+    with pytest.raises(ValueError, match="数据源已停用"):
+        await mysql.get_datasource_db(7)
+
+
+@pytest.mark.asyncio
+async def test_close_database_clients_disposes_and_resets_singletons():
+    class FakeClient:
+        def __init__(self):
+            self.closed = 0
+
+        async def close(self):
+            self.closed += 1
+
+    management = FakeClient()
+    business = FakeClient()
+    datasource = FakeClient()
+    mysql._management_db = management
+    mysql._business_db = business
+    mysql._datasource_dbs[7] = datasource
+    mysql._datasource_locks[7] = asyncio.Lock()
+
+    await mysql.close_database_clients()
+
+    assert management.closed == 1
+    assert business.closed == 1
+    assert datasource.closed == 1
+    assert mysql._management_db is None
+    assert mysql._business_db is None
+    assert mysql._datasource_dbs == {}
+    assert mysql._datasource_locks == {}

@@ -7,7 +7,6 @@ from app.api import feedback as feedback_api
 from app.models.feedback import FeedbackCreate
 from app.models.user import PublicUser
 
-
 ADMIN_USER = PublicUser(id=1, username="admin", role="admin", status="active")
 
 

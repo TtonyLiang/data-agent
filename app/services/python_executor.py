@@ -384,24 +384,34 @@ def build_python_executor() -> PythonExecutor:
             raise PythonExecutionError(
                 "生产环境禁止使用本地 Python 执行器，请配置 worker/container 后端。"
             )
-        logger.info("python executor backend=local timeout=%ss memory=%smb",
-                     settings.python_executor_timeout_seconds, settings.python_executor_memory_mb)
+        logger.info(
+            "python executor backend=local timeout=%ss memory=%smb",
+            settings.python_executor_timeout_seconds,
+            settings.python_executor_memory_mb,
+        )
         return RestrictedLocalPythonExecutor(
             timeout_seconds=settings.python_executor_timeout_seconds,
             memory_mb=settings.python_executor_memory_mb,
         )
 
     if backend == "worker":
-        logger.info("python executor backend=worker url=%s timeout=%ss",
-                     settings.python_worker_url, settings.python_executor_timeout_seconds)
+        logger.info(
+            "python executor backend=worker url=%s timeout=%ss",
+            settings.python_worker_url,
+            settings.python_executor_timeout_seconds,
+        )
         return WorkerPythonExecutor(
             settings.python_worker_url,
             timeout_seconds=settings.python_executor_timeout_seconds,
         )
 
     if backend in {"docker", "containerd", "firecracker", "container"}:
-        logger.info("python executor backend=%s image=%s timeout=%ss",
-                     backend, settings.python_container_image, settings.python_executor_timeout_seconds)
+        logger.info(
+            "python executor backend=%s image=%s timeout=%ss",
+            backend,
+            settings.python_container_image,
+            settings.python_executor_timeout_seconds,
+        )
         return HighIsolationPythonExecutor(
             backend,
             image=settings.python_container_image,

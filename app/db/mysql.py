@@ -316,6 +316,8 @@ async def get_datasource_db(datasource_id: int) -> MySQLClient:
         ds = await get_datasource_service().get(datasource_id)
         if ds is None:
             raise ValueError(f"数据源不存在: {datasource_id}")
+        if str(getattr(ds, "status", "active") or "active").lower() != "active":
+            raise ValueError(f"数据源已停用: {datasource_id}")
         if ds.db_type.lower() != "mysql":
             raise ValueError(f"暂不支持的数据源类型: {ds.db_type}")
         logger.info(
@@ -351,6 +353,27 @@ async def invalidate_datasource_db(datasource_id: int):
     if client is not None:
         await client.close()
     _datasource_locks.pop(datasource_id, None)
+
+
+async def close_database_clients() -> None:
+    """Dispose every process-level database client during application shutdown."""
+    global _business_db, _management_db
+    clients = [
+        client
+        for client in [_business_db, _management_db, *_datasource_dbs.values()]
+        if client is not None
+    ]
+    _business_db = None
+    _management_db = None
+    _datasource_dbs.clear()
+    _datasource_locks.clear()
+    seen: set[int] = set()
+    for client in clients:
+        identity = id(client)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        await client.close()
 
 
 def redact_db_url(db_url: str) -> str:

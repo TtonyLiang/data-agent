@@ -8,6 +8,7 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import text
 
 from app.api.deps import get_current_user, require_admin
 from app.db.mysql import get_management_db
@@ -185,11 +186,38 @@ async def delete_agent(agent_id: int):
         ("DELETE FROM user_feedback WHERE agent_id = :id", {"id": agent_id}),
         ("DELETE FROM agent WHERE id = :id", {"id": agent_id}),
     ]
-    if hasattr(db, "execute_transaction"):
-        await db.execute_transaction(statements)
-    else:
+
+    async def callback(session):
+        target = await session.execute(
+            text("SELECT id FROM agent WHERE id = :id FOR UPDATE"),
+            {"id": agent_id},
+        )
+        if target.mappings().first() is None:
+            return False
+
+        active_grants = await session.execute(
+            text(
+                "SELECT id, client_id, domain_id, capability_key FROM capability_grant "
+                "WHERE execution_agent_id = :id AND status = 'active' LIMIT 1 FOR UPDATE"
+            ),
+            {"id": agent_id},
+        )
+        grant = active_grants.mappings().first()
+        if grant is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "该验证智能体仍被外部能力授权使用："
+                    f"{grant.get('capability_key')}（领域 {grant.get('domain_id')}）。"
+                    "请先迁移或撤销能力授权"
+                ),
+            )
+
         for sql, params in statements:
-            await db.execute_query(sql, params)
+            await session.execute(text(sql), params)
+        return True
+
+    await db.execute_in_transaction(callback)
 
     logger.info("agent delete id=%s domain_assets_preserved=true", agent_id)
     return {"message": "删除成功"}

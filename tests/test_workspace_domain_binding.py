@@ -132,15 +132,11 @@ async def test_agent_domain_binding_api_exposes_stable_contract(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_runtime_build_resolves_agent_from_domain_server_side(monkeypatch):
+async def test_runtime_build_by_domain_does_not_require_agent(monkeypatch):
     class SemanticService:
         def __init__(self):
             self.resolve_calls = []
             self.build_calls = []
-
-        async def resolve_domain_agent(self, domain_id, preferred_agent_id):
-            self.resolve_calls.append((domain_id, preferred_agent_id))
-            return 4
 
         async def build_runtime(self, **kwargs):
             self.build_calls.append(kwargs)
@@ -160,9 +156,58 @@ async def test_runtime_build_resolves_agent_from_domain_server_side(monkeypatch)
 
     response = await semantic_api.build_runtime({"domain_id": 7}, admin)
 
-    assert service.resolve_calls == [(7, None)]
-    assert service.build_calls[0]["agent_id"] == 4
+    assert service.resolve_calls == []
+    assert service.build_calls[0]["agent_id"] is None
     assert response["runtime"]["domain"]["id"] == 7
+
+
+@pytest.mark.asyncio
+async def test_vector_sync_without_agent_keeps_model_build_available(monkeypatch):
+    domain = SemanticDomain(
+        id=7,
+        workspace_id=1,
+        agent_id=None,
+        datasource_id=42,
+        domain_key="loan_risk",
+        name="贷款风控",
+    )
+    runtime = SemanticRuntime(
+        domain=domain,
+        concepts=[
+            SemanticConcept(
+                id=11,
+                domain_id=7,
+                concept_key="customer",
+                concept_type="object",
+                name="客户",
+            )
+        ],
+    )
+
+    class SemanticService:
+        async def get_domain(self, _domain_id):
+            return domain
+
+        async def get_domain_agent_ids(self, _domain_id):
+            return []
+
+        async def build_runtime(self, **kwargs):
+            assert kwargs["agent_id"] is None
+            return runtime
+
+    monkeypatch.setattr(
+        semantic_api,
+        "get_semantic_runtime_service",
+        lambda: SemanticService(),
+    )
+    admin = PublicUser(id=1, username="admin", role="admin", status="active")
+
+    response = await semantic_api.sync_domain_to_vector(7, admin)
+
+    assert response["skipped"] is True
+    assert response["asset_count"] == 1
+    assert response["agent_ids"] == []
+    assert "没有验证智能体" in response["message"]
 
 
 @pytest.mark.asyncio
@@ -278,12 +323,42 @@ async def test_repeated_domain_upsert_uses_workspace_unique_atomic_statement(mon
     assert all("ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)" in sql for sql in domain_inserts)
 
 
+class DeleteAgentResult:
+    def __init__(self, rows=None):
+        self.rows = rows or []
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self.rows[0] if self.rows else None
+
+
 class DeleteAgentDB:
     def __init__(self):
         self.statements: list[tuple[str, dict | None]] = []
+        self.transaction_queries: list[tuple[str, dict | None]] = []
+        self.transaction_calls = 0
 
     async def execute_transaction(self, statements):
         self.statements = list(statements)
+
+    async def execute_query(self, sql, params=None):
+        if sql.startswith("SELECT id FROM agent WHERE"):
+            return [{"id": params["id"]}]
+        return []
+
+    async def execute_in_transaction(self, callback):
+        self.transaction_calls += 1
+        return await callback(self)
+
+    async def execute(self, statement, params=None):
+        sql = str(statement)
+        self.transaction_queries.append((sql, params))
+        rows = await self.execute_query(sql, params)
+        if not sql.startswith("SELECT"):
+            self.statements.append((sql, params))
+        return DeleteAgentResult(rows)
 
 
 @pytest.mark.asyncio
@@ -295,12 +370,46 @@ async def test_delete_agent_preserves_enterprise_domain_and_ontology(monkeypatch
 
     sql = [statement for statement, _ in db.statements]
     assert result["message"] == "删除成功"
+    assert db.transaction_calls == 1
+    assert db.transaction_queries[0][0] == "SELECT id FROM agent WHERE id = :id FOR UPDATE"
+    assert "FOR UPDATE" in db.transaction_queries[1][0]
     assert "UPDATE semantic_domain SET agent_id = NULL WHERE agent_id = :id" in sql
     assert "DELETE FROM agent_semantic_domain WHERE agent_id = :id" in sql
     assert "DELETE FROM agent WHERE id = :id" == sql[-1]
     assert not any(statement.startswith("DELETE FROM semantic_domain") for statement in sql)
     assert not any("ontology_" in statement for statement in sql)
     assert not any("risk_issue" in statement for statement in sql)
+
+
+@pytest.mark.asyncio
+async def test_delete_agent_is_blocked_by_active_external_capability_grant(monkeypatch):
+    class ActiveGrantDB(DeleteAgentDB):
+        async def execute_query(self, sql, params=None):
+            if "FROM capability_grant" in sql:
+                return [
+                    {
+                        "id": 12,
+                        "client_id": 8,
+                        "domain_id": 5,
+                        "capability_key": "query_loan_application",
+                    }
+                ]
+            return await super().execute_query(sql, params)
+
+    db = ActiveGrantDB()
+    monkeypatch.setattr(agent_api, "get_management_db", lambda: db)
+
+    with pytest.raises(agent_api.HTTPException) as exc_info:
+        await agent_api.delete_agent(4)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == (
+        "该验证智能体仍被外部能力授权使用：query_loan_application（领域 5）。"
+        "请先迁移或撤销能力授权"
+    )
+    assert db.transaction_calls == 1
+    assert all("FOR UPDATE" in sql for sql, _ in db.transaction_queries[:2])
+    assert db.statements == []
 
 
 class MigrationDB:

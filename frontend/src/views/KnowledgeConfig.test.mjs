@@ -4,6 +4,16 @@ import { readFileSync } from 'node:fs'
 const source = readFileSync(new URL('./KnowledgeConfig.vue', import.meta.url), 'utf8')
 
 assert.ok(
+  source.includes('defineProps') &&
+    source.includes('domainId: number | null') &&
+    source.includes("(event: 'domain-updated')") &&
+    !source.includes('openCreateDomain') &&
+    !source.includes('upsertSemanticDomain') &&
+    !source.includes('v-model="domainId"'),
+  'semantic configuration should consume the enterprise-model domain instead of owning domain CRUD',
+)
+
+assert.ok(
   !source.includes('_labelMap') && !source.includes('loan_application_indicator:'),
   'KnowledgeConfig should not carry hidden credit-domain label maps',
 )

@@ -210,7 +210,7 @@
 .el-input__wrapper:hover,
 .el-select__wrapper:hover,
 .el-textarea__inner:hover {
-  box-shadow: 0 0 0 1px #98a2b3 inset !important;
+  box-shadow: 0 0 0 1px var(--wq-subtle) inset !important;
 }
 
 .el-input__wrapper.is-focus,
@@ -236,6 +236,15 @@
   color: #344054 !important;
   font-size: 14px !important;
   font-weight: 600;
+}
+
+.el-checkbox__inner,
+.el-radio__inner {
+  border-color: var(--wq-border-strong) !important;
+}
+
+.el-switch {
+  --el-switch-off-color: var(--wq-border-strong);
 }
 
 .el-tabs__nav-wrap::after,
@@ -406,7 +415,7 @@ button:focus-visible {
 
 .el-scrollbar__bar.is-vertical > div,
 .el-scrollbar__bar.is-horizontal > div {
-  background-color: #98a2b3;
+  background-color: var(--wq-border-strong);
 }
 
 @media (max-width: 720px) {

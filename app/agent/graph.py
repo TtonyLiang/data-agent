@@ -53,6 +53,7 @@ class AgentState(TypedDict, total=False):
     lf_validation: dict[str, Any]
     compiled_query: dict[str, Any]
     compiled_sql: str
+    sql_params: dict[str, Any]
     execution_trace: dict[str, Any]
     nl2sql_fallback_error: str | None
 

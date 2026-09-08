@@ -129,6 +129,15 @@ def test_semantic_runtime_recall_prefers_agent_bound_domain(monkeypatch):
     calls = []
 
     class FakeService:
+        async def get_domain(self, _domain_id):
+            return SemanticDomain(
+                id=77,
+                agent_id=7,
+                datasource_id=42,
+                domain_key="custom_loan",
+                name="自定义贷款语义层",
+            )
+
         async def get_agent_bound_domain(self, agent_id):
             return SemanticDomain(
                 id=77,
@@ -210,7 +219,8 @@ def test_m1_plus_cash_loan_logic_form_compiles_to_joined_sql():
         item.model_dump() for item in logic_form.filters
     ]
     assert "JOIN `loan_account_indicator`" in compiled.sql
-    assert "`product_type` = '现金贷'" in compiled.sql
+    assert "`product_type` = :lf_0" in compiled.sql
+    assert compiled.sql_params == {"lf_0": "现金贷"}
     assert "DATE_FORMAT(CURRENT_DATE" in compiled.sql
     assert "overdue_bucket" in compiled.sql
 
@@ -243,6 +253,29 @@ def test_pd_logic_form_allows_vintage_dimension():
     assert validation.valid
     assert "指标 pd 不支持维度: vintage" not in validation.errors
     assert "`disburse_month` AS `vintage`" in compiled.sql
+
+
+def test_logic_form_filter_values_are_bound_instead_of_interpolated():
+    runtime = build_runtime()
+    svc = SemanticRuntimeService()
+    malicious_value = "\\' OR 1=1 #"
+    logic_form = LogicForm(
+        metrics=["application_count"],
+        filters=[
+            {
+                "field": "application_product_type",
+                "operator": "=",
+                "value": malicious_value,
+            }
+        ],
+    )
+
+    compiled = svc.compile_logic_form(logic_form, runtime)
+
+    assert malicious_value not in compiled.sql
+    assert ":lf_0" in compiled.sql
+    assert compiled.sql_params == {"lf_0": malicious_value}
+    assert "sql_params" not in compiled.model_dump()
 
 
 def test_build_runtime_context_includes_relevant_columns():
@@ -669,7 +702,8 @@ def test_high_pd_balance_and_overdue_query_compiles_cross_table_metrics():
     assert "loan_application_indicator" in compiled.sql
     assert "loan_account_indicator" in compiled.sql
     assert "loan_repayment_period_indicator" in compiled.sql
-    assert "`risk_grade_at_origination` = 'D'" in compiled.sql
+    assert "`risk_grade_at_origination` = :lf_0" in compiled.sql
+    assert compiled.sql_params == {"lf_0": "D", "lf_1": "D", "lf_2": "D"}
     assert "AS `pd`" in compiled.sql
     assert "AS `outstanding_balance`" in compiled.sql
     assert "AS `m1_plus_rate`" in compiled.sql

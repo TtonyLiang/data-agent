@@ -12,6 +12,7 @@
           </div>
         </div>
         <el-menu
+          ref="mainMenu"
           class="top-nav"
           :default-active="route.path"
           router
@@ -19,46 +20,127 @@
           :ellipsis="true"
           aria-label="主导航"
         >
-          <el-menu-item index="/" :disabled="isNavigationDisabled('/')">
-            <el-icon><ChatDotRound /></el-icon>
-            <span>对话</span>
-          </el-menu-item>
-          <el-menu-item v-if="isAuthenticatedUser" index="/enterprise-model" :disabled="isNavigationDisabled('/enterprise-model')">
+          <el-menu-item
+            v-if="isAuthenticatedUser"
+            index="/enterprise-model"
+            :disabled="isNavigationDisabled('/enterprise-model')"
+            :tabindex="isNavigationDisabled('/enterprise-model') ? -1 : 0"
+            :aria-current="route.path === '/enterprise-model' ? 'page' : undefined"
+            @keydown.enter.prevent.stop="activateRoute('/enterprise-model')" @keydown.space.prevent.stop="activateRoute('/enterprise-model')"
+          >
             <el-icon><Share /></el-icon>
             <span>企业模型</span>
           </el-menu-item>
-          <el-menu-item v-if="isAuthenticatedUser" index="/twin-runtime" :disabled="isNavigationDisabled('/twin-runtime')">
+          <el-menu-item
+            v-if="isAuthenticatedUser"
+            index="/twin-runtime"
+            :disabled="isNavigationDisabled('/twin-runtime')"
+            :tabindex="isNavigationDisabled('/twin-runtime') ? -1 : 0"
+            :aria-current="route.path === '/twin-runtime' ? 'page' : undefined"
+            @keydown.enter.prevent.stop="activateRoute('/twin-runtime')" @keydown.space.prevent.stop="activateRoute('/twin-runtime')"
+          >
             <el-icon><DataBoard /></el-icon>
             <span>孪生运行</span>
           </el-menu-item>
-          <el-menu-item v-if="isAuthenticatedUser" index="/capability-center" :disabled="isNavigationDisabled('/capability-center')">
+          <el-menu-item
+            v-if="isAuthenticatedUser"
+            index="/capability-center"
+            :disabled="isNavigationDisabled('/capability-center')"
+            :tabindex="isNavigationDisabled('/capability-center') ? -1 : 0"
+            :aria-current="route.path === '/capability-center' ? 'page' : undefined"
+            @keydown.enter.prevent.stop="activateRoute('/capability-center')" @keydown.space.prevent.stop="activateRoute('/capability-center')"
+          >
             <el-icon><Connection /></el-icon>
             <span>能力发布</span>
           </el-menu-item>
-          <el-menu-item v-if="isAuthenticatedUser" index="/risk-delivery" :disabled="isNavigationDisabled('/risk-delivery')">
-            <el-icon><WarningFilled /></el-icon>
-            <span>风险交付</span>
-          </el-menu-item>
-          <el-menu-item v-if="isAdminUser" index="/agent" :disabled="isNavigationDisabled('/agent')">
-            <el-icon><User /></el-icon>
-            <span>调试与验证智能体</span>
-          </el-menu-item>
-          <el-menu-item v-if="isAdminUser" index="/datasource" :disabled="isNavigationDisabled('/datasource')">
-            <el-icon><Coin /></el-icon>
-            <span>数据源</span>
-          </el-menu-item>
-          <el-menu-item v-if="isAdminUser" index="/model-config" :disabled="isNavigationDisabled('/model-config')">
-            <el-icon><Setting /></el-icon>
-            <span>模型配置</span>
-          </el-menu-item>
-          <el-menu-item v-if="isAdminUser" index="/system-parameter" :disabled="isNavigationDisabled('/system-parameter')">
-            <el-icon><Setting /></el-icon>
-            <span>系统参数</span>
-          </el-menu-item>
+          <el-sub-menu
+            v-if="isAuthenticatedUser"
+            index="validation-apps"
+            tabindex="0"
+            aria-label="验证应用"
+            @keydown.enter.prevent.stop="openSubmenu('validation-apps')" @keydown.space.prevent.stop="openSubmenu('validation-apps')"
+          >
+            <template #title>
+              <el-icon><ChatDotRound /></el-icon>
+              <span>验证应用</span>
+            </template>
+            <el-menu-item
+              class="validation-menu-item"
+              index="/"
+              :disabled="isNavigationDisabled('/')"
+              :tabindex="isNavigationDisabled('/') ? -1 : 0"
+              @keydown.enter.prevent.stop="activateRoute('/')" @keydown.space.prevent.stop="activateRoute('/')"
+            >
+              <el-icon><ChatDotRound /></el-icon>
+              <span>对话验证</span>
+            </el-menu-item>
+            <el-menu-item
+              class="validation-menu-item"
+              index="/risk-delivery"
+              :disabled="isNavigationDisabled('/risk-delivery')"
+              :tabindex="isNavigationDisabled('/risk-delivery') ? -1 : 0"
+              @keydown.enter.prevent.stop="activateRoute('/risk-delivery')" @keydown.space.prevent.stop="activateRoute('/risk-delivery')"
+            >
+              <el-icon><WarningFilled /></el-icon>
+              <span>风险交付验证</span>
+            </el-menu-item>
+          </el-sub-menu>
+          <el-sub-menu
+            v-if="isAdminUser"
+            index="platform-management"
+            tabindex="0"
+            aria-label="平台管理"
+            @keydown.enter.prevent.stop="openSubmenu('platform-management')" @keydown.space.prevent.stop="openSubmenu('platform-management')"
+          >
+            <template #title>
+              <el-icon><Setting /></el-icon>
+              <span>平台管理</span>
+            </template>
+            <el-menu-item
+              class="platform-menu-item"
+              index="/datasource"
+              :disabled="isNavigationDisabled('/datasource')"
+              :tabindex="isNavigationDisabled('/datasource') ? -1 : 0"
+              @keydown.enter.prevent.stop="activateRoute('/datasource')" @keydown.space.prevent.stop="activateRoute('/datasource')"
+            >
+              <el-icon><Coin /></el-icon>
+              <span>数据源</span>
+            </el-menu-item>
+            <el-menu-item
+              class="platform-menu-item"
+              index="/agent"
+              :disabled="isNavigationDisabled('/agent')"
+              :tabindex="isNavigationDisabled('/agent') ? -1 : 0"
+              @keydown.enter.prevent.stop="activateRoute('/agent')" @keydown.space.prevent.stop="activateRoute('/agent')"
+            >
+              <el-icon><User /></el-icon>
+              <span>调试与验证智能体</span>
+            </el-menu-item>
+            <el-menu-item
+              class="platform-menu-item"
+              index="/model-config"
+              :disabled="isNavigationDisabled('/model-config')"
+              :tabindex="isNavigationDisabled('/model-config') ? -1 : 0"
+              @keydown.enter.prevent.stop="activateRoute('/model-config')" @keydown.space.prevent.stop="activateRoute('/model-config')"
+            >
+              <el-icon><Setting /></el-icon>
+              <span>模型配置</span>
+            </el-menu-item>
+            <el-menu-item
+              class="platform-menu-item"
+              index="/system-parameter"
+              :disabled="isNavigationDisabled('/system-parameter')"
+              :tabindex="isNavigationDisabled('/system-parameter') ? -1 : 0"
+              @keydown.enter.prevent.stop="activateRoute('/system-parameter')" @keydown.space.prevent.stop="activateRoute('/system-parameter')"
+            >
+              <el-icon><Setting /></el-icon>
+              <span>系统参数</span>
+            </el-menu-item>
+          </el-sub-menu>
         </el-menu>
         <div class="header-tools" aria-label="用户工具">
           <el-tag class="env-tag" :type="envTagType" effect="light" round :title="envLabel">{{ envLabel }}</el-tag>
-          <el-button :icon="Bell" circle aria-label="通知" title="通知" />
+          <el-button :icon="Bell" circle disabled aria-label="通知功能暂未开放" title="通知功能暂未开放" />
           <div class="user-pill" :title="displayName">
             <span class="avatar">{{ userInitial }}</span>
             <span>{{ displayName }}</span>
@@ -66,7 +148,7 @@
           <el-button class="logout-button" text :icon="SwitchButton" title="退出登录" @click="handleLogout">退出</el-button>
         </div>
       </el-header>
-      <el-main class="app-main">
+      <el-main ref="mainContent" id="main-content" class="app-main" role="main" tabindex="-1">
         <router-view />
       </el-main>
       </template>
@@ -75,7 +157,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { chatRunState } from './stores/chatRun'
@@ -92,9 +174,39 @@ const isAuthenticatedUser = computed(() => isLoggedIn())
 const isAuthPage = computed(() => route.path === '/login' || route.path === '/register')
 const displayName = computed(() => authState.currentUser?.display_name || authState.currentUser?.username || '')
 const userInitial = computed(() => (displayName.value || 'U').slice(0, 1).toUpperCase())
+const mainContent = ref<HTMLElement | { $el?: HTMLElement } | null>(null)
+const mainMenu = ref<{ open: (index: string) => void; close: (index: string) => void } | null>(null)
+
+function focusMainContent() {
+  const target = mainContent.value instanceof HTMLElement ? mainContent.value : mainContent.value?.$el
+  target?.focus()
+}
+
+watch(() => route.path, async (path, previousPath) => {
+  if (path === previousPath || isAuthPage.value) return
+  await nextTick()
+  window.setTimeout(focusMainContent, 100)
+})
 
 function isNavigationDisabled(path: string) {
   return chatRunState.busy && route.path !== path
+}
+
+function activateRoute(path: string) {
+  if (isNavigationDisabled(path) || route.path === path) return
+  mainMenu.value?.close('validation-apps')
+  mainMenu.value?.close('platform-management')
+  void router.push(path)
+}
+
+function openSubmenu(index: string) {
+  mainMenu.value?.open(index)
+  const selector = index === 'validation-apps'
+    ? '.validation-menu-item:not(.is-disabled)'
+    : '.platform-menu-item:not(.is-disabled)'
+  nextTick(() => {
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(selector)?.focus())
+  })
 }
 
 async function handleLogout() {
@@ -112,7 +224,7 @@ async function handleLogout() {
   --wq-surface-raised: #eef2f7;
   --wq-surface-sunken: #edf1f6;
   --wq-border: #dfe4ec;
-  --wq-border-strong: #c8d1de;
+  --wq-border-strong: #7f8c9f;
   --wq-border-subtle: #edf0f4;
   --wq-text: #182230;
   --wq-muted: #475467;
@@ -277,6 +389,30 @@ html, body, #app {
   transition: color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 120ms ease;
 }
 
+.top-nav.el-menu--horizontal > .el-sub-menu {
+  flex: 0 0 auto;
+  height: var(--wq-header-height);
+  white-space: nowrap;
+}
+
+.top-nav.el-menu--horizontal > .el-sub-menu :deep(.el-sub-menu__title) {
+  height: 36px;
+  margin: 14px 2px;
+  padding: 0 12px;
+  border-bottom: 0;
+  border-radius: var(--wq-control-radius);
+  color: var(--wq-muted);
+  font-size: 14px;
+  font-weight: 520;
+}
+
+.top-nav.el-menu--horizontal > .el-sub-menu.is-active :deep(.el-sub-menu__title) {
+  color: var(--wq-primary-strong);
+  font-weight: 650;
+  background: var(--wq-primary-soft);
+  box-shadow: inset 0 0 0 1px rgba(147, 180, 251, 0.46);
+}
+
 .top-nav.el-menu--horizontal > .el-menu-item.is-active {
   color: var(--wq-primary-strong);
   font-weight: 650;
@@ -401,7 +537,7 @@ html, body, #app {
 .el-textarea__inner,
 .el-select__wrapper {
   border-radius: var(--wq-control-radius);
-  box-shadow: 0 0 0 1px var(--wq-border) inset;
+  box-shadow: 0 0 0 1px var(--wq-border-strong) inset;
   background: var(--wq-surface);
 }
 

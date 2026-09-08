@@ -76,6 +76,7 @@ _QUERY_FIELDS = {
     "compiled_query",
     "compiled_sql",
     "sql_text",
+    "sql_params",
     "compile_attempted",
     "fallback_attempted",
     "nl2sql_fallback_error",
@@ -571,6 +572,10 @@ class TaskCheckpointService:
             "release_available": False,
             "release": None,
         }
+        enterprise_model_version = {
+            "release_available": False,
+            "release": None,
+        }
         if domain_id:
             try:
                 ontology_rows = await db.execute_query(
@@ -639,11 +644,43 @@ class TaskCheckpointService:
                     "definition_hash": release.get("definition_hash"),
                     "created_at": release.get("created_at"),
                 }
+            try:
+                model_release_rows = await db.execute_query(
+                    "SELECT id, version, model_hash, semantic_snapshot_id, "
+                    "semantic_snapshot_hash, ontology_release_id, "
+                    "ontology_definition_hash, activated_at "
+                    "FROM enterprise_model_release WHERE domain_id = :domain_id "
+                    "AND status = 'active' LIMIT 1",
+                    {"domain_id": domain_id},
+                )
+                enterprise_model_version["release_available"] = True
+            except DBAPIError as exc:
+                logger.warning(
+                    "enterprise model release signal unavailable domain_id=%s error=%s",
+                    domain_id,
+                    exc,
+                )
+            else:
+                if model_release_rows:
+                    release = model_release_rows[0]
+                    enterprise_model_version["release"] = {
+                        "id": release.get("id"),
+                        "version": release.get("version"),
+                        "model_hash": release.get("model_hash"),
+                        "semantic_snapshot_id": release.get("semantic_snapshot_id"),
+                        "semantic_snapshot_hash": release.get("semantic_snapshot_hash"),
+                        "ontology_release_id": release.get("ontology_release_id"),
+                        "ontology_definition_hash": release.get(
+                            "ontology_definition_hash"
+                        ),
+                        "activated_at": release.get("activated_at"),
+                    }
         fingerprint_source = {
             "identity": identity,
             "semantic": semantic_versions,
             "schema": schema_version,
             "ontology": ontology_version,
+            "enterprise_model": enterprise_model_version,
         }
         fingerprint = hashlib.sha256(
             json.dumps(fingerprint_source, ensure_ascii=False, sort_keys=True, default=str).encode()
@@ -655,6 +692,7 @@ class TaskCheckpointService:
             "chat_model_config_id": identity.get("chat_model_config_id"),
             "embedding_model_config_id": identity.get("embedding_model_config_id"),
             "ontology_version": ontology_version,
+            "enterprise_model_version": enterprise_model_version,
         }
 
     async def prepare_turn(

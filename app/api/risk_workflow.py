@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.deps import get_current_user, require_admin, require_domain_access
+from app.api.deps import (
+    get_current_user,
+    require_admin,
+    require_agent_access,
+    require_domain_access,
+)
 from app.models.risk_workflow import (
     ChatRiskIssueCreatePayload,
     EvidenceCreatePayload,
@@ -56,7 +61,7 @@ async def list_issues(
     offset: int = Query(default=0, ge=0),
     current_user: PublicUser = Depends(get_current_user),
 ):
-    await require_domain_access(domain_id, current_user)
+    access_agent_id = await require_domain_access(domain_id, current_user)
     return {
         "issues": await get_risk_workflow_service().list_issues(
             domain_id,
@@ -64,6 +69,7 @@ async def list_issues(
             severity=severity,
             limit=limit,
             offset=offset,
+            access_agent_id=access_agent_id,
         )
     }
 
@@ -74,13 +80,17 @@ async def create_issue(
     payload: RiskIssueCreatePayload,
     current_user: PublicUser = Depends(get_current_user),
 ):
-    await require_domain_access(domain_id, current_user)
+    access_agent_id = await require_domain_access(domain_id, current_user)
     if payload.domain_id != domain_id:
         raise HTTPException(status_code=400, detail="请求路径与领域 ID 不一致")
     try:
         return await get_risk_workflow_service().create_issue(
-            payload, current_user.model_dump()
+            payload,
+            current_user.model_dump(),
+            access_agent_id=access_agent_id,
         )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except RiskWorkflowConflict as exc:
         raise _conflict(exc) from exc
     except ValueError as exc:
@@ -94,11 +104,14 @@ async def create_issue_from_chat(
     current_user: PublicUser = Depends(get_current_user),
 ):
     await require_domain_access(domain_id, current_user)
+    await require_agent_access(payload.agent_id, current_user)
     if payload.domain_id != domain_id:
         raise HTTPException(status_code=400, detail="请求路径与领域 ID 不一致")
     try:
         return await get_risk_workflow_service().create_issue_from_chat(
-            payload, current_user.model_dump()
+            payload,
+            current_user.model_dump(),
+            access_agent_id=payload.agent_id,
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -108,17 +121,19 @@ async def create_issue_from_chat(
         raise _conflict(exc) from exc
     except ValueError as exc:
         raise _bad_request(exc) from exc
-
-
 @router.get("/domains/{domain_id}/issues/{issue_id}")
 async def get_issue(
     domain_id: int,
     issue_id: int,
     current_user: PublicUser = Depends(get_current_user),
 ):
-    await require_domain_access(domain_id, current_user)
+    access_agent_id = await require_domain_access(domain_id, current_user)
     try:
-        return await get_risk_workflow_service().get_issue(domain_id, issue_id)
+        return await get_risk_workflow_service().get_issue(
+            domain_id,
+            issue_id,
+            access_agent_id=access_agent_id,
+        )
     except RiskWorkflowNotFound as exc:
         raise _not_found(exc) from exc
 

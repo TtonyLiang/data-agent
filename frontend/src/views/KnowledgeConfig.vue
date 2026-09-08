@@ -7,36 +7,12 @@
       </div>
       <div class="header-actions">
         <div class="toolbar-row">
-          <el-select
-            v-model="domainId"
-            placeholder="选择业务领域"
-            class="domain-select"
-            :disabled="domains.length === 0"
-          >
-            <el-option
-              v-for="domain in domains"
-              :key="domain.id"
-              :label="`${domain.name} (${domain.domain_key})`"
-              :value="domain.id"
-            />
-          </el-select>
-          <div class="toolbar-group">
-            <el-button :icon="Plus" @click="openCreateDomain">
-              新增领域
-            </el-button>
-            <el-button :icon="EditPen" :disabled="!selectedDomain" @click="openEditDomain">
-              编辑
-            </el-button>
-            <el-button :icon="Delete" type="danger" plain :disabled="!selectedDomain" @click="handleDeleteDomain">
-              删除
-            </el-button>
-          </div>
           <div class="toolbar-group toolbar-group-primary">
-            <el-button :loading="runtimeLoading" :disabled="!selectedDomain" @click="handleBuildRuntime">
+            <el-button :loading="runtimeLoading" :disabled="!currentDomain" @click="handleBuildRuntime">
               构建查询运行时
             </el-button>
-            <el-button type="primary" :loading="syncLoading" :disabled="!selectedDomain" @click="handleSyncVector">
-              同步语义向量
+            <el-button type="primary" :loading="syncLoading" :disabled="!currentDomain" @click="handleSyncVector">
+              更新验证检索索引
             </el-button>
             <el-dropdown @command="handleToolbarCommand">
               <el-button>
@@ -45,12 +21,9 @@
               </el-button>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item command="copy" :disabled="!selectedDomain">复制业务领域</el-dropdown-item>
-                  <el-dropdown-item command="import">导入业务领域</el-dropdown-item>
-                  <el-dropdown-item command="export" :disabled="!selectedDomain">导出业务领域</el-dropdown-item>
-                  <el-dropdown-item command="validate" :disabled="!selectedDomain">保存前校验</el-dropdown-item>
-                  <el-dropdown-item command="snapshot" :disabled="!selectedDomain">创建快照</el-dropdown-item>
-                  <el-dropdown-item command="snapshots" :disabled="!selectedDomain">查看快照</el-dropdown-item>
+                  <el-dropdown-item command="validate" :disabled="!currentDomain">保存前校验</el-dropdown-item>
+                  <el-dropdown-item command="snapshot" :disabled="!currentDomain">创建快照</el-dropdown-item>
+                  <el-dropdown-item command="snapshots" :disabled="!currentDomain">查看快照</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -62,7 +35,7 @@
     <div class="runtime-summary">
       <div class="summary-item">
         <span>当前业务领域</span>
-        <strong>{{ selectedDomain?.name || '暂无' }}</strong>
+        <strong>{{ currentDomain?.name || '暂无' }}</strong>
       </div>
       <div class="summary-item">
         <span>对象/事件/状态</span>
@@ -87,7 +60,7 @@
     </div>
 
     <div class="knowledge-surface">
-      <el-empty v-if="domains.length === 0" description="暂无业务领域，请先建立企业业务模型" />
+      <el-empty v-if="!domainId || !currentDomain" description="请先选择业务领域" />
       <el-tabs v-else v-model="activeTab">
         <el-tab-pane
           v-for="tab in assetTabs"
@@ -216,53 +189,6 @@
         </el-tab-pane>
       </el-tabs>
     </div>
-
-    <el-dialog
-      v-model="showDomainDialog"
-      :title="domainDialogMode === 'edit' ? '编辑业务领域' : '新增业务领域'"
-      width="620px"
-      class="domain-dialog"
-    >
-      <el-form :model="domainForm" label-width="110px" label-position="left">
-        <el-form-item label="名称">
-          <el-input v-model="domainForm.name" placeholder="如 订单分析" />
-        </el-form-item>
-        <el-form-item label="标识">
-          <el-input v-model="domainForm.domain_key" placeholder="如 order_analysis" :disabled="domainDialogMode === 'edit'" />
-        </el-form-item>
-        <el-form-item label="默认数据源">
-          <el-select v-model="domainForm.datasource_id" clearable filterable placeholder="可选，选择领域默认数据源">
-            <el-option
-              v-for="ds in datasources"
-              :key="ds.id"
-              :label="`${ds.name} · ${ds.database_name}`"
-              :value="ds.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="domainForm.status">
-            <el-option label="启用" value="active" />
-            <el-option label="停用" value="inactive" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="描述">
-          <el-input
-            v-model="domainForm.description"
-            type="textarea"
-            :rows="3"
-            placeholder="说明这个业务领域适用的范围、数据口径和使用边界"
-          />
-        </el-form-item>
-      </el-form>
-      <div class="domain-form-note">
-        业务领域及其模型是公司内部企业资产；“调试与验证智能体”只用于选择需要验证的领域，第三方 Agent 通过能力合同接入。
-      </div>
-      <template #footer>
-        <el-button @click="showDomainDialog = false">取消</el-button>
-        <el-button type="primary" @click="handleSaveDomain">保存</el-button>
-      </template>
-    </el-dialog>
 
     <el-dialog v-model="showAssetDialog" width="1040" class="asset-dialog">
       <template #header>
@@ -654,32 +580,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, Delete, EditPen, Plus, QuestionFilled } from '@element-plus/icons-vue'
+import { ArrowDown, QuestionFilled } from '@element-plus/icons-vue'
 import {
   buildSemanticRuntime,
-  copySemanticDomain,
   createSemanticSnapshot,
-  deleteSemanticDomain,
   deleteSemanticAsset,
   diffSemanticSnapshot,
-  exportSemanticDomain,
-  fetchAgents,
-  fetchAllDatasources,
-  fetchAllSemanticDomains,
   fetchSemanticAssets,
   fetchSemanticSnapshots,
-  importSemanticDomain,
   rollbackSemanticSnapshot,
   syncSemanticVector,
-  upsertSemanticDomain,
   upsertSemanticAsset,
   validateSemanticDomain,
-  type AgentItem,
-  type DatasourceItem,
   type SemanticDomain,
-  type SemanticDomainRequest,
 } from '../api'
 import { formatDateTime } from '../utils/datetime'
 
@@ -699,6 +614,15 @@ type AssetGuidePage = {
   fields: AssetGuideField[]
 }
 
+const props = defineProps<{
+  domainId: number | null
+  currentDomain: SemanticDomain | null
+}>()
+
+const emit = defineEmits<{
+  (event: 'domain-updated'): void
+}>()
+
 const assetTabs = [
   { name: 'concept', label: '对象/事件/状态', description: '业务对象、业务事件、状态和动作边界。' },
   { name: 'relation', label: '关系', description: '对象关系、事件链路、状态变化和 JOIN 路径。' },
@@ -717,7 +641,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         key: 'concept_key',
         label: '标识',
         title: '标识 concept_key',
-        purpose: '概念在语义层里的唯一英文键，关系、规则和向量召回都会引用它。',
+        purpose: '概念在企业模型语义中的唯一英文键，关系、规则和检索都会引用它。',
         instructions: ['使用稳定的英文 PascalCase 或 snake_case。', '对象建议用名词，事件建议用动词过去式或业务动作，状态建议用状态名。', '保存后不要随意改名，避免关系和规则引用失效。'],
         examples: ['Order', 'RepaymentPaid', 'OverdueBucket'],
       },
@@ -763,7 +687,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         key: 'relation_key',
         label: '标识',
         title: '标识 relation_key',
-        purpose: '关系在语义层里的唯一英文键。',
+        purpose: '关系在企业模型语义中的唯一英文键。',
         instructions: ['使用英文 snake_case。', '建议按“源概念_to_目标概念”命名。'],
         examples: ['order_to_customer', 'order_to_payment'],
       },
@@ -825,7 +749,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         key: 'metric_key',
         label: '标识',
         title: '标识 metric_key',
-    purpose: '这是指标在语义层里的唯一英文键，会出现在 LogicForm、语义校验、SQL 别名和结果字段中。',
+    purpose: '这是指标在企业模型语义中的唯一英文键，会出现在 LogicForm、语义校验、SQL 别名和结果字段中。',
     instructions: [
       '使用稳定的英文 snake_case，不要使用中文、空格或特殊符号。',
       '命名要表达业务含义，推荐按“指标对象 + 计算含义”组织。',
@@ -850,7 +774,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         key: 'metric_type',
         label: '指标类型',
         title: '指标类型',
-    purpose: '用于告诉语义层这个指标的计算形态，影响大模型理解、校验和后续展示。',
+    purpose: '用于声明该指标的计算形态，影响业务理解、校验和后续展示。',
     instructions: [
       '度量：金额、余额、天数、概率等可聚合数值，例如交易金额、评分。',
       '比率：分子除以分母，例如转化率、复购率。',
@@ -877,7 +801,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         key: 'time_field',
         label: '时间字段',
         title: '时间字段',
-    purpose: '用户问“本月、近三个月、按天/按月”时，语义层默认用这个字段做时间过滤或时间分组。',
+    purpose: '用户问“本月、近三个月、按天/按月”时，查询运行时默认用这个字段做时间过滤或分组。',
     instructions: [
       '推荐填写“表名.字段名”的完整形式。',
       '选择最符合指标统计口径的日期字段，例如创建时间、支付时间、快照时间、事件时间。',
@@ -967,7 +891,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         key: 'rule_key',
         label: '标识',
         title: '标识 rule_key',
-        purpose: '规则在语义层里的唯一英文键。',
+        purpose: '规则在企业模型语义中的唯一英文键。',
         instructions: ['使用英文 snake_case。', '建议表达规则适用对象和规则含义。'],
         examples: ['order_count_definition', 'status_filter', 'default_created_at'],
       },
@@ -1023,7 +947,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
   },
   mapping: {
     title: '映射填写说明',
-    subtitle: '用于把语义资产连接到真实数据库表字段，是语义层能编译 SQL 的落地点。',
+    subtitle: '用于把语义资产连接到真实数据库表字段，是查询运行时能够编译 SQL 的落地点。',
     fields: [
       {
         key: 'asset_type',
@@ -1037,7 +961,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         key: 'asset_key',
         label: '资产键',
         title: '资产键',
-        purpose: '语义层引用的英文键，必须和指标可用维度、规则或概念保持一致。',
+        purpose: '企业模型语义引用的英文键，必须和指标可用维度、规则或概念保持一致。',
         instructions: ['填写语义资产键，不是中文名。', '同一个键应保持唯一业务含义。'],
         examples: ['product_type', 'region', 'channel'],
       },
@@ -1091,7 +1015,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         key: 'template_key',
         label: '标识',
         title: '标识 template_key',
-        purpose: '模板在语义层里的唯一英文键。',
+        purpose: '模板在企业模型语义中的唯一英文键。',
         instructions: ['使用英文 snake_case。', '建议按意图类型命名。'],
         examples: ['metric_query', 'product_type_analysis'],
       },
@@ -1155,16 +1079,10 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
   },
 }
 
-const agentId = ref<number>(Number(localStorage.getItem('wenqu_agent_id')) || 1)
-const agents = ref<AgentItem[]>([])
-const datasources = ref<DatasourceItem[]>([])
-const domains = ref<SemanticDomain[]>([])
-const domainId = ref<number | null>(null)
 const activeTab = ref('concept')
 const assets = ref<Record<string, Record<string, unknown>[]>>({})
 const runtimeLoading = ref(false)
 const syncLoading = ref(false)
-const showDomainDialog = ref(false)
 const showAssetDialog = ref(false)
 const showAssetGuide = ref(false)
 const showAssetDetail = ref(false)
@@ -1172,22 +1090,12 @@ const showSnapshotDrawer = ref(false)
 const showSnapshotDiffDialog = ref(false)
 const snapshots = ref<Record<string, unknown>[]>([])
 const snapshotDiff = ref<Record<string, any> | null>(null)
-const domainDialogMode = ref<'create' | 'edit'>('create')
 const editingAssetType = ref('concept')
 const assetDialogMode = ref<'create' | 'edit'>('create')
-const domainForm = ref<SemanticDomainRequest>({
-  agent_id: null,
-  datasource_id: null,
-  domain_key: '',
-  name: '',
-  description: '',
-  status: 'active',
-})
 const assetDraft = ref<AssetDraft>({})
 const selectedAssetType = ref('concept')
 const selectedAsset = ref<Record<string, unknown> | null>(null)
 
-const selectedDomain = computed(() => domains.value.find(domain => domain.id === domainId.value) || null)
 const currentAssetTab = computed(() => assetTabs.find(tab => tab.name === editingAssetType.value))
 const currentDetailTab = computed(() => assetTabs.find(tab => tab.name === selectedAssetType.value))
 const assetPayload = computed(() => buildAssetPayload(editingAssetType.value, assetDraft.value))
@@ -1232,88 +1140,50 @@ const assetCounts = computed(() => {
   return counts
 })
 
-onMounted(async () => {
-  await Promise.all([loadAgents(), loadDatasources()])
-  await loadDomains()
-})
-
-watch(domainId, async () => {
+watch(() => props.domainId, async () => {
   await loadAssets()
-})
-
-async function loadAgents() {
-  try {
-    agents.value = await fetchAgents()
-    if (agents.value.length > 0 && !agents.value.some(agent => agent.id === agentId.value)) {
-      agentId.value = agents.value[0].id
-    }
-  } catch {
-    agents.value = []
-    ElMessage.error('智能体配置加载失败')
-  }
-}
-
-async function loadDatasources() {
-  try {
-    datasources.value = await fetchAllDatasources()
-  } catch {
-    datasources.value = []
-    ElMessage.error('数据源配置加载失败')
-  }
-}
-
-async function loadDomains() {
-  try {
-    const previousDomainId = domainId.value
-    domains.value = await fetchAllSemanticDomains()
-    const preferredDomainId = previousDomainId && domains.value.some(domain => domain.id === previousDomainId)
-      ? previousDomainId
-      : domains.value[0]?.id || null
-    domainId.value = preferredDomainId
-  } catch {
-    domains.value = []
-    domainId.value = null
-    ElMessage.error('业务领域加载失败')
-  }
-  await loadAssets()
-}
+}, { immediate: true })
 
 async function loadAssets() {
-  if (!domainId.value) {
+  if (!props.domainId) {
     assets.value = {}
     return
   }
+  const requestedDomainId = props.domainId
   try {
-    assets.value = await fetchSemanticAssets(domainId.value)
+    const nextAssets = await fetchSemanticAssets(requestedDomainId)
+    if (props.domainId !== requestedDomainId) return
+    assets.value = nextAssets
   } catch {
+    if (props.domainId !== requestedDomainId) return
     assets.value = {}
     ElMessage.error('语义资产加载失败')
   }
 }
 
 async function handleBuildRuntime() {
-  if (!selectedDomain.value) return
+  if (!props.currentDomain) return
   runtimeLoading.value = true
   try {
     await buildSemanticRuntime({
-      agent_id: selectedDomain.value.agent_id || agentId.value,
-      datasource_id: selectedDomain.value.datasource_id || undefined,
-      domain_id: selectedDomain.value.id,
-      domain_key: selectedDomain.value.domain_key,
+      agent_id: props.currentDomain.agent_id || undefined,
+      datasource_id: props.currentDomain.datasource_id || undefined,
+      domain_id: props.currentDomain.id,
+      domain_key: props.currentDomain.domain_key,
     })
-    ElMessage.success('语义层构建成功')
+    ElMessage.success('查询运行时构建成功')
   } catch {
-    ElMessage.error('语义层构建失败')
+    ElMessage.error('查询运行时构建失败')
   } finally {
     runtimeLoading.value = false
   }
 }
 
 async function handleSyncVector() {
-  if (!selectedDomain.value) return
+  if (!props.currentDomain) return
   syncLoading.value = true
   try {
-    const result = await syncSemanticVector(selectedDomain.value.id)
+    const result = await syncSemanticVector(props.currentDomain.id)
     ElMessage.success(result.message || '向量同步完成')
   } catch {
     ElMessage.error('向量同步失败')
@@ -1322,96 +1192,8 @@ async function handleSyncVector() {
   }
 }
 
-function openCreateDomain() {
-  domainDialogMode.value = 'create'
-  domainForm.value = {
-    agent_id: null,
-    datasource_id: datasources.value[0]?.id || null,
-    domain_key: '',
-    name: '',
-    description: '',
-    status: 'active',
-  }
-  showDomainDialog.value = true
-}
-
-function openEditDomain() {
-  if (!selectedDomain.value) return
-  domainDialogMode.value = 'edit'
-  domainForm.value = {
-    id: selectedDomain.value.id,
-    workspace_id: selectedDomain.value.workspace_id || null,
-    agent_id: selectedDomain.value.agent_id || null,
-    datasource_id: selectedDomain.value.datasource_id || null,
-    domain_key: selectedDomain.value.domain_key,
-    name: selectedDomain.value.name,
-    description: selectedDomain.value.description || '',
-    status: selectedDomain.value.status || 'active',
-  }
-  showDomainDialog.value = true
-}
-
-async function handleSaveDomain() {
-  const payload: SemanticDomainRequest = {
-    ...domainForm.value,
-    agent_id: domainForm.value.agent_id ? Number(domainForm.value.agent_id) : null,
-    datasource_id: domainForm.value.datasource_id ? Number(domainForm.value.datasource_id) : null,
-    domain_key: cleanText(domainForm.value.domain_key),
-    name: cleanText(domainForm.value.name),
-    description: cleanText(domainForm.value.description),
-    status: domainForm.value.status || 'active',
-  }
-  if (!payload.name) {
-    ElMessage.warning('请输入业务领域名称')
-    return
-  }
-  if (!payload.domain_key) {
-    ElMessage.warning('请输入业务领域标识')
-    return
-  }
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(payload.domain_key)) {
-    ElMessage.warning('业务领域标识只能使用英文、数字和下划线，且不能以数字开头')
-    return
-  }
-  try {
-    const result = await upsertSemanticDomain(payload)
-    ElMessage.success(result.message || '业务领域已保存')
-    showDomainDialog.value = false
-    await loadDomains()
-    if (result.id) domainId.value = Number(result.id)
-    await loadAssets()
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '业务领域保存失败')
-  }
-}
-
-async function handleDeleteDomain() {
-  if (!selectedDomain.value) return
-  const domain = selectedDomain.value
-  try {
-    await ElMessageBox.confirm(
-      `确定删除业务领域「${domain.name}」？它下面的对象、关系、指标、规则、映射和模板都会被删除，使用该领域的智能体会解除绑定。`,
-      '删除业务领域',
-      { type: 'warning' },
-    )
-    await deleteSemanticDomain(domain.id)
-    ElMessage.success('业务领域已删除')
-    domainId.value = null
-    await loadDomains()
-  } catch (error) {
-    if (error === 'cancel' || error === 'close') return
-    ElMessage.error(error instanceof Error ? error.message : '业务领域删除失败')
-  }
-}
-
 function handleToolbarCommand(command: string) {
-  if (command === 'copy') {
-    handleCopyDomain()
-  } else if (command === 'import') {
-    handleImportDomain()
-  } else if (command === 'export') {
-    handleExportDomain()
-  } else if (command === 'validate') {
+  if (command === 'validate') {
     handleValidateDomain()
   } else if (command === 'snapshot') {
     handleCreateSnapshot()
@@ -1420,96 +1202,31 @@ function handleToolbarCommand(command: string) {
   }
 }
 
-async function handleCopyDomain() {
-  if (!selectedDomain.value) return
-  const source = selectedDomain.value
-  try {
-    const { value } = await ElMessageBox.prompt(
-      '请输入新业务领域标识，复制后会包含当前领域的全部语义资产。',
-      '复制业务领域',
-      {
-        inputValue: `${source.domain_key}_copy`,
-        inputPattern: /^[A-Za-z_][A-Za-z0-9_]*$/,
-        inputErrorMessage: '只能使用英文、数字和下划线，且不能以数字开头',
-      },
-    )
-    const result = await copySemanticDomain(source.id, {
-      domain_key: value,
-      name: `${source.name} 副本`,
-    })
-    ElMessage.success(result.message || '业务领域已复制')
-    await loadDomains()
-    if (result.id) domainId.value = Number(result.id)
-    await loadAssets()
-  } catch (error) {
-    if (error === 'cancel' || error === 'close') return
-    ElMessage.error(error instanceof Error ? error.message : '复制失败')
-  }
-}
-
-async function handleExportDomain() {
-  if (!selectedDomain.value) return
-  try {
-    const bundle = await exportSemanticDomain(selectedDomain.value.id)
-    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `${selectedDomain.value.domain_key}.semantic.json`
-    link.click()
-    URL.revokeObjectURL(url)
-    ElMessage.success('业务领域已导出')
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '导出失败')
-  }
-}
-
-function handleImportDomain() {
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.accept = 'application/json,.json'
-  input.onchange = async () => {
-    const file = input.files?.[0]
-    if (!file) return
-    try {
-      const text = await file.text()
-      const result = await importSemanticDomain(JSON.parse(text))
-      ElMessage.success(result.message || '业务领域已导入')
-      await loadDomains()
-      if (result.id) domainId.value = Number(result.id)
-      await loadAssets()
-    } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : '导入失败')
-    }
-  }
-  input.click()
-}
-
 async function handleValidateDomain() {
-  if (!selectedDomain.value) return
+  if (!props.currentDomain) return
   try {
-    const result = await validateSemanticDomain(selectedDomain.value.id)
+    const result = await validateSemanticDomain(props.currentDomain.id)
     const errors = Array.isArray(result.errors) ? result.errors : []
     const warnings = Array.isArray(result.warnings) ? result.warnings : []
     if (errors.length) {
-      await ElMessageBox.alert(errors.join('\n'), '语义层校验未通过', { type: 'error' })
+      await ElMessageBox.alert(errors.join('\n'), '企业模型语义校验未通过', { type: 'error' })
       return
     }
     const message = warnings.length ? warnings.join('\n') : '未发现阻断问题。'
-    await ElMessageBox.alert(message, result.valid ? '语义层校验通过' : '语义层校验结果', { type: warnings.length ? 'warning' : 'success' })
+    await ElMessageBox.alert(message, result.valid ? '企业模型语义校验通过' : '企业模型语义校验结果', { type: warnings.length ? 'warning' : 'success' })
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '校验失败')
   }
 }
 
 async function handleCreateSnapshot() {
-  if (!selectedDomain.value) return
+  if (!props.currentDomain) return
   try {
-    const { value } = await ElMessageBox.prompt('请输入快照说明，便于之后识别本次配置状态。', '创建语义层快照', {
+    const { value } = await ElMessageBox.prompt('请输入快照说明，便于之后识别本次配置状态。', '创建语义资产快照', {
       inputValue: '配置调整前快照',
     })
-    const result = await createSemanticSnapshot(selectedDomain.value.id, {
-      name: `${selectedDomain.value.name} 快照`,
+    const result = await createSemanticSnapshot(props.currentDomain.id, {
+      name: `${props.currentDomain.name} 快照`,
       description: value,
     })
     ElMessage.success(result.message || '快照已创建')
@@ -1521,9 +1238,9 @@ async function handleCreateSnapshot() {
 }
 
 async function openSnapshots() {
-  if (!selectedDomain.value) return
+  if (!props.currentDomain) return
   try {
-    snapshots.value = await fetchSemanticSnapshots(selectedDomain.value.id)
+    snapshots.value = await fetchSemanticSnapshots(props.currentDomain.id)
     showSnapshotDrawer.value = true
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '快照加载失败')
@@ -1531,9 +1248,9 @@ async function openSnapshots() {
 }
 
 async function handleDiffSnapshot(item: Record<string, unknown>) {
-  if (!selectedDomain.value || !item.id) return
+  if (!props.currentDomain || !item.id) return
   try {
-    snapshotDiff.value = await diffSemanticSnapshot(selectedDomain.value.id, Number(item.id))
+    snapshotDiff.value = await diffSemanticSnapshot(props.currentDomain.id, Number(item.id))
     showSnapshotDiffDialog.value = true
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '快照差异加载失败')
@@ -1541,18 +1258,17 @@ async function handleDiffSnapshot(item: Record<string, unknown>) {
 }
 
 async function handleRollbackSnapshot(item: Record<string, unknown>) {
-  if (!selectedDomain.value || !item.id) return
+  if (!props.currentDomain || !item.id) return
   try {
     await ElMessageBox.confirm(
-      `确定将语义层「${selectedDomain.value.name}」回滚到快照「${item.name || item.id}」？当前资产会被快照内容覆盖，建议先导出或创建新快照。`,
-      '回滚语义层快照',
+      `确定将业务领域「${props.currentDomain.name}」的语义资产回滚到快照「${item.name || item.id}」？当前资产会被快照内容覆盖，建议先创建新快照。`,
+      '回滚语义资产快照',
       { type: 'warning' },
     )
-    const result = await rollbackSemanticSnapshot(selectedDomain.value.id, Number(item.id))
-    ElMessage.success(result.message || '语义层已回滚')
-    await loadDomains()
-    if (selectedDomain.value?.id) domainId.value = selectedDomain.value.id
+    const result = await rollbackSemanticSnapshot(props.currentDomain.id, Number(item.id))
+    ElMessage.success(result.message || '语义资产已回滚')
     await loadAssets()
+    emit('domain-updated')
     await openSnapshots()
   } catch (error) {
     if (error === 'cancel' || error === 'close') return
@@ -1585,10 +1301,6 @@ function snapshotChangedKeys(items: Record<string, unknown>[]) {
   return items.map(item => String(item.key || '')).filter(Boolean).join('、')
 }
 
-function defaultDomainAgentId() {
-  return agents.value.find(agent => agent.id === agentId.value)?.id || agents.value[0]?.id || agentId.value || 1
-}
-
 function openAssetDialog(assetType: string) {
   editingAssetType.value = assetType
   assetDialogMode.value = 'create'
@@ -1615,12 +1327,12 @@ function openAssetGuide() {
 }
 
 async function handleSaveAsset() {
-  if (!domainId.value) return
+  if (!props.domainId) return
   try {
     const payload = { ...assetPayload.value }
     if (assetDraft.value.id) payload.id = Number(assetDraft.value.id)
     validateAssetPayload(editingAssetType.value, payload)
-    await upsertSemanticAsset(domainId.value, editingAssetType.value, payload)
+    await upsertSemanticAsset(props.domainId, editingAssetType.value, payload)
     ElMessage.success('保存成功')
     showAssetDialog.value = false
     await loadAssets()
@@ -1630,7 +1342,7 @@ async function handleSaveAsset() {
 }
 
 async function handleDeleteAsset(assetType: string, row: Record<string, unknown>) {
-  if (!domainId.value) return
+  if (!props.domainId) return
   const assetId = Number(row.id)
   if (!assetId) {
     ElMessage.error('缺少资产 ID，无法删除')
@@ -1639,11 +1351,11 @@ async function handleDeleteAsset(assetType: string, row: Record<string, unknown>
   const label = assetDisplayName(assetType, row)
   try {
     await ElMessageBox.confirm(
-      `确定删除「${label}」？删除后需要重新构建语义层并同步向量，线上问数才会完全更新。`,
+      `确定删除「${label}」？删除后需要重新构建查询运行时并更新验证检索索引，验证问数才会完全更新。`,
       '删除语义资产',
       { type: 'warning' },
     )
-    await deleteSemanticAsset(domainId.value, assetType, assetId)
+    await deleteSemanticAsset(props.domainId, assetType, assetId)
     ElMessage.success('删除成功')
     if (selectedAsset.value?.id === assetId && selectedAssetType.value === assetType) {
       showAssetDetail.value = false
@@ -2165,10 +1877,6 @@ function columnNameLabel(assetKey: string, columnName: string) {
   flex-wrap: wrap;
 }
 
-.domain-select {
-  width: 280px;
-}
-
 .toolbar-group {
   display: inline-flex;
   align-items: center;
@@ -2313,21 +2021,6 @@ function columnNameLabel(assetKey: string, columnName: string) {
   white-space: nowrap;
 }
 
-.domain-form-note {
-  margin-top: 8px;
-  padding: 10px 12px;
-  border: 1px solid #dbeafe;
-  border-radius: 6px;
-  background: #f8fbff;
-  color: #52637a;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-:global(.domain-dialog .el-select) {
-  width: 100%;
-}
-
 :global(.asset-dialog) {
   max-width: calc(100vw - 32px);
 }
@@ -2353,7 +2046,7 @@ function columnNameLabel(assetKey: string, columnName: string) {
   justify-content: center;
   width: 24px;
   height: 24px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--wq-border-strong);
   border-radius: 50%;
   padding: 0;
   color: #64748b;
@@ -2792,10 +2485,6 @@ function columnNameLabel(assetKey: string, columnName: string) {
 
   .toolbar-row {
     justify-content: flex-start;
-  }
-
-  .domain-select {
-    width: min(100%, 320px);
   }
 
   .runtime-summary {

@@ -332,6 +332,12 @@ class CompiledQuery(BaseModel):
 
     logic_form: LogicForm = Field(description="编译所用的 LogicForm")
     sql: str = Field(description="编译产出的 MySQL SELECT 语句")
+    sql_params: dict[str, Any] = Field(
+        default_factory=dict,
+        exclude=True,
+        repr=False,
+        description="SQL 命名绑定参数，仅供执行层使用，不进入公开编译结果",
+    )
     used_assets: list[str] = Field(default_factory=list, description="命中的资产引用清单")
     warnings: list[str] = Field(default_factory=list, description="编译期警告")
 

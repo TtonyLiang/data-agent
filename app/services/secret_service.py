@@ -49,7 +49,9 @@ class SecretService:
             return value
         if value == "":
             return value
-        encrypted = ENCRYPTED_PREFIX + self._get_fernet().encrypt(value.encode("utf-8")).decode("utf-8")
+        encrypted = ENCRYPTED_PREFIX + self._get_fernet().encrypt(value.encode("utf-8")).decode(
+            "utf-8"
+        )
         logger.info("secret encrypt ok value_chars=%s", len(value or ""))
         return encrypted
 
@@ -78,8 +80,11 @@ class SecretService:
 
         if not raw_key and settings.debug:
             import secrets
+
             raw_key = secrets.token_hex(32)
-            logger.warning("secret using randomly generated key (DEBUG mode only, changes on restart)")
+            logger.warning(
+                "secret using randomly generated key (DEBUG mode only, changes on restart)"
+            )
 
         try:
             from cryptography.fernet import Fernet
@@ -92,9 +97,7 @@ class SecretService:
                 )
                 self._fernet = DevelopmentFernet(normalize_fernet_key(raw_key))
                 return self._fernet
-            raise SecretServiceError(
-                "缺少 cryptography 依赖，无法加密保存密钥"
-            ) from exc
+            raise SecretServiceError("缺少 cryptography 依赖，无法加密保存密钥") from exc
 
         if not raw_key:
             raise SecretServiceError("未配置 SECRET_ENCRYPTION_KEY，无法加密保存密钥")
@@ -129,8 +132,7 @@ class DevelopmentFernet:
 
     def encrypt(self, value: bytes) -> bytes:
         payload = bytes(
-            byte ^ self._key[index % len(self._key)]
-            for index, byte in enumerate(value)
+            byte ^ self._key[index % len(self._key)] for index, byte in enumerate(value)
         )
         return base64.urlsafe_b64encode(payload)
 

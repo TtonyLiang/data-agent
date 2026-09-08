@@ -3,7 +3,7 @@
     <div v-if="!embedded" class="page-header">
       <div>
         <h2>Prompt 配置</h2>
-        <p>按节点、智能体、模型和语义层维护提示词模板，优先匹配更具体的作用域。</p>
+        <p>按节点、业务领域和模型维护企业模型提示词；验证智能体范围仅用于兼容覆盖。</p>
       </div>
       <div class="header-actions">
         <el-select v-model="activePromptKey" clearable placeholder="全部节点" class="key-filter" @change="loadTemplates">
@@ -18,7 +18,7 @@
     <div v-else class="embedded-toolbar">
       <div>
         <h3>Prompt 模板</h3>
-        <p>按节点维护大模型提示词，可配置全局模板，也可限定智能体、模型或语义层。</p>
+        <p>可配置全局模板，也可按业务领域和模型细化；验证智能体范围仅用于兼容覆盖。</p>
       </div>
       <div class="header-actions">
         <el-select v-model="activePromptKey" clearable placeholder="全部节点" class="key-filter" @change="loadTemplates">
@@ -40,9 +40,9 @@
         <el-table-column label="作用域" min-width="260">
           <template #default="{ row }">
             <div class="scope-tags">
-              <el-tag v-if="row.agent_id" size="small" effect="plain">智能体：{{ agentName(row.agent_id) }}</el-tag>
+              <el-tag v-if="row.agent_id" size="small" effect="plain">验证智能体覆盖：{{ agentName(row.agent_id) }}</el-tag>
               <el-tag v-if="row.model_config_id" size="small" effect="plain">模型：{{ modelName(row.model_config_id) }}</el-tag>
-              <el-tag v-if="row.semantic_domain_id" size="small" effect="plain">语义层：{{ domainName(row.semantic_domain_id) }}</el-tag>
+              <el-tag v-if="row.semantic_domain_id" size="small" effect="plain">业务领域：{{ domainName(row.semantic_domain_id) }}</el-tag>
               <el-tag v-if="!row.agent_id && !row.model_config_id && !row.semantic_domain_id" size="small" type="info" effect="plain">全局默认</el-tag>
             </div>
           </template>
@@ -63,7 +63,7 @@
         <template #empty>
           <div class="empty-state">
             <p>还没有 Prompt 模板</p>
-            <span>可以新增全局模板，或按智能体、模型、语义层配置专用模板。</span>
+            <span>可以新增全局模板，或按业务领域和模型配置专用模板。</span>
             <el-button type="primary" size="small" @click="openCreate">新增模板</el-button>
           </div>
         </template>
@@ -75,9 +75,9 @@
         <dl class="detail-grid">
           <dt>名称</dt><dd>{{ detailTemplate.name }}</dd>
           <dt>节点</dt><dd>{{ promptKeyLabel(detailTemplate.prompt_key) }}</dd>
-          <dt>智能体</dt><dd>{{ detailTemplate.agent_id ? agentName(detailTemplate.agent_id) : '全局' }}</dd>
+          <dt>验证智能体覆盖</dt><dd>{{ detailTemplate.agent_id ? agentName(detailTemplate.agent_id) : '不限定' }}</dd>
           <dt>模型</dt><dd>{{ detailTemplate.model_config_id ? modelName(detailTemplate.model_config_id) : '不限定' }}</dd>
-          <dt>语义层</dt><dd>{{ detailTemplate.semantic_domain_id ? domainName(detailTemplate.semantic_domain_id) : '不限定' }}</dd>
+          <dt>业务领域</dt><dd>{{ detailTemplate.semantic_domain_id ? domainName(detailTemplate.semantic_domain_id) : '不限定' }}</dd>
           <dt>状态</dt><dd>{{ detailTemplate.status }}</dd>
           <dt>说明</dt><dd>{{ detailTemplate.description || '-' }}</dd>
         </dl>
@@ -99,8 +99,8 @@
         <el-form-item label="说明">
           <el-input v-model="form.description" placeholder="模板用途、适用范围或变更说明" />
         </el-form-item>
-        <el-form-item label="智能体">
-          <el-select v-model="form.agent_id" clearable placeholder="不限定智能体">
+        <el-form-item label="验证智能体覆盖">
+          <el-select v-model="form.agent_id" clearable placeholder="不限定验证智能体">
             <el-option v-for="agent in agents" :key="agent.id" :label="agent.name" :value="agent.id" />
           </el-select>
         </el-form-item>
@@ -114,8 +114,8 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="语义层">
-          <el-select v-model="form.semantic_domain_id" clearable placeholder="不限定语义层">
+        <el-form-item label="业务领域">
+          <el-select v-model="form.semantic_domain_id" clearable placeholder="不限定业务领域">
             <el-option
               v-for="domain in semanticDomains"
               :key="domain.id"

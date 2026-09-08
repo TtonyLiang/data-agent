@@ -6,12 +6,13 @@ DatasourceService 负责:
 3. 连接测试(SELECT 1 验证连通性)。
 
 注意:
-- ``delete`` 会级联删除该数据源关联的所有语义层资产(概念/指标/映射/规则/
-  关系/模板)、语义领域、agent_datasource 绑定和采集元数据。
+- ``delete`` 不拥有业务领域和企业模型生命周期；仍有领域绑定时拒绝删除。
 - ``update`` 后会自动 ``invalidate_datasource_db`` 清除缓存连接,下次查询时重建。
 """
 
 import logging
+
+from sqlalchemy import text
 
 from app.db.mysql import get_management_db, invalidate_datasource_db
 from app.models.datasource import DatasourceConfig, DatasourceCreate, DatasourceUpdate
@@ -135,65 +136,54 @@ class DatasourceService:
         return result
 
     async def delete(self, ds_id: int) -> bool:
-        """删除数据源及其关联的全部语义层资产与采集元数据。
-
-        级联删除顺序(先删子表再删主表,避免外键冲突):
-        1. 语义资产(概念/关系/指标/规则/映射/模板)
-        2. 语义领域(semantic_domain)
-        3. 智能体绑定(agent_datasource)
-        4. 采集元数据(meta_column → meta_table)
-        5. 数据源本身(datasource)
-        """
+        """删除未被领域使用的数据源，并清理权限、绑定和采集元数据。"""
         logger.info("datasource delete id=%s", ds_id)
         db = get_management_db()
-        governed_domains = await db.execute_query(
-            "SELECT sd.id FROM semantic_domain sd WHERE sd.datasource_id = :id AND ("
-            "EXISTS (SELECT 1 FROM ontology_release r WHERE r.domain_id = sd.id) OR "
-            "EXISTS (SELECT 1 FROM ontology_action_run a WHERE a.domain_id = sd.id) OR "
-            "EXISTS (SELECT 1 FROM risk_issue i WHERE i.domain_id = sd.id) OR "
-            "EXISTS (SELECT 1 FROM risk_report p WHERE p.domain_id = sd.id) OR "
-            "EXISTS (SELECT 1 FROM decision_audit_event e WHERE e.domain_id = sd.id)"
-            ") LIMIT 1",
-            {"id": ds_id},
-        )
-        if governed_domains:
-            raise ValueError("数据源关联的领域已有发布或决策历史，不能直接删除")
-        statements = []
-        # 第1步:删除语义资产(通过 semantic_domain 关联)
-        for table in (
-            "logic_form_template",
-            "semantic_mapping",
-            "semantic_rule",
-            "semantic_metric",
-            "semantic_relation",
-            "semantic_concept",
-        ):
-            statements.append(
-                (
-                    f"DELETE FROM {table} WHERE domain_id IN "
-                    "(SELECT id FROM semantic_domain WHERE datasource_id = :id)",
-                    {"id": ds_id},
-                )
+        statements = [
+            ("DELETE FROM agent_table_permission WHERE datasource_id = :id", {"id": ds_id}),
+            ("DELETE FROM agent_column_permission WHERE datasource_id = :id", {"id": ds_id}),
+            ("DELETE FROM agent_datasource WHERE datasource_id = :id", {"id": ds_id}),
+            (
+                "DELETE FROM meta_column WHERE table_id IN "
+                "(SELECT id FROM meta_table WHERE datasource_id = :id)",
+                {"id": ds_id},
+            ),
+            ("DELETE FROM meta_table WHERE datasource_id = :id", {"id": ds_id}),
+            ("DELETE FROM datasource WHERE id = :id", {"id": ds_id}),
+        ]
+
+        async def callback(session):
+            target = await session.execute(
+                text("SELECT id FROM datasource WHERE id = :id FOR UPDATE"),
+                {"id": ds_id},
             )
-        # 第2-5步:删除语义领域、绑定、采集元数据、数据源本身
-        statements.extend(
-            [
-                ("DELETE FROM semantic_domain WHERE datasource_id = :id", {"id": ds_id}),
-                ("DELETE FROM agent_datasource WHERE datasource_id = :id", {"id": ds_id}),
-                (
-                    "DELETE FROM meta_column WHERE table_id IN "
-                    "(SELECT id FROM meta_table WHERE datasource_id = :id)",
-                    {"id": ds_id},
+            if target.mappings().first() is None:
+                return False
+
+            bound_result = await session.execute(
+                text(
+                    "SELECT id, name FROM semantic_domain WHERE datasource_id = :id "
+                    "ORDER BY id ASC LIMIT 5 FOR UPDATE"
                 ),
-                ("DELETE FROM meta_table WHERE datasource_id = :id", {"id": ds_id}),
-                ("DELETE FROM datasource WHERE id = :id", {"id": ds_id}),
-            ]
-        )
-        if hasattr(db, "execute_transaction"):
-            await db.execute_transaction(statements)
-        else:
+                {"id": ds_id},
+            )
+            bound_domains = [dict(row) for row in bound_result.mappings().all()]
+            if bound_domains:
+                labels = "、".join(
+                    str(row.get("name") or f"领域#{row['id']}") for row in bound_domains
+                )
+                raise ValueError(
+                    f"数据源仍有业务领域绑定（{labels}），请先在企业模型中解除绑定"
+                )
+
             for sql, params in statements:
-                await db.execute_query(sql, params)
+                await session.execute(text(sql), params)
+            return True
+
+        deleted = await db.execute_in_transaction(callback)
+        if not deleted:
+            logger.info("datasource delete result id=%s ok=false reason=not_found", ds_id)
+            return False
         await invalidate_datasource_db(ds_id)
         logger.info("datasource delete result id=%s ok=true", ds_id)
         return True

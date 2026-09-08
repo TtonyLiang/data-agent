@@ -17,6 +17,7 @@ def test_default_prompt_catalog_exposes_agent_prompt_files():
     assert "phase3_report_generator.system" in keys
     assert "phase3_report_generator.user" in keys
     assert all(item["template_text"].strip() for item in prompts)
+    assert all("语义层" not in item["description"] for item in prompts)
 
 
 @pytest.mark.asyncio
@@ -29,6 +30,11 @@ async def test_seed_default_prompt_templates_only_inserts_missing_global_templat
 
         async def execute_scalar(self, sql: str, params: dict | None = None):
             return 1 if params and params["prompt_key"] == existing_key else 0
+
+        async def execute_query(self, sql: str, params: dict | None = None):
+            assert "UPDATE prompt_template SET description" in sql
+            assert params and params["new_term"] == "企业模型语义未命中可执行指标时"
+            return []
 
         async def execute_transaction(self, statements):
             self.inserted.extend(statements)

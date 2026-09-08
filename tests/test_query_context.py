@@ -148,6 +148,9 @@ async def test_recall_node_preserves_legacy_fields_and_adds_query_context(monkey
     runtime = _runtime()
 
     class FakeSemanticService:
+        async def get_domain(self, _domain_id):
+            return runtime.domain
+
         async def get_agent_bound_domain(self, agent_id):
             return None
 
@@ -189,10 +192,89 @@ async def test_recall_node_preserves_legacy_fields_and_adds_query_context(monkey
 
 
 @pytest.mark.asyncio
+async def test_recall_node_uses_active_model_semantic_snapshot(monkeypatch):
+    runtime = _runtime()
+
+    class FakeSemanticService:
+        def __init__(self):
+            self.snapshot_calls = []
+
+        async def get_domain(self, _domain_id):
+            return runtime.domain
+
+        async def get_agent_bound_domain(self, agent_id):
+            return SemanticDomain(
+                id=1,
+                agent_id=agent_id,
+                domain_key="loan_risk",
+                name="贷款风控",
+            )
+
+        async def build_runtime_from_snapshot(
+            self,
+            domain_id,
+            snapshot_id,
+            *,
+            agent_id,
+            expected_snapshot_hash,
+        ):
+            self.snapshot_calls.append(
+                (domain_id, snapshot_id, agent_id, expected_snapshot_hash)
+            )
+            return runtime
+
+        async def build_runtime(self, **_kwargs):
+            raise AssertionError("active release must not read live semantic assets")
+
+    class FakeEmbedding:
+        async def embed_query(self, question, agent_id=None):
+            return [0.1]
+
+    class FakeVectorStore:
+        def search(self, agent_id, query_vector, *, domain_id=None):
+            return []
+
+    class FakeOntologyService:
+        async def build_agent_context(self, domain_id, role):
+            context = _ontology_context()
+            context["semantic_snapshot"] = {"id": 44, "snapshot_hash": "a" * 64}
+            context["model_release"] = {"id": 9, "version": 2, "status": "active"}
+            return context
+
+    semantic_service = FakeSemanticService()
+    monkeypatch.setattr(
+        semantic_runtime_recall,
+        "get_semantic_runtime_service",
+        lambda: semantic_service,
+    )
+    monkeypatch.setattr(
+        semantic_runtime_recall, "get_embedding_service", lambda: FakeEmbedding()
+    )
+    monkeypatch.setattr(
+        semantic_runtime_recall, "get_vector_store", lambda: FakeVectorStore()
+    )
+    monkeypatch.setattr(
+        semantic_runtime_recall,
+        "get_ontology_service",
+        lambda: FakeOntologyService(),
+    )
+
+    result = await semantic_runtime_recall.semantic_runtime_recall_node(
+        {"agent_id": 7, "question": "查看贷款申请数量"}
+    )
+
+    assert semantic_service.snapshot_calls == [(1, 44, 7, "a" * 64)]
+    assert result["ontology_context"]["model_release"]["id"] == 9
+
+
+@pytest.mark.asyncio
 async def test_recall_node_query_context_failure_keeps_old_recall_output(monkeypatch):
     runtime = _runtime()
 
     class FakeSemanticService:
+        async def get_domain(self, _domain_id):
+            return runtime.domain
+
         async def get_agent_bound_domain(self, agent_id):
             return None
 
@@ -241,6 +323,14 @@ async def test_recall_node_query_context_failure_keeps_old_recall_output(monkeyp
 @pytest.mark.asyncio
 async def test_recall_node_runtime_failure_returns_structured_context_warning(monkeypatch):
     class FakeSemanticService:
+        async def get_domain(self, domain_id):
+            return SemanticDomain(
+                id=domain_id,
+                agent_id=7,
+                domain_key="loan_risk",
+                name="贷款风控",
+            )
+
         async def get_agent_bound_domain(self, agent_id):
             return None
 
