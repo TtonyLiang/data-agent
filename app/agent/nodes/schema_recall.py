@@ -67,7 +67,17 @@ async def schema_recall_node(state: dict) -> dict:
 
     metadata_service = get_metadata_service()
     if hasattr(metadata_service, "get_authorized_schema"):
-        schema = await metadata_service.get_authorized_schema(datasource_id, state.get("agent_id"))
+        permission_domain_id = state.get("permission_domain_id") or state.get(
+            "domain_id"
+        )
+        schema = await metadata_service.get_authorized_schema(
+            datasource_id,
+            state.get("agent_id"),
+            domain_id=permission_domain_id,
+            allow_agent_fallback=bool(
+                state.get("allow_agent_permission_fallback")
+            ),
+        )
     else:
         schema = await metadata_service.get_schema(datasource_id)
     logger.info(

@@ -29,6 +29,7 @@ assert.ok(
   source.includes('aria-label="搜索历史会话"') &&
     source.includes('<aside class="session-sidebar" aria-label="会话导航">') &&
     source.includes('<nav class="session-list" aria-label="历史会话"') &&
+    source.includes('aria-label="选择企业业务领域"') &&
     source.includes('aria-label="选择验证智能体"') &&
     source.includes('role="log"') &&
     source.includes('aria-relevant="additions text"') &&
@@ -263,7 +264,16 @@ assert.ok(
 )
 
 assert.ok(
+  source.includes('fetchOntologyDomains') &&
+    source.includes('v-model="domainId"') &&
+    source.includes('domain_id: domainId.value'),
+  'ChatView should select an accessible enterprise domain and send it as the primary chat context',
+)
+
+assert.ok(
   source.includes('task_id: item.task_id') &&
+    source.includes('domain_id: item.domain_id') &&
+    source.includes('model_release_id: item.model_release_id') &&
     source.includes('turn_id: item.turn_id') &&
     source.includes('turn_mode: item.turn_mode') &&
     source.includes('task_status: item.task_status') &&
@@ -282,11 +292,11 @@ assert.ok(
 
 assert.ok(
   source.includes("message.status === 'complete'") &&
-    source.includes('selectedAgent.value?.semantic_domain_id') &&
+    source.includes('const activeDomainId = Number(domainId.value || 0)') &&
     source.includes('Boolean(message.sql?.trim())') &&
     source.includes('Boolean(message.sql_result?.length)') &&
     source.includes('Boolean(message.report_payload)'),
-  'ChatView should only offer risk creation for completed query/report results in an agent semantic domain',
+  'ChatView should only offer risk creation for completed query/report results in the selected enterprise domain',
 )
 
 assert.ok(

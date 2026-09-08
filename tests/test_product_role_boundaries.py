@@ -193,6 +193,16 @@ async def test_regular_user_can_read_enterprise_model_and_invoke_capability(
     monkeypatch.setattr(
         ontology_api, "get_datasource_service", lambda: DatasourceService()
     )
+    monkeypatch.setattr(
+        ontology_api,
+        "_resolve_data_access_agent",
+        AsyncMock(return_value=7),
+    )
+    monkeypatch.setattr(
+        ontology_api,
+        "_data_permission_metadata",
+        AsyncMock(return_value={"source": "agent_compatibility"}),
+    )
     monkeypatch.setattr(ontology_api, "invoke_ontology_tool", invoke_tool)
     monkeypatch.setattr(semantic_api, "require_domain_access", domain_access)
     monkeypatch.setattr(
@@ -246,6 +256,11 @@ async def test_regular_user_can_preview_twin_but_cannot_start_write_sync(
         "status": "succeeded",
     }
     monkeypatch.setattr(twin_api, "require_domain_access", domain_access)
+    monkeypatch.setattr(
+        twin_api,
+        "_resolve_access_agent",
+        AsyncMock(return_value=7),
+    )
     monkeypatch.setattr(twin_api, "get_twin_runtime_service", lambda: twin_service)
 
     async with AsyncClient(

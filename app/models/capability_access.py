@@ -53,7 +53,13 @@ class CapabilityGrantUpsertPayload(BaseModel):
 
     domain_id: int = Field(gt=0)
     capability_key: str = Field(pattern=CAPABILITY_KEY_PATTERN, max_length=128)
-    execution_agent_id: int = Field(gt=0)
+    execution_agent_id: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "兼容旧调用方的内部权限适配覆盖值；省略时由平台按业务领域自动解析"
+        ),
+    )
     status: Literal["active", "revoked"] = "active"
 
 
@@ -62,7 +68,10 @@ class CapabilityGrant(BaseModel):
     client_id: int
     domain_id: int
     capability_key: str
-    execution_agent_id: int
+    execution_agent_id: int | None = None
+    model_release_id: int | None = None
+    contract_hash: str | None = None
+    contract_json: dict[str, Any] | None = None
     status: Literal["active", "revoked"]
     created_by: int | None = None
     updated_by: int | None = None

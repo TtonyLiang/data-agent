@@ -1,18 +1,27 @@
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
 
+from app.agent import ontology_tools
 from app.api import capability_access as capability_api
 from app.db.capability_access_schema import CAPABILITY_ACCESS_TABLE_STATEMENTS
 from app.main import app
 from app.models.capability_access import (
     CapabilityClientCreatePayload,
+    CapabilityGrantUpsertPayload,
     CapabilityInvokePayload,
 )
-from app.models.knowledge import LogicFilter, LogicForm
+from app.models.knowledge import (
+    LogicFilter,
+    LogicForm,
+    SemanticDomain,
+    SemanticMapping,
+    SemanticMetric,
+    SemanticRuntime,
+)
 from app.services import capability_access_service as service_module
 from app.services.capability_access_service import (
     CapabilityAccessService,
@@ -37,6 +46,51 @@ class FakeDB:
     async def execute_insert(self, sql, params=None):
         self.inserts.append((sql, params or {}))
         return 11 if "capability_client" in sql else 31
+
+
+def _contract_binding(release_id: int = 12) -> dict:
+    snapshot = {
+        "schema_version": 1,
+        "kind": "query_capability",
+        "domain_id": 9,
+        "model_release": {"id": release_id, "model_hash": "c" * 64},
+        "data_policy": {
+            "strategy": "live_source",
+            "source": {"kind": "business_datasource", "datasource_id": 23},
+            "as_of": {"mode": "invocation_time"},
+            "uses_twin_snapshot": False,
+        },
+        "capability": {
+            "key": "query_loan_application",
+            "name": "贷款申请查询",
+            "read_only": True,
+        },
+    }
+    return {
+        "model_release_id": release_id,
+        "contract_hash": service_module.canonical_sha256(snapshot),
+        "contract_json": snapshot,
+    }
+
+
+def _bound_grant(**overrides) -> dict:
+    return {
+        "id": 19,
+        "client_id": 8,
+        "domain_id": 9,
+        "capability_key": "query_loan_application",
+        "execution_agent_id": 17,
+        "status": "active",
+        **_contract_binding(),
+        **overrides,
+    }
+
+
+def _mock_contract_binding(monkeypatch, service, binding=None):
+    binding = binding or _contract_binding()
+    builder = Mock(return_value=binding)
+    monkeypatch.setattr(service, "_build_contract_binding", builder)
+    return binding, builder
 
 
 @pytest.mark.asyncio
@@ -93,15 +147,262 @@ async def test_client_authentication_rejects_wrong_secret_and_updates_last_used(
 
 
 @pytest.mark.asyncio
-async def test_external_invoke_uses_grant_adapter_and_audits_summary_only(monkeypatch):
-    grant = {
-        "id": 19,
-        "client_id": 8,
-        "domain_id": 9,
-        "capability_key": "query_loan_application",
-        "execution_agent_id": 17,
-        "status": "active",
+async def test_grant_without_agent_auto_resolves_internal_permission_adapter(monkeypatch):
+    db = FakeDB()
+    monkeypatch.setattr(service_module, "get_management_db", lambda: db)
+    service = CapabilityAccessService()
+    monkeypatch.setattr(service, "get_client", AsyncMock(return_value={"id": 8}))
+    monkeypatch.setattr(
+        service,
+        "_resolve_domain_permission_adapter",
+        AsyncMock(return_value=17),
+    )
+    load_context = AsyncMock(return_value=({}, SimpleNamespace(domain=SimpleNamespace())))
+    monkeypatch.setattr(service, "_load_execution_context", load_context)
+    binding, _ = _mock_contract_binding(monkeypatch, service)
+    monkeypatch.setattr(
+        service,
+        "get_grant",
+        AsyncMock(
+            return_value={
+                "id": 31,
+                "client_id": 8,
+                "domain_id": 9,
+                "capability_key": "query_loan_application",
+                "execution_agent_id": 17,
+                "status": "active",
+            }
+        ),
+    )
+
+    grant = await service.upsert_grant(
+        8,
+        CapabilityGrantUpsertPayload(
+            domain_id=9,
+            capability_key="query_loan_application",
+        ),
+        actor_id=7,
+    )
+
+    service._resolve_domain_permission_adapter.assert_awaited_once_with(9)
+    load_context.assert_awaited_once_with(9, 17, "query_loan_application")
+    assert db.inserts[0][1]["execution_agent_id"] == 17
+    assert db.inserts[0][1]["model_release_id"] == 12
+    assert db.inserts[0][1]["contract_hash"] == binding["contract_hash"]
+    assert json.loads(db.inserts[0][1]["contract_json"])["data_policy"] == {
+        "strategy": "live_source",
+        "source": {"kind": "business_datasource", "datasource_id": 23},
+        "as_of": {"mode": "invocation_time"},
+        "uses_twin_snapshot": False,
     }
+    assert grant["execution_agent_id"] == 17
+
+
+@pytest.mark.asyncio
+async def test_grant_keeps_explicit_agent_override_for_legacy_clients(monkeypatch):
+    db = FakeDB()
+    monkeypatch.setattr(service_module, "get_management_db", lambda: db)
+    service = CapabilityAccessService()
+    monkeypatch.setattr(service, "get_client", AsyncMock(return_value={"id": 8}))
+    resolver = AsyncMock(return_value=99)
+    monkeypatch.setattr(service, "_resolve_domain_permission_adapter", resolver)
+    load_context = AsyncMock(return_value=({}, SimpleNamespace(domain=SimpleNamespace())))
+    monkeypatch.setattr(service, "_load_execution_context", load_context)
+    _mock_contract_binding(monkeypatch, service)
+    monkeypatch.setattr(service, "get_grant", AsyncMock(return_value={"id": 31}))
+
+    await service.upsert_grant(
+        8,
+        CapabilityGrantUpsertPayload(
+            domain_id=9,
+            capability_key="query_loan_application",
+            execution_agent_id=23,
+        ),
+        actor_id=7,
+    )
+
+    resolver.assert_not_awaited()
+    load_context.assert_awaited_once_with(9, 23, "query_loan_application")
+    assert db.inserts[0][1]["execution_agent_id"] == 23
+
+
+@pytest.mark.asyncio
+async def test_grant_without_agent_keeps_existing_permission_boundary(monkeypatch):
+    db = FakeDB(query_rows=[[{"execution_agent_id": 23}]])
+    monkeypatch.setattr(service_module, "get_management_db", lambda: db)
+    service = CapabilityAccessService()
+    monkeypatch.setattr(service, "get_client", AsyncMock(return_value={"id": 8}))
+    resolver = AsyncMock(return_value=99)
+    monkeypatch.setattr(service, "_resolve_domain_permission_adapter", resolver)
+    load_context = AsyncMock(return_value=({}, SimpleNamespace(domain=SimpleNamespace())))
+    monkeypatch.setattr(service, "_load_execution_context", load_context)
+    _mock_contract_binding(monkeypatch, service)
+    monkeypatch.setattr(service, "get_grant", AsyncMock(return_value={"id": 31}))
+
+    await service.upsert_grant(
+        8,
+        CapabilityGrantUpsertPayload(
+            domain_id=9,
+            capability_key="query_loan_application",
+        ),
+        actor_id=7,
+    )
+
+    resolver.assert_not_awaited()
+    load_context.assert_awaited_once_with(9, 23, "query_loan_application")
+    assert db.inserts[0][1]["execution_agent_id"] == 23
+
+
+@pytest.mark.asyncio
+async def test_revoking_grant_without_agent_reuses_stored_adapter(monkeypatch):
+    db = FakeDB(query_rows=[[{"execution_agent_id": 17}]])
+    monkeypatch.setattr(service_module, "get_management_db", lambda: db)
+    service = CapabilityAccessService()
+    monkeypatch.setattr(service, "get_client", AsyncMock(return_value={"id": 8}))
+    load_context = AsyncMock()
+    monkeypatch.setattr(service, "_load_execution_context", load_context)
+    monkeypatch.setattr(service, "get_grant", AsyncMock(return_value={"id": 31}))
+
+    await service.upsert_grant(
+        8,
+        CapabilityGrantUpsertPayload(
+            domain_id=9,
+            capability_key="query_loan_application",
+            status="revoked",
+        ),
+        actor_id=7,
+    )
+
+    load_context.assert_not_awaited()
+    assert db.inserts[0][1]["execution_agent_id"] == 17
+
+
+@pytest.mark.asyncio
+async def test_domain_permission_adapter_skips_consumer_without_datasource_access(
+    monkeypatch,
+):
+    service = CapabilityAccessService()
+    runtime_service = AsyncMock()
+    runtime_service.get_domain.return_value = SimpleNamespace(
+        id=9,
+        status="active",
+        datasource_id=23,
+    )
+    runtime_service.resolve_domain_agent.return_value = 17
+    runtime_service.get_domain_agent_ids.return_value = [17, 18]
+    monkeypatch.setattr(
+        service_module, "get_semantic_runtime_service", lambda: runtime_service
+    )
+    datasource_service = AsyncMock()
+    datasource_service.belongs_to_agent.side_effect = [False, True]
+    monkeypatch.setattr(
+        service_module, "get_datasource_service", lambda: datasource_service
+    )
+
+    resolved = await service._resolve_domain_permission_adapter(9)
+
+    assert resolved == 18
+    assert datasource_service.belongs_to_agent.await_args_list[0].args == (23, 17)
+    assert datasource_service.belongs_to_agent.await_args_list[1].args == (23, 18)
+
+
+def test_contract_binding_freezes_release_capability_and_live_source_policy(monkeypatch):
+    contract = {
+        "key": "query_loan_application",
+        "name": "贷款申请查询",
+        "read_only": True,
+        "metadata": {
+            "data_policy": {
+                "strategy": "live_source",
+                "source_kind": "business_datasource",
+                "as_of_mode": "invocation_time",
+                "uses_twin_snapshot": False,
+            }
+        },
+    }
+    monkeypatch.setattr(
+        service_module,
+        "build_query_capability_definitions",
+        Mock(return_value=[contract]),
+    )
+
+    binding = CapabilityAccessService._build_contract_binding(
+        9,
+        "query_loan_application",
+        {"model_release": {"id": 12, "model_hash": "c" * 64}},
+        SimpleNamespace(domain=SimpleNamespace(datasource_id=23)),
+    )
+
+    assert binding["model_release_id"] == 12
+    assert len(binding["contract_hash"]) == 64
+    assert binding["contract_json"]["capability"] == contract
+    assert binding["contract_json"]["data_policy"] == {
+        "strategy": "live_source",
+        "source": {"kind": "business_datasource", "datasource_id": 23},
+        "as_of": {"mode": "invocation_time"},
+        "uses_twin_snapshot": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_invoke_rejects_release_different_from_frozen_grant(monkeypatch):
+    db = FakeDB(query_rows=[[_bound_grant()]])
+    monkeypatch.setattr(service_module, "get_management_db", lambda: db)
+    service = CapabilityAccessService()
+    load_context = AsyncMock()
+    monkeypatch.setattr(service, "_load_execution_context", load_context)
+
+    with pytest.raises(
+        service_module.CapabilityConfigurationError,
+        match="与能力授权合同不一致",
+    ):
+        await service.invoke(
+            {"id": 8, "client_key": "cap_client", "name": "外部助手"},
+            "query_loan_application",
+            CapabilityInvokePayload(
+                domain_id=9,
+                model_release_id=13,
+                logic_form=LogicForm(metrics=["application_count"]),
+            ),
+        )
+
+    load_context.assert_not_awaited()
+    assert db.inserts[0][1]["model_release_id"] == 12
+    assert db.inserts[0][1]["status"] == "permission_blocked"
+
+
+@pytest.mark.asyncio
+async def test_invoke_rejects_tampered_frozen_contract(monkeypatch):
+    grant = _bound_grant(contract_hash="0" * 64)
+    db = FakeDB(query_rows=[[grant]])
+    monkeypatch.setattr(service_module, "get_management_db", lambda: db)
+    service = CapabilityAccessService()
+    monkeypatch.setattr(
+        service,
+        "_load_execution_context",
+        AsyncMock(return_value=({}, SimpleNamespace(domain=SimpleNamespace()))),
+    )
+    _mock_contract_binding(monkeypatch, service)
+
+    with pytest.raises(
+        service_module.CapabilityConfigurationError,
+        match="合同快照校验失败",
+    ):
+        await service.invoke(
+            {"id": 8, "client_key": "cap_client", "name": "外部助手"},
+            "query_loan_application",
+            CapabilityInvokePayload(
+                domain_id=9,
+                logic_form=LogicForm(metrics=["application_count"]),
+            ),
+        )
+
+    assert db.inserts[0][1]["status"] == "permission_blocked"
+
+
+@pytest.mark.asyncio
+async def test_external_invoke_uses_grant_adapter_and_audits_summary_only(monkeypatch):
+    grant = _bound_grant()
     db = FakeDB(query_rows=[[grant]])
     monkeypatch.setattr(service_module, "get_management_db", lambda: db)
     service = CapabilityAccessService()
@@ -118,17 +419,29 @@ async def test_external_invoke_uses_grant_adapter_and_audits_summary_only(monkey
         )
     )
     monkeypatch.setattr(service, "_load_execution_context", load_context)
+    _mock_contract_binding(monkeypatch, service)
     invoke = AsyncMock(
         return_value={
             "execution": {"status": "succeeded", "executed": True, "attempted": True},
             "sql_result": [{"channel": "APP", "application_count": 8}],
             "sql_error": None,
+            "compiled_plan": {
+                "sql": "SELECT channel, COUNT(*) FROM loan_application",
+                "executed_sql": "SELECT channel, COUNT(*) FROM loan_application LIMIT 1000",
+                "used_assets": ["metric:application_count", "mapping:channel"],
+            },
+            "executed_sql": "SELECT channel, COUNT(*) FROM loan_application LIMIT 1000",
             "execution_trace": {
                 "trace_id": "trc_external",
                 "target_object": "LoanApplication",
                 "model_release": {"id": 12, "version": 3},
                 "semantic_snapshot": {"id": 8},
                 "ontology_release": {"id": 4, "version": 2},
+                "executed_sql": "SELECT channel, COUNT(*) FROM loan_application LIMIT 1000",
+                "sql_execution": {
+                    "compiled_sql": "SELECT channel, COUNT(*) FROM loan_application LIMIT 1000",
+                    "duration_ms": 12.5,
+                },
             },
         }
     )
@@ -153,11 +466,23 @@ async def test_external_invoke_uses_grant_adapter_and_audits_summary_only(monkey
         9,
         17,
         "query_loan_application",
-        model_release_id=None,
+        model_release_id=12,
     )
     invoke.assert_awaited_once()
     assert response["trace_id"] == "trc_external"
     assert response["result"]["sql_result"][0]["channel"] == "APP"
+    assert "executed_sql" not in response["result"]
+    assert "sql" not in response["result"]["compiled_plan"]
+    assert "executed_sql" not in response["result"]["compiled_plan"]
+    assert "executed_sql" not in response["result"]["execution_trace"]
+    assert response["result"]["execution_trace"]["sql_execution"] == {
+        "duration_ms": 12.5
+    }
+    assert "SELECT channel" not in json.dumps(response, ensure_ascii=False)
+    assert response["result"]["compiled_plan"]["used_assets"] == [
+        "metric:application_count",
+        "mapping:channel",
+    ]
     audit_params = db.inserts[0][1]
     request_summary = json.loads(audit_params["request_summary"])
     result_summary = json.loads(audit_params["result_summary"])
@@ -172,6 +497,160 @@ async def test_external_invoke_uses_grant_adapter_and_audits_summary_only(monkey
     assert audit_params["model_release_id"] == 12
     assert audit_params["semantic_snapshot_id"] == 8
     assert audit_params["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_external_unmodeled_logic_form_is_structured_and_never_falls_back(
+    monkeypatch,
+):
+    grant = {
+        "id": 19,
+        "client_id": 8,
+        "domain_id": 9,
+        "capability_key": "query_loan_application",
+        "execution_agent_id": 17,
+        "status": "active",
+    }
+    db = FakeDB(query_rows=[[grant]])
+    monkeypatch.setattr(service_module, "get_management_db", lambda: db)
+    runtime = SemanticRuntime(
+        domain=SemanticDomain(
+            id=9,
+            agent_id=17,
+            datasource_id=23,
+            domain_key="loan_risk",
+            name="贷款风控",
+        ),
+        metrics=[
+            SemanticMetric(
+                domain_id=9,
+                metric_key="application_count",
+                name="申请笔数",
+                formula_sql="COUNT(*)",
+                base_table="loan_application",
+                dimensions=["channel"],
+                metadata={"object_key": "LoanApplication"},
+            )
+        ],
+        mappings=[
+            SemanticMapping(
+                domain_id=9,
+                asset_type="dimension",
+                asset_key="channel",
+                table_name="loan_application",
+                column_name="channel",
+                role="dimension",
+            )
+        ],
+    )
+    context = {
+        "domain": {"id": 9, "domain_key": "loan_risk", "name": "贷款风控"},
+        "model_release": {"id": 12, "version": 3, "status": "active"},
+        "semantic_snapshot": {"id": 8},
+        "ontology_release": {"id": 4, "version": 2},
+        "release": {"id": 4, "version": 2},
+        "object_types": [
+            {
+                "object_key": "LoanApplication",
+                "name": "贷款申请",
+                "status": "active",
+                "properties": [],
+            }
+        ],
+        "link_types": [],
+        "actions": [],
+        "warnings": [],
+    }
+    service = CapabilityAccessService()
+    monkeypatch.setattr(
+        service,
+        "_load_execution_context",
+        AsyncMock(return_value=(context, runtime)),
+    )
+    monkeypatch.setattr(service_module, "get_ontology_service", lambda: Mock())
+    executor = AsyncMock(side_effect=AssertionError("unmodeled query must not execute"))
+    monkeypatch.setattr(ontology_tools, "sql_execute_node", executor)
+
+    response = await service.invoke(
+        {"id": 8, "client_key": "cap_client", "name": "外部助手"},
+        "query_loan_application",
+        CapabilityInvokePayload(
+            domain_id=9,
+            logic_form=LogicForm(
+                metrics=["application_count"],
+                dimensions=["unmodeled_dimension"],
+            ),
+        ),
+    )
+
+    executor.assert_not_awaited()
+    assert response["status"] == "validation_blocked"
+    assert response["result"]["error"] == {
+        "code": "semantic_model_not_covered",
+        "category": "semantic_model",
+        "message": "请求未被当前已发布企业模型覆盖，未执行查询。",
+        "details": {
+            "validation_errors": [
+                "Capability 不支持维度: unmodeled_dimension",
+                "指标 application_count 不支持维度: unmodeled_dimension",
+                "未知维度: unmodeled_dimension",
+            ],
+            "fallback_allowed": False,
+        },
+    }
+    assert response["result"]["execution"]["attempted"] is False
+    assert response["result"]["execution"]["error_category"] == "semantic_model"
+    assert "compiled_plan" not in response["result"]
+    assert db.inserts[0][1]["status"] == "validation_blocked"
+    assert db.inserts[0][1]["error_category"] == "semantic_model"
+
+
+@pytest.mark.asyncio
+async def test_external_query_rejects_any_nl2sql_fallback_result(monkeypatch):
+    grant = _bound_grant()
+    db = FakeDB(query_rows=[[grant]])
+    monkeypatch.setattr(service_module, "get_management_db", lambda: db)
+    service = CapabilityAccessService()
+    monkeypatch.setattr(
+        service,
+        "_load_execution_context",
+        AsyncMock(
+            return_value=(
+                {},
+                SimpleNamespace(domain=SimpleNamespace(agent_id=17, datasource_id=23)),
+            )
+        ),
+    )
+    _mock_contract_binding(monkeypatch, service)
+    monkeypatch.setattr(service_module, "get_ontology_service", lambda: object())
+    monkeypatch.setattr(
+        service_module,
+        "invoke_ontology_tool",
+        AsyncMock(
+            return_value={
+                "execution": {
+                    "status": "succeeded",
+                    "executed": True,
+                    "mode": "nl2sql_fallback",
+                },
+                "sql_result": [{"application_count": 8}],
+                "execution_trace": {"compile_strategy": "nl2sql_fallback"},
+            }
+        ),
+    )
+
+    with pytest.raises(service_module.CapabilityAccessError, match="禁止使用 NL2SQL 兜底"):
+        await service.invoke(
+            {"id": 8, "client_key": "cap_client", "name": "外部助手"},
+            "query_loan_application",
+            CapabilityInvokePayload(
+                domain_id=9,
+                logic_form=LogicForm(metrics=["application_count"]),
+            ),
+        )
+
+    assert db.inserts[0][1]["status"] == "validation_blocked"
+    assert db.inserts[0][1]["error_category"] == "validation"
 
 
 @pytest.mark.asyncio
@@ -214,7 +693,12 @@ def test_capability_access_schema_and_routes_are_registered():
     assert "secret_hash" in ddl
     assert "client_secret" not in ddl
     assert "CREATE TABLE IF NOT EXISTS capability_grant" in ddl
-    assert "execution_agent_id BIGINT NOT NULL" in ddl
+    assert "execution_agent_id BIGINT DEFAULT NULL" in ddl
+    assert "旧领域兼容的内部数据权限适配ID" in ddl
+    assert "model_release_id BIGINT DEFAULT NULL" in ddl
+    assert "contract_hash CHAR(64) DEFAULT NULL" in ddl
+    assert "contract_json JSON DEFAULT NULL" in ddl
+    assert "idx_capability_grant_release" in ddl
     assert "CREATE TABLE IF NOT EXISTS capability_invocation_audit" in ddl
     assert "model_release_id BIGINT" in ddl
     assert "semantic_snapshot_id BIGINT" in ddl
@@ -266,14 +750,7 @@ async def test_execution_context_requires_active_unified_model(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_successful_query_is_returned_when_audit_write_fails(monkeypatch):
-    grant = {
-        "id": 19,
-        "client_id": 8,
-        "domain_id": 9,
-        "capability_key": "query_loan_application",
-        "execution_agent_id": 17,
-        "status": "active",
-    }
+    grant = _bound_grant()
     db = FakeDB(query_rows=[[grant]])
     monkeypatch.setattr(service_module, "get_management_db", lambda: db)
     service = CapabilityAccessService()
@@ -287,6 +764,7 @@ async def test_successful_query_is_returned_when_audit_write_fails(monkeypatch):
             )
         ),
     )
+    _mock_contract_binding(monkeypatch, service)
     monkeypatch.setattr(
         service_module,
         "invoke_ontology_tool",
@@ -324,14 +802,7 @@ async def test_successful_query_is_returned_when_audit_write_fails(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_database_error_is_sanitized_for_external_caller(monkeypatch):
-    grant = {
-        "id": 19,
-        "client_id": 8,
-        "domain_id": 9,
-        "capability_key": "query_loan_application",
-        "execution_agent_id": 17,
-        "status": "active",
-    }
+    grant = _bound_grant()
     db = FakeDB(query_rows=[[grant]])
     monkeypatch.setattr(service_module, "get_management_db", lambda: db)
     service = CapabilityAccessService()
@@ -345,6 +816,7 @@ async def test_database_error_is_sanitized_for_external_caller(monkeypatch):
             )
         ),
     )
+    _mock_contract_binding(monkeypatch, service)
     raw_error = "Unknown column 'customer_secret' in field list"
     monkeypatch.setattr(
         service_module,

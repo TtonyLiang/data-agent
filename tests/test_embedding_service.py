@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from app.services import embedding_adapter, embedding_service
@@ -63,6 +65,80 @@ async def test_embedding_service_sends_bearer_token_when_configured(monkeypatch)
         "input": ["hello"],
         "encoding_format": "float",
     }
+
+
+@pytest.mark.asyncio
+async def test_embedding_index_identity_is_config_based_not_agent_based(monkeypatch):
+    settings = SimpleNamespace(
+        embedding_base_url="https://default.example/v1",
+        embedding_api_key="default-secret",
+        embedding_model="default-embedding",
+        embedding_dimension=1024,
+    )
+    config = SimpleNamespace(
+        id=5,
+        provider="openai-compatible",
+        base_url="https://embedding.example/v1",
+        model_name="embedding-3",
+        embedding_dimension=1536,
+        updated_at="2026-09-08 10:00:00",
+    )
+
+    class ModelConfigService:
+        async def get_agent_embedding_config(self, agent_id):
+            assert agent_id in {3, 4}
+            return config
+
+    monkeypatch.setattr(embedding_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        embedding_service,
+        "get_model_config_service",
+        lambda: ModelConfigService(),
+    )
+    service = embedding_service.EmbeddingService()
+
+    first = await service.get_index_identity(3)
+    second = await service.get_index_identity(4)
+
+    assert first == second
+    assert first["config_id"] == 5
+    assert first["dimension"] == 1536
+    assert first["version"]
+
+
+@pytest.mark.asyncio
+async def test_embedding_index_identity_changes_with_model_config_version(monkeypatch):
+    settings = SimpleNamespace(
+        embedding_base_url="https://default.example/v1",
+        embedding_api_key="",
+        embedding_model="default-embedding",
+        embedding_dimension=1024,
+    )
+    config = SimpleNamespace(
+        id=5,
+        provider="openai-compatible",
+        base_url="https://embedding.example/v1",
+        model_name="embedding-3",
+        embedding_dimension=1536,
+        updated_at="2026-09-08 10:00:00",
+    )
+
+    class ModelConfigService:
+        async def get_agent_embedding_config(self, _agent_id):
+            return config
+
+    monkeypatch.setattr(embedding_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        embedding_service,
+        "get_model_config_service",
+        lambda: ModelConfigService(),
+    )
+    service = embedding_service.EmbeddingService()
+    previous = await service.get_index_identity(3)
+    config.updated_at = "2026-09-08 11:00:00"
+    current = await service.get_index_identity(3)
+
+    assert previous["version"] != current["version"]
 
 
 @pytest.mark.asyncio

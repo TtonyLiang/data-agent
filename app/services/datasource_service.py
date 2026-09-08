@@ -140,6 +140,8 @@ class DatasourceService:
         logger.info("datasource delete id=%s", ds_id)
         db = get_management_db()
         statements = [
+            ("DELETE FROM domain_table_permission WHERE datasource_id = :id", {"id": ds_id}),
+            ("DELETE FROM domain_column_permission WHERE datasource_id = :id", {"id": ds_id}),
             ("DELETE FROM agent_table_permission WHERE datasource_id = :id", {"id": ds_id}),
             ("DELETE FROM agent_column_permission WHERE datasource_id = :id", {"id": ds_id}),
             ("DELETE FROM agent_datasource WHERE datasource_id = :id", {"id": ds_id}),

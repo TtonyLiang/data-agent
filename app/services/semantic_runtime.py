@@ -378,6 +378,8 @@ class SemanticRuntimeService:
         db = get_management_db()
         statements: list[tuple[str, dict[str, int]]] = []
         for table in (
+            "domain_table_permission",
+            "domain_column_permission",
             "decision_audit_head",
             "decision_audit_event",
             "capability_invocation_audit",

@@ -82,7 +82,7 @@ capability key + 业务参数
 
 - 沿用现有 SQL 安全校验、数据源/表列权限和结果脱敏，不另起一套安全链路。
 - 只允许受控的单条只读查询；Query Capability 不调用 `execute_action()`，也不写入对象或外部系统。
-- 当前独立 Query Capability 仍通过内置验证 Agent 做 `datasource_id` 兼容校验；正式第三方调用应改为 `domain_id + release_id + caller context`，不要求外部调用方创建内部 Agent。
+- 当前独立 Query Capability 已按 `domain_id + release_id + caller context` 授权并优先使用领域级表列权限；旧领域无领域规则时才显式回退内部验证 Agent 权限，不要求外部调用方创建内部 Agent。
 - `execution.status` 取 `validation_blocked`、`security_blocked`、`permission_blocked`、`database_error` 或 `succeeded`；校验阻断时 `attempted=false`，进入 SQL 执行节点后 `attempted=true`，只有 `succeeded` 才设置 `executed=true`。
 - 结果返回 `executed_sql`（SQL 执行节点规范化后的实际语句；未实际执行或失败时可能为空）和 `execution_trace`，其中保留服务端 `trace_id`、`domain_id`、`datasource_id`、Query Capability 及 Ontology `release`。
 - 现有 Chat 图的 SQL 确认开关和 HITL 门禁继续保留；独立 `ontology_query_capability` 第一版不进入该确认门禁，而是按简化流程直接执行只读 SQL。本版本不新增完整的 capability 级人工确认、影子运行或发布治理。
@@ -168,7 +168,7 @@ Typed Capability Facade（本项目的 OSDK-like 适配层）
 
 语义映射的作用是预先声明：标准对象、属性、指标和关系如何落到物理数据。运行时的内置验证 Agent 或外部 Agent 都应消费已经定义的映射和能力，不应每次根据问题临时猜表名、字段名或 JOIN 路径。
 
-本项目现有的 `semantic_mapping`、`semantic_relation`、`semantic_metric` 和已采集 schema 已经具备这类基础能力，但目前它们与 Ontology 对象类型之间仍是松散并列关系，需要增加稳定的桥接语义。
+本项目现有的 `semantic_mapping`、`semantic_relation`、`semantic_metric` 和已采集 schema 已具备这类基础能力。当前 `semantic_relation` 已强制显式引用 Ontology link 并校验方向，指标和映射通过稳定对象/属性 key 桥接；后续继续增强自动映射与影响分析，不再维护第二套独立业务关系。
 
 ## 4. 当前项目基线
 
@@ -417,7 +417,7 @@ ActionCapabilityExecutor
 | Typed facade | 为内置验证 Agent、外部 Agent、报告和风险流程提供统一调用入口 |
 | 统一错误模型 | 区分语义不匹配、无数据、权限不足、参数错误、执行失败和系统错误 |
 
-独立 Query Capability API 在进入工具执行前校验 `datasource_id` 非空，并通过当前兼容层确认数据边界；执行结果使用 `validation_blocked`、`security_blocked`、`permission_blocked`、`database_error` 和 `succeeded` 区分阶段，成功时才返回 `executed=true`，并保留 `executed_sql`、`trace_id`、领域/数据源及 Ontology `release` 信息。正式外部调用应逐步改为调用方上下文授权。
+独立 Query Capability API 在进入工具执行前校验 `datasource_id` 非空，并按调用凭据、业务领域、冻结模型版本和领域表列权限确认数据边界；旧领域没有正式权限时才显式使用 Agent 兼容规则。执行结果使用 `validation_blocked`、`security_blocked`、`permission_blocked`、`database_error` 和 `succeeded` 区分阶段，成功时才返回 `executed=true`。内部调试可保留 SQL，外部标准响应会移除物理 SQL，只返回业务结果、状态和可公开 trace。
 
 ### 7.6 影子运行和切流控制
 

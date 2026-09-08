@@ -63,6 +63,7 @@ async def sql_execute_node(state: dict) -> dict:
     )
     sql = state.get("compiled_sql") or state.get("sql_text", "")
     agent_id = state.get("agent_id")
+    domain_id = state.get("permission_domain_id")
     datasource_id = state.get("datasource_id")
     retry_count = state.get("sql_retry_count", 0)
     trace_id = state.get("trace_id", "")
@@ -117,10 +118,33 @@ async def sql_execute_node(state: dict) -> dict:
         for key in parameter_names
     }
 
-    # 第2步:权限校验 —— 检查 SQL 引用的表是否在 agent 白名单内
+    # 第2步:权限校验 —— 领域规则优先；旧领域可显式兼容 Agent 白名单
     permission_service = get_permission_service()
-    access_ok, access_reason = await permission_service.validate_sql_access(
-        agent_id, datasource_id, safe_sql
+    permission_context = None
+    resolve_domain_permissions = getattr(
+        permission_service, "resolve_domain_permission_context", None
+    )
+    if domain_id and datasource_id and callable(resolve_domain_permissions):
+        permission_context = await resolve_domain_permissions(
+            int(domain_id),
+            int(datasource_id),
+            compatibility_agent_id=(
+                state.get("permission_compatibility_agent_id") or agent_id
+            ),
+            allow_agent_fallback=bool(
+                state.get("allow_agent_permission_fallback")
+            ),
+        )
+        access_ok, access_reason = permission_service.validate_sql_access_with_context(
+            permission_context,
+            safe_sql,
+        )
+    else:
+        access_ok, access_reason = await permission_service.validate_sql_access(
+            agent_id, datasource_id, safe_sql
+        )
+    permission_metadata = (
+        permission_context.metadata() if permission_context is not None else None
     )
     logger.info(
         "sql permission check trace_id=%s agent_id=%s datasource_id=%s allowed=%s reason=%s",
@@ -142,6 +166,7 @@ async def sql_execute_node(state: dict) -> dict:
                 "permission": {
                     "allowed": False,
                     "reason": access_reason,
+                    **({"subject": permission_metadata} if permission_metadata else {}),
                 },
             },
         }
@@ -153,9 +178,16 @@ async def sql_execute_node(state: dict) -> dict:
     )
     if callable(resolve_result_policies):
         try:
-            result_column_policies = await resolve_result_policies(
-                agent_id, datasource_id, safe_sql
-            )
+            if permission_context is not None:
+                result_column_policies = (
+                    permission_service.get_result_column_policies_with_context(
+                        permission_context, safe_sql
+                    )
+                )
+            else:
+                result_column_policies = await resolve_result_policies(
+                    agent_id, datasource_id, safe_sql
+                )
         except ValueError as exc:
             result = {
                 "sql_result": [],
@@ -168,6 +200,7 @@ async def sql_execute_node(state: dict) -> dict:
                     "permission": {
                         "allowed": False,
                         "reason": str(exc),
+                        **({"subject": permission_metadata} if permission_metadata else {}),
                     },
                 },
             }
@@ -189,7 +222,13 @@ async def sql_execute_node(state: dict) -> dict:
             if sql_params
             else await db.execute_query(safe_sql)
         )
-        if result_column_policies:
+        if permission_context is not None:
+            masked_results, masking_applied = permission_service.mask_rows_with_context(
+                permission_context,
+                results,
+                result_column_policies=result_column_policies,
+            )
+        elif result_column_policies:
             masked_results, masking_applied = await permission_service.mask_rows(
                 agent_id,
                 datasource_id,
@@ -228,6 +267,7 @@ async def sql_execute_node(state: dict) -> dict:
                 "permission": {
                     "allowed": True,
                     "masked_columns": masking_applied,
+                    **({"subject": permission_metadata} if permission_metadata else {}),
                 },
             }
         )

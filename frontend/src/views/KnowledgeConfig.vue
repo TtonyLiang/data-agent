@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h2>语义与数据口径</h2>
-        <p>为业务对象配置指标、规则、查询口径和数据库字段映射。</p>
+        <p>沉淀可供 Agent 复用的业务口径，并将其绑定到真实数据；业务关系统一引用企业本体。</p>
       </div>
       <div class="header-actions">
         <div class="toolbar-row">
@@ -42,7 +42,7 @@
         <strong>{{ assetCounts.concept }}</strong>
       </div>
       <div class="summary-item">
-        <span>关系</span>
+        <span>关系查询路径</span>
         <strong>{{ assetCounts.relation }}</strong>
       </div>
       <div class="summary-item">
@@ -73,7 +73,9 @@
               <h3>{{ tab.label }}</h3>
               <p>{{ tab.description }}</p>
             </div>
-            <el-button type="primary" size="small" @click="openAssetDialog(tab.name)">添加资产</el-button>
+            <el-button type="primary" size="small" @click="openAssetDialog(tab.name)">
+              {{ tab.name === 'relation' ? '配置查询路径' : '添加资产' }}
+            </el-button>
           </div>
 
           <div class="asset-table-wrap">
@@ -84,7 +86,7 @@
               size="small"
               class="asset-table"
             >
-              <el-table-column v-if="tab.name !== 'mapping'" label="标识" min-width="170">
+              <el-table-column v-if="tab.name !== 'mapping'" :label="tab.name === 'relation' ? '本体关系标识' : '标识'" min-width="170">
                 <template #default="{ row }">{{ assetKey(row, tab.name) }}</template>
               </el-table-column>
               <el-table-column v-if="tab.name !== 'mapping'" prop="name" label="名称" min-width="150" />
@@ -219,9 +221,13 @@
                   <el-option label="事件" value="event" />
                   <el-option label="状态" value="state" />
                   <el-option label="维度" value="dimension" />
-                  <el-option label="动作" value="action" />
+                  <el-option label="动作词汇（不可执行）" value="action" />
                 </el-select>
               </el-form-item>
+              <div v-if="assetDraft.concept_type === 'action'" class="asset-boundary-note" role="note">
+                <strong>这里只维护动作词汇，不提供执行能力</strong>
+                <span>它用于帮助 Agent 理解“审批、驳回、分配”等业务表达。带权限、前置条件和状态效果的可执行业务动作，请在“业务本体与动作”中维护。</span>
+              </div>
               <el-form-item label="名称">
                 <el-input v-model="assetDraft.name" placeholder="如 订单" />
               </el-form-item>
@@ -234,81 +240,127 @@
             </template>
 
             <template v-else-if="editingAssetType === 'relation'">
-              <el-form-item label="标识">
-                <el-input v-model="assetDraft.relation_key" placeholder="如 order_to_customer" />
-              </el-form-item>
-              <el-form-item label="类型">
-                <el-select v-model="assetDraft.relation_type">
-                  <el-option label="关联路径" value="join_path" />
-                  <el-option label="对象关系" value="relationship" />
-                  <el-option label="事件链路" value="event_flow" />
-                  <el-option label="状态流转" value="state_transition" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="名称">
-                <el-input v-model="assetDraft.name" />
-              </el-form-item>
-              <el-form-item label="源概念">
-                <el-input v-model="assetDraft.source_concept" placeholder="如 Order" />
-              </el-form-item>
-              <el-form-item label="目标概念">
-                <el-input v-model="assetDraft.target_concept" placeholder="如 Customer" />
-              </el-form-item>
-              <el-form-item label="左表字段">
-                <el-input v-model="assetDraft.join_left" placeholder="如 orders.customer_id" />
-              </el-form-item>
-              <el-form-item label="右表字段">
-                <el-input v-model="assetDraft.join_right" placeholder="如 customers.customer_id" />
-              </el-form-item>
-              <el-form-item label="描述">
-                <el-input v-model="assetDraft.description" type="textarea" :rows="3" />
-              </el-form-item>
+              <div class="asset-boundary-note" role="note">
+                <strong>引用本体关系，不重复定义业务关系</strong>
+                <span>业务关系只在“业务本体与动作”中维护一份。这里选择已有的本体关系，并为查询运行时补充物理 JOIN 绑定。</span>
+              </div>
+              <section class="asset-form-section" aria-labelledby="relation-reference-title">
+                <div class="asset-form-section-heading">
+                  <div>
+                    <strong id="relation-reference-title">业务语义引用</strong>
+                    <span>业务人员确认要用于查询的关系，名称、方向和业务定义来自企业本体。</span>
+                  </div>
+                  <el-tag size="small" effect="plain">业务口径</el-tag>
+                </div>
+                <el-form-item label="已有本体业务关系" required>
+                  <el-select
+                    v-model="assetDraft.relation_key"
+                    filterable
+                    placeholder="选择已定义的业务关系"
+                    no-data-text="当前领域尚未定义业务关系"
+                    @change="handleOntologyLinkSelect"
+                  >
+                    <el-option
+                      v-if="hasLegacyRelationReference"
+                      :label="`历史关系（待补齐本体） ${assetDraft.relation_key}`"
+                      :value="assetDraft.relation_key"
+                      disabled
+                    />
+                    <el-option
+                      v-for="item in ontologyLinkTypes"
+                      :key="item.id"
+                      :label="`${item.name} (${item.link_key})`"
+                      :value="item.link_key"
+                    />
+                  </el-select>
+                  <span class="form-help">找不到所需关系时，请先到“业务本体与动作”创建业务关系，再回到这里配置查询路径。</span>
+                </el-form-item>
+                <div v-if="assetDraft.relation_key" class="relation-reference-summary">
+                  <div class="relation-reference-title">
+                    <strong>{{ relationReferenceName }}</strong>
+                    <el-tag v-if="selectedOntologyLink" size="small" type="success" effect="plain">已引用本体</el-tag>
+                    <el-tag v-else size="small" type="warning" effect="plain">旧数据待关联</el-tag>
+                  </div>
+                  <code>{{ assetDraft.relation_key }}</code>
+                  <span>{{ relationReferenceDirection }}</span>
+                  <p>{{ relationReferenceDescription }}</p>
+                </div>
+              </section>
+              <details class="advanced-asset-settings">
+                <summary>物理 JOIN 绑定（管理员 / 数据工程师高级配置）</summary>
+                <div class="advanced-asset-note">
+                  这里只说明该业务关系在数据库中如何连接，不改变关系本身的业务含义。字段格式建议为“表名.字段名”。
+                </div>
+                <el-form-item label="左侧物理字段">
+                  <el-input v-model="assetDraft.join_left" placeholder="如 orders.customer_id" />
+                </el-form-item>
+                <el-form-item label="右侧物理字段">
+                  <el-input v-model="assetDraft.join_right" placeholder="如 customers.customer_id" />
+                </el-form-item>
+              </details>
             </template>
 
             <template v-else-if="editingAssetType === 'metric'">
-              <el-form-item label="标识">
-                <el-input v-model="assetDraft.metric_key" placeholder="如 order_count" />
-              </el-form-item>
-              <el-form-item label="名称">
-                <el-input v-model="assetDraft.name" placeholder="如 订单数" />
-              </el-form-item>
-              <el-form-item label="指标类型">
-                <el-select v-model="assetDraft.metric_type">
-                  <el-option label="度量" value="measure" />
-                  <el-option label="比率" value="ratio" />
-                  <el-option label="计数" value="count" />
-                  <el-option label="维度指标" value="dimension_metric" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="基础表">
-                <el-input v-model="assetDraft.base_table" placeholder="如 orders" />
-              </el-form-item>
-              <el-form-item label="时间字段">
-                <el-input v-model="assetDraft.time_field" placeholder="如 orders.created_at" />
-              </el-form-item>
-              <el-form-item label="计算公式">
-                <el-input v-model="assetDraft.formula_sql" type="textarea" :rows="3" placeholder="支持 {base} 表别名占位" />
-              </el-form-item>
-              <el-form-item label="可用维度">
-                <el-input v-model="assetDraft.dimensions_text" placeholder="如 product_type, region, channel" />
-              </el-form-item>
-              <el-form-item label="同义词">
-                <el-input v-model="assetDraft.synonyms_text" placeholder="多个词用逗号或换行分隔" />
-              </el-form-item>
-              <el-form-item label="默认过滤">
-                <div class="inline-fields">
-                  <el-input v-model="assetDraft.default_filter_field" placeholder="字段" />
-                  <el-select v-model="assetDraft.default_filter_operator" class="operator-select">
-                    <el-option label="=" value="=" />
-                    <el-option label="!=" value="!=" />
-                    <el-option label="in" value="in" />
-                  </el-select>
-                  <el-input v-model="assetDraft.default_filter_value" placeholder="值" />
+              <div class="asset-boundary-note" role="note">
+                <strong>先确认业务口径，再绑定物理数据</strong>
+                <span>业务人员负责确认指标名称、含义和适用维度；管理员或数据工程师负责表、字段和 SQL 公式。</span>
+              </div>
+              <section class="asset-form-section" aria-labelledby="metric-business-title">
+                <div class="asset-form-section-heading">
+                  <div>
+                    <strong id="metric-business-title">指标业务口径</strong>
+                    <span>这些定义会直接影响 Agent 对用户问题的理解和口径选择。</span>
+                  </div>
+                  <el-tag size="small" effect="plain">业务人员确认</el-tag>
                 </div>
-              </el-form-item>
-              <el-form-item label="描述">
-                <el-input v-model="assetDraft.description" type="textarea" :rows="3" />
-              </el-form-item>
+                <el-form-item label="指标标识">
+                  <el-input v-model="assetDraft.metric_key" placeholder="如 order_count" />
+                </el-form-item>
+                <el-form-item label="指标名称">
+                  <el-input v-model="assetDraft.name" placeholder="如 订单数" />
+                </el-form-item>
+                <el-form-item label="指标类型">
+                  <el-select v-model="assetDraft.metric_type">
+                    <el-option label="度量" value="measure" />
+                    <el-option label="比率" value="ratio" />
+                    <el-option label="计数" value="count" />
+                    <el-option label="维度指标" value="dimension_metric" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="业务口径说明">
+                  <el-input v-model="assetDraft.description" type="textarea" :rows="3" placeholder="说明统计范围、排除项和时间口径" />
+                </el-form-item>
+                <el-form-item label="同义词">
+                  <el-input v-model="assetDraft.synonyms_text" placeholder="多个词用逗号或换行分隔" />
+                </el-form-item>
+                <el-form-item label="可用维度">
+                  <el-input v-model="assetDraft.dimensions_text" placeholder="如 product_type, region, channel" />
+                </el-form-item>
+                <el-form-item label="默认过滤">
+                  <div class="inline-fields">
+                    <el-input v-model="assetDraft.default_filter_field" placeholder="语义字段" />
+                    <el-select v-model="assetDraft.default_filter_operator" class="operator-select">
+                      <el-option label="=" value="=" />
+                      <el-option label="!=" value="!=" />
+                      <el-option label="in" value="in" />
+                    </el-select>
+                    <el-input v-model="assetDraft.default_filter_value" placeholder="值" />
+                  </div>
+                </el-form-item>
+              </section>
+              <details class="advanced-asset-settings">
+                <summary>物理数据绑定（管理员 / 数据工程师高级配置）</summary>
+                <div class="advanced-asset-note">以下配置决定查询运行时如何从数据库计算该指标，不应由业务人员自行修改。</div>
+                <el-form-item label="基础物理表" required>
+                  <el-input v-model="assetDraft.base_table" placeholder="如 orders" />
+                </el-form-item>
+                <el-form-item label="物理时间字段">
+                  <el-input v-model="assetDraft.time_field" placeholder="如 orders.created_at" />
+                </el-form-item>
+                <el-form-item label="SQL 计算公式" required>
+                  <el-input v-model="assetDraft.formula_sql" type="textarea" :rows="3" placeholder="支持 {base} 表别名占位" />
+                </el-form-item>
+              </details>
             </template>
 
             <template v-else-if="editingAssetType === 'rule'">
@@ -348,38 +400,55 @@
             </template>
 
             <template v-else-if="editingAssetType === 'mapping'">
-              <el-form-item label="资产类型">
-                <el-select v-model="assetDraft.asset_type">
-                  <el-option label="维度" value="dimension" />
-                  <el-option label="过滤项" value="filter" />
-                  <el-option label="指标" value="metric" />
-                  <el-option label="概念" value="concept" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="资产键">
-                <el-input v-model="assetDraft.asset_key" placeholder="如 product_type" />
-              </el-form-item>
-              <el-form-item label="角色">
-                <el-select v-model="assetDraft.role">
-                  <el-option label="维度" value="dimension" />
-                  <el-option label="过滤" value="filter" />
-                  <el-option label="时间" value="time" />
-                  <el-option label="字段" value="field" />
-                  <el-option label="度量" value="measure" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="表名">
-                <el-input v-model="assetDraft.table_name" placeholder="如 orders" />
-              </el-form-item>
-              <el-form-item label="字段名">
-                <el-input v-model="assetDraft.column_name" placeholder="如 product_type" />
-              </el-form-item>
-              <el-form-item label="表达式">
-                <el-input v-model="assetDraft.expression_sql" placeholder="可选，字段映射为空时使用" />
-              </el-form-item>
-              <el-form-item label="数据类型">
-                <el-input v-model="assetDraft.data_type" placeholder="如 varchar / int / decimal" />
-              </el-form-item>
+              <div class="asset-boundary-note" role="note">
+                <strong>映射只负责技术落地，不重新定义业务含义</strong>
+                <span>业务人员先在对象、指标和规则中确认口径；本页由管理员或数据工程师把语义资产绑定到真实表字段。</span>
+              </div>
+              <section class="asset-form-section" aria-labelledby="mapping-semantic-title">
+                <div class="asset-form-section-heading">
+                  <div>
+                    <strong id="mapping-semantic-title">业务语义引用</strong>
+                    <span>选择要落到数据库的语义资产及其查询角色。</span>
+                  </div>
+                  <el-tag size="small" effect="plain">引用既有口径</el-tag>
+                </div>
+                <el-form-item label="资产类型">
+                  <el-select v-model="assetDraft.asset_type">
+                    <el-option label="维度" value="dimension" />
+                    <el-option label="过滤项" value="filter" />
+                    <el-option label="指标" value="metric" />
+                    <el-option label="概念" value="concept" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="语义资产键">
+                  <el-input v-model="assetDraft.asset_key" placeholder="如 product_type" />
+                </el-form-item>
+                <el-form-item label="查询角色">
+                  <el-select v-model="assetDraft.role">
+                    <el-option label="维度" value="dimension" />
+                    <el-option label="过滤" value="filter" />
+                    <el-option label="时间" value="time" />
+                    <el-option label="字段" value="field" />
+                    <el-option label="度量" value="measure" />
+                  </el-select>
+                </el-form-item>
+              </section>
+              <details class="advanced-asset-settings">
+                <summary>物理数据绑定（管理员 / 数据工程师高级配置）</summary>
+                <div class="advanced-asset-note">表名、字段名和 SQL 表达式属于技术实现。数据库结构变化时，只调整这里，不改变上层业务语义。</div>
+                <el-form-item label="物理表名" required>
+                  <el-input v-model="assetDraft.table_name" placeholder="如 orders" />
+                </el-form-item>
+                <el-form-item label="物理字段名">
+                  <el-input v-model="assetDraft.column_name" placeholder="如 product_type" />
+                </el-form-item>
+                <el-form-item label="SQL 表达式">
+                  <el-input v-model="assetDraft.expression_sql" placeholder="可选，字段映射为空时使用" />
+                </el-form-item>
+                <el-form-item label="数据类型">
+                  <el-input v-model="assetDraft.data_type" placeholder="如 varchar / int / decimal" />
+                </el-form-item>
+              </details>
             </template>
 
             <template v-else>
@@ -588,12 +657,14 @@ import {
   createSemanticSnapshot,
   deleteSemanticAsset,
   diffSemanticSnapshot,
+  fetchOntologyLinkTypes,
   fetchSemanticAssets,
   fetchSemanticSnapshots,
   rollbackSemanticSnapshot,
   syncSemanticVector,
   upsertSemanticAsset,
   validateSemanticDomain,
+  type OntologyLinkType,
   type SemanticDomain,
 } from '../api'
 import { formatDateTime } from '../utils/datetime'
@@ -624,18 +695,18 @@ const emit = defineEmits<{
 }>()
 
 const assetTabs = [
-  { name: 'concept', label: '对象/事件/状态', description: '业务对象、业务事件、状态和动作边界。' },
-  { name: 'relation', label: '关系', description: '对象关系、事件链路、状态变化和 JOIN 路径。' },
-  { name: 'metric', label: '指标', description: '指标口径、公式、默认时间字段和可切维度。' },
+  { name: 'concept', label: '对象/事件/状态', description: '业务对象、业务事件、状态、维度和不可执行的动作词汇。' },
+  { name: 'relation', label: '关系查询路径', description: '引用本体中已有业务关系，为跨对象查询补充物理 JOIN 绑定。' },
+  { name: 'metric', label: '指标', description: '先定义业务口径，再由管理员或数据工程师绑定表、字段和 SQL 公式。' },
   { name: 'rule', label: '规则', description: '过滤规则、时间规则、权限边界和动作约束。' },
-  { name: 'mapping', label: '映射', description: '语义资产到物理表字段或受控表达式的映射。' },
+  { name: 'mapping', label: '数据映射', description: '管理员或数据工程师将既有语义资产绑定到物理表字段或受控 SQL 表达式。' },
   { name: 'template', label: 'LogicForm 模板', description: '自然语言意图到结构化槽位的模板。' },
 ]
 
 const assetGuidePages: Record<string, AssetGuidePage> = {
   concept: {
     title: '对象/事件/状态填写说明',
-    subtitle: '用于定义业务世界里有哪些核心对象、发生过哪些事件、会经历哪些状态。它是后续关系、指标和规则的业务语境。',
+    subtitle: '用于定义业务世界里的对象、事件、状态、维度和词汇。动作词汇只帮助 Agent 理解表达，不代表可执行能力。',
     fields: [
       {
         key: 'concept_key',
@@ -649,9 +720,9 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         key: 'concept_type',
         label: '类型',
         title: '类型 concept_type',
-        purpose: '告诉系统这个概念是对象、事件、状态、维度还是动作。',
-        instructions: ['对象：业务实体，如订单、客户。', '事件：发生过的动作，如下单、支付、发货。', '状态：某个对象所处阶段，如订单状态、审批状态。'],
-        examples: ['Order 选择“对象”', 'OrderPaid 选择“事件”', 'OrderStatus 选择“状态”'],
+        purpose: '告诉系统这个概念是对象、事件、状态、维度还是不可执行的动作词汇。',
+        instructions: ['对象：业务实体，如订单、客户。', '事件：已经发生的业务事实，如支付完成。', '状态：某个对象所处阶段，如审批状态。', '动作词汇：帮助 Agent 识别“审批、驳回”等表达，不包含权限、前置条件和执行效果。'],
+        examples: ['Order 选择“对象”', 'OrderPaid 选择“事件”', 'OrderStatus 选择“状态”', 'Approve 选择“动作词汇（不可执行）”'],
       },
       {
         key: 'name',
@@ -680,70 +751,30 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
     ],
   },
   relation: {
-    title: '关系填写说明',
-    subtitle: '用于定义概念之间怎样关联，尤其是跨表查询时从一张表 JOIN 到另一张表的路径。',
+    title: '关系查询路径填写说明',
+    subtitle: '这里不创建第二份业务关系。先引用企业本体中已有的 link_key，再由管理员或数据工程师补充查询所需的物理 JOIN。',
     fields: [
       {
         key: 'relation_key',
-        label: '标识',
-        title: '标识 relation_key',
-        purpose: '关系在企业模型语义中的唯一英文键。',
-        instructions: ['使用英文 snake_case。', '建议按“源概念_to_目标概念”命名。'],
-        examples: ['order_to_customer', 'order_to_payment'],
-      },
-      {
-        key: 'relation_type',
-        label: '类型',
-        title: '类型 relation_type',
-        purpose: '说明这条关系的业务性质或技术用途。',
-        instructions: ['关联路径：用于 SQL JOIN。', '对象关系：描述两个业务对象的关系。', '事件链路/状态流转：描述业务过程。'],
-        examples: ['订单到客户选择“关联路径”'],
-      },
-      {
-        key: 'name',
-        label: '名称',
-        title: '名称',
-        purpose: '关系的中文展示名。',
-        instructions: ['用“源到目标”的业务说法。', '让配置人员一眼能理解这条关系。'],
-        examples: ['订单到客户', '订单到支付'],
-      },
-      {
-        key: 'source_concept',
-        label: '源概念',
-        title: '源概念',
-        purpose: '关系起点，必须引用已经配置过的概念标识。',
-        instructions: ['填写概念的英文标识。', '一般对应 JOIN 左侧或查询主对象。'],
-        examples: ['Order'],
-      },
-      {
-        key: 'target_concept',
-        label: '目标概念',
-        title: '目标概念',
-        purpose: '关系终点，必须引用已经配置过的概念标识。',
-        instructions: ['填写概念的英文标识。', '一般对应 JOIN 右侧或被关联对象。'],
-        examples: ['Customer'],
+        label: '已有本体业务关系',
+        title: '本体关系 link_key',
+        purpose: '引用“业务本体与动作”中已维护的业务关系，确保业务含义只有一个权威来源。',
+        instructions: ['从下拉列表选择已有关系。', '关系名称、起点对象、终点对象和业务定义会从企业本体带入。', '找不到所需关系时，先回到企业本体创建，不要在查询语义中另建一份。'],
+        examples: ['选择“客户提交贷款申请 (customer_submits_application)”'],
       },
       {
         key: 'join_path',
-        label: '左右表字段',
-        title: '左右表字段',
-        purpose: '告诉 SQL 编译器两张表用哪些字段连接。',
-        instructions: ['左表字段和右表字段都建议填写“表名.字段名”。', '字段必须存在于已采集 Schema。', '只配置稳定、真实的一对关系，不要写临时过滤条件。'],
+        label: '物理 JOIN 绑定',
+        title: '物理 JOIN 绑定',
+        purpose: '告诉查询编译器，这条既有业务关系在真实数据库中如何连接。',
+        instructions: ['由管理员或数据工程师填写。', '左右字段建议使用“表名.字段名”。', '字段必须存在于已采集 Schema。', '数据库结构变化时只调整绑定，不改变本体关系。'],
         examples: ['orders.customer_id = customers.customer_id'],
-      },
-      {
-        key: 'description',
-        label: '描述',
-        title: '描述',
-        purpose: '说明这条关系成立的业务条件。',
-        instructions: ['写清楚一对一、一对多或多对一。', '如果关系只适用于部分场景，也要说明。'],
-        examples: ['一个客户可以产生多个订单。'],
       },
     ],
   },
   metric: {
     title: '指标填写说明',
-    subtitle: '用于定义指标口径、公式、默认时间字段和可切维度，是自然语言问数能否稳定生成 SQL 的核心配置。',
+    subtitle: '业务人员先确认指标名称、含义、维度和过滤口径；管理员或数据工程师再配置物理表、时间字段和 SQL 公式。',
     fields: [
       {
         key: 'metric_key',
@@ -947,7 +978,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
   },
   mapping: {
     title: '映射填写说明',
-    subtitle: '用于把语义资产连接到真实数据库表字段，是查询运行时能够编译 SQL 的落地点。',
+    subtitle: '映射是管理员或数据工程师维护的技术绑定。它引用已有业务口径，把语义资产连接到真实数据库表字段。',
     fields: [
       {
         key: 'asset_type',
@@ -977,24 +1008,24 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         key: 'table_name',
         label: '表名',
         title: '表名',
-        purpose: '映射到哪张真实数据库表。',
-        instructions: ['填写已采集 Schema 里的英文表名。', '不要填写中文表名。'],
+        purpose: '管理员或数据工程师指定映射到哪张真实数据库表。',
+        instructions: ['这是高级技术配置。', '填写已采集 Schema 里的英文表名。', '不要填写中文表名。'],
         examples: ['orders'],
       },
       {
         key: 'column_name',
         label: '字段名',
         title: '字段名',
-        purpose: '映射到表里的哪个真实字段。',
-        instructions: ['填写字段英文名。', '如果不是单字段映射，可留空并填写表达式。'],
+        purpose: '管理员或数据工程师指定映射到表里的哪个真实字段。',
+        instructions: ['这是高级技术配置。', '填写字段英文名。', '如果不是单字段映射，可留空并填写表达式。'],
         examples: ['product_type', 'region', 'region'],
       },
       {
         key: 'expression_sql',
         label: '表达式',
         title: '表达式',
-        purpose: '当语义资产不是单一字段，而是计算表达式时使用。',
-        instructions: ['只填写 SQL 表达式。', '能用字段名解决时优先用字段名。'],
+        purpose: '当语义资产不是单一字段时，由管理员或数据工程师配置 SQL 表达式。',
+        instructions: ['这是高级技术配置。', '只填写 SQL 表达式。', '能用字段名解决时优先用字段名。'],
         examples: ["CASE WHEN status = 'paid' THEN '已支付' ELSE '未支付' END"],
       },
       {
@@ -1089,6 +1120,7 @@ const showAssetDetail = ref(false)
 const showSnapshotDrawer = ref(false)
 const showSnapshotDiffDialog = ref(false)
 const snapshots = ref<Record<string, unknown>[]>([])
+const ontologyLinkTypes = ref<OntologyLinkType[]>([])
 const snapshotDiff = ref<Record<string, any> | null>(null)
 const editingAssetType = ref('concept')
 const assetDialogMode = ref<'create' | 'edit'>('create')
@@ -1101,6 +1133,23 @@ const currentDetailTab = computed(() => assetTabs.find(tab => tab.name === selec
 const assetPayload = computed(() => buildAssetPayload(editingAssetType.value, assetDraft.value))
 const assetJsonPreview = computed(() => JSON.stringify(assetPayload.value, null, 2))
 const currentAssetGuide = computed(() => assetGuidePages[editingAssetType.value])
+const selectedOntologyLink = computed(() => ontologyLinkTypes.value.find(item => item.link_key === assetDraft.value.relation_key))
+const hasLegacyRelationReference = computed(() => Boolean(
+  editingAssetType.value === 'relation'
+  && assetDraft.value.relation_key
+  && !selectedOntologyLink.value,
+))
+const relationReferenceName = computed(() => selectedOntologyLink.value?.name || cleanText(assetDraft.value.name) || '未命名关系')
+const relationReferenceDirection = computed(() => {
+  const source = selectedOntologyLink.value?.source_object_key || cleanText(assetDraft.value.source_concept)
+  const target = selectedOntologyLink.value?.target_object_key || cleanText(assetDraft.value.target_concept)
+  return source && target ? `${source} → ${target}` : '关系方向待补齐'
+})
+const relationReferenceDescription = computed(() => (
+  selectedOntologyLink.value?.description
+  || cleanText(assetDraft.value.description)
+  || '企业本体中暂未填写业务定义。'
+))
 const assetDetailTitle = computed(() => {
   if (!selectedAsset.value) return '语义资产详情'
   return `${currentDetailTab.value?.label || '语义资产'}详情`
@@ -1141,7 +1190,7 @@ const assetCounts = computed(() => {
 })
 
 watch(() => props.domainId, async () => {
-  await loadAssets()
+  await Promise.all([loadAssets(), loadOntologyRelationOptions()])
 }, { immediate: true })
 
 async function loadAssets() {
@@ -1158,6 +1207,22 @@ async function loadAssets() {
     if (props.domainId !== requestedDomainId) return
     assets.value = {}
     ElMessage.error('语义资产加载失败')
+  }
+}
+
+async function loadOntologyRelationOptions() {
+  if (!props.domainId) {
+    ontologyLinkTypes.value = []
+    return
+  }
+  const requestedDomainId = props.domainId
+  try {
+    const nextLinkTypes = await fetchOntologyLinkTypes(requestedDomainId)
+    if (props.domainId !== requestedDomainId) return
+    ontologyLinkTypes.value = nextLinkTypes
+  } catch {
+    if (props.domainId !== requestedDomainId) return
+    ontologyLinkTypes.value = []
   }
 }
 
@@ -1306,6 +1371,7 @@ function openAssetDialog(assetType: string) {
   assetDialogMode.value = 'create'
   assetDraft.value = defaultAssetDraft(assetType)
   showAssetDialog.value = true
+  if (assetType === 'relation') void loadOntologyRelationOptions()
 }
 
 function openEditAsset(assetType: string, row: Record<string, unknown>) {
@@ -1314,6 +1380,7 @@ function openEditAsset(assetType: string, row: Record<string, unknown>) {
   assetDraft.value = assetRowToDraft(assetType, row)
   showAssetDetail.value = false
   showAssetDialog.value = true
+  if (assetType === 'relation') void loadOntologyRelationOptions()
 }
 
 function openAssetDetail(assetType: string, row: Record<string, unknown>) {
@@ -1324,6 +1391,21 @@ function openAssetDetail(assetType: string, row: Record<string, unknown>) {
 
 function openAssetGuide() {
   showAssetGuide.value = true
+}
+
+function handleOntologyLinkSelect(linkKey: string) {
+  const link = ontologyLinkTypes.value.find(item => item.link_key === linkKey)
+  if (!link) return
+  Object.assign(assetDraft.value, {
+    relation_key: link.link_key,
+    relation_type: 'join_path',
+    source_concept: link.source_object_key,
+    target_concept: link.target_object_key,
+    name: link.name,
+    description: link.description || '',
+    join_left: '',
+    join_right: '',
+  })
 }
 
 async function handleSaveAsset() {
@@ -1500,13 +1582,15 @@ function buildAssetPayload(type: string, draft: AssetDraft): Record<string, unkn
     }
   }
   if (type === 'relation') {
+    const relationKey = cleanText(draft.relation_key)
+    const ontologyLink = ontologyLinkTypes.value.find(item => item.link_key === relationKey)
     return {
-      relation_key: cleanText(draft.relation_key),
-      relation_type: draft.relation_type || 'join_path',
-      source_concept: cleanText(draft.source_concept),
-      target_concept: cleanText(draft.target_concept),
-      name: cleanText(draft.name),
-      description: cleanText(draft.description),
+      relation_key: relationKey,
+      relation_type: ontologyLink ? 'join_path' : draft.relation_type || 'join_path',
+      source_concept: ontologyLink?.source_object_key || cleanText(draft.source_concept),
+      target_concept: ontologyLink?.target_object_key || cleanText(draft.target_concept),
+      name: ontologyLink?.name || cleanText(draft.name),
+      description: ontologyLink?.description || cleanText(draft.description),
       join_path: draft.join_left && draft.join_right
         ? [{ left: cleanText(draft.join_left), right: cleanText(draft.join_right) }]
         : [],
@@ -1671,7 +1755,7 @@ const detailFieldLabels: Record<string, string> = {
   id: 'ID',
   concept_key: '概念标识',
   concept_type: '概念类型',
-  relation_key: '关系标识',
+  relation_key: '本体关系标识',
   relation_type: '关系类型',
   metric_key: '指标标识',
   metric_type: '指标类型',
@@ -1685,11 +1769,11 @@ const detailFieldLabels: Record<string, string> = {
   metadata: '扩展信息',
   source_concept: '源概念',
   target_concept: '目标概念',
-  join_path: '关联路径',
+  join_path: '物理 JOIN 绑定',
   conditions: '条件',
-  base_table: '基础表',
-  time_field: '时间字段',
-  formula_sql: '计算公式',
+  base_table: '基础物理表',
+  time_field: '物理时间字段',
+  formula_sql: 'SQL 计算公式',
   aggregation: '聚合方式',
   dimensions: '可用维度',
   default_filters: '默认过滤',
@@ -1699,8 +1783,8 @@ const detailFieldLabels: Record<string, string> = {
   asset_type: '资产类型',
   asset_key: '资产键',
   role: '角色',
-  table_name: '表名',
-  column_name: '字段名',
+  table_name: '物理表名',
+  column_name: '物理字段名',
   expression_sql: 'SQL 表达式',
   data_type: '数据类型',
   filters: '过滤条件',
@@ -1782,14 +1866,14 @@ function metricTypeLabel(type: string) {
 
 function conceptTypeLabel(type: string) {
   const map: Record<string, string> = {
-    object: '对象', event: '事件', state: '状态',
+    object: '对象', event: '事件', state: '状态', dimension: '维度', action: '动作词汇（不可执行）',
   }
   return map[type] || type
 }
 
 function relationTypeLabel(type: string) {
   const map: Record<string, string> = {
-    join_path: '关联路径', event_flow: '事件链路', state_transition: '状态流转',
+    join_path: '查询关联路径', relationship: '对象关系', event_flow: '事件链路', state_transition: '状态流转',
   }
   return map[type] || type
 }
@@ -2101,6 +2185,131 @@ function columnNameLabel(assetKey: string, columnName: string) {
 
 .asset-form-panel :deep(.el-textarea__inner) {
   font-family: inherit;
+}
+
+.asset-boundary-note {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--wq-primary);
+  border-radius: 6px;
+  background: #f5f9ff;
+  color: #475467;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.asset-boundary-note strong {
+  color: var(--wq-text);
+  font-size: 14px;
+}
+
+.asset-form-section {
+  margin-bottom: 16px;
+  padding: 14px 14px 2px;
+  border: 1px solid var(--wq-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.asset-form-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 11px;
+  border-bottom: 1px solid #e8edf4;
+}
+
+.asset-form-section-heading > div {
+  display: grid;
+  gap: 4px;
+}
+
+.asset-form-section-heading strong {
+  color: var(--wq-text);
+  font-size: 14px;
+}
+
+.asset-form-section-heading span {
+  color: var(--wq-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.form-help {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  color: var(--wq-subtle);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.relation-reference-summary {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 12px 112px;
+  padding: 12px;
+  border: 1px solid #cddcf0;
+  border-radius: 7px;
+  background: #f8fbff;
+}
+
+.relation-reference-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.relation-reference-title strong {
+  color: var(--wq-text);
+  font-size: 14px;
+}
+
+.relation-reference-summary code {
+  width: fit-content;
+  max-width: 100%;
+  color: #526172;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.relation-reference-summary > span,
+.relation-reference-summary p {
+  margin: 0;
+  color: #475467;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.advanced-asset-settings {
+  margin-bottom: 14px;
+  padding: 0 14px 2px;
+  border: 1px solid #cfd8e6;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.advanced-asset-settings summary {
+  padding: 13px 0;
+  color: var(--wq-text);
+  font-size: 13px;
+  font-weight: 720;
+  cursor: pointer;
+}
+
+.advanced-asset-note {
+  margin: 0 0 14px;
+  padding: 9px 11px;
+  border-radius: 6px;
+  background: #eef3f8;
+  color: #526172;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .json-preview-panel {
@@ -2517,6 +2726,15 @@ function columnNameLabel(assetKey: string, columnName: string) {
 
   .operator-select {
     width: 100%;
+  }
+
+  .asset-form-section-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .relation-reference-summary {
+    margin-left: 0;
   }
 }
 </style>

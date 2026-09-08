@@ -44,6 +44,10 @@ English | [中文](./README_CN.md)
 
 WenQu is an **internal company intelligence hub and decision engine**. It connects business experts' understanding of the company with data from databases, APIs, files, and business events to build an operational digital twin that can be consumed by the built-in validation client and external third-party agents through governed capabilities.
 
+> **First principle: business semantics are enterprise assets, databases are data sources, and agents are capability consumers.**
+
+Objects, relationships, states, rules, actions, metrics, and releases belong to the enterprise model. Tables, columns, SQL, APIs, and files are source or execution details. An agent consumes published capabilities under a versioned and governed contract; it does not own or duplicate the enterprise model.
+
 This is not a 3D simulation or a copy of a database. The target platform has three core parts:
 
 1. **Enterprise Model Center** unifies objects, relationships, metrics, rules, states, actions, data mappings, permissions, and versions. Query semantics and Ontology modeling become one product model.
@@ -60,7 +64,7 @@ Databases / APIs / files / business events
 
 Finance/tax report delivery, lending risk, and conversational querying are vertical applications and validation scenarios, not the final boundary of the platform. Chat currently demonstrates and validates the foundation rather than defining the product roadmap.
 
-### Capability Boundary as of 2026-09-07
+### Capability Boundary as of 2026-09-08
 
 | Status | Scope |
 |--------|-------|

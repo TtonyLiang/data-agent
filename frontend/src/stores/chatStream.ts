@@ -43,6 +43,8 @@ export interface ChatMessage {
   execution_trace?: Record<string, unknown>
   human_confirmation?: Record<string, unknown>
   clarification?: Record<string, unknown>
+  domain_id?: number | null
+  model_release_id?: number | null
   task_id?: string
   turn_id?: string
   turn_mode?: ChatTurnMode
@@ -195,6 +197,8 @@ export function reduceChatStreamEvent(
     assistant.execution_trace = (data.execution_trace as Record<string, unknown>) || undefined
     assistant.human_confirmation = (data.human_confirmation as Record<string, unknown>) || undefined
     assistant.clarification = (data.clarification as Record<string, unknown>) || undefined
+    if (typeof data.domain_id === 'number') assistant.domain_id = data.domain_id
+    if (typeof data.model_release_id === 'number') assistant.model_release_id = data.model_release_id
     if (typeof data.task_id === 'string') assistant.task_id = data.task_id
     if (typeof data.turn_id === 'string') assistant.turn_id = data.turn_id
     if (typeof data.turn_mode === 'string') assistant.turn_mode = data.turn_mode as ChatTurnMode

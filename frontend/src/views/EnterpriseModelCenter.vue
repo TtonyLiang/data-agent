@@ -39,9 +39,9 @@
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item command="edit" :disabled="!currentDomain">编辑</el-dropdown-item>
-                  <el-dropdown-item command="copy" :disabled="!currentDomain">复制语义配置</el-dropdown-item>
-                  <el-dropdown-item command="import" divided>导入语义包</el-dropdown-item>
-                  <el-dropdown-item command="export" :disabled="!currentDomain">导出语义包</el-dropdown-item>
+                  <el-dropdown-item command="copy" :disabled="!currentDomain">复制企业模型</el-dropdown-item>
+                  <el-dropdown-item command="import" divided>导入企业模型包</el-dropdown-item>
+                  <el-dropdown-item command="export" :disabled="!currentDomain">导出企业模型包</el-dropdown-item>
                   <el-dropdown-item command="delete" :disabled="!currentDomain" divided>删除</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
@@ -177,10 +177,12 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   copySemanticDomain,
   deleteSemanticDomain,
+  exportOntologyBundle,
   exportSemanticDomain,
   fetchAllDatasources,
   fetchOntologyDomains,
   importSemanticDomain,
+  importOntologyBundle,
   upsertSemanticDomain,
   type DatasourceItem,
   type SemanticDomain,
@@ -352,10 +354,11 @@ async function deleteCurrentDomain() {
 
 async function copyCurrentDomain() {
   if (!currentDomain.value) return
+  let copiedDomainId: number | null = null
   try {
     const { value } = await ElMessageBox.prompt(
-      '请输入新业务领域标识；此操作复制语义资产，不复制业务本体。',
-      '复制业务领域',
+      '请输入新业务领域标识；对象、关系、动作、指标、规则和数据映射会作为一套企业模型复制。运行实例、发布版本和审计记录不会复制。',
+      '复制企业模型',
       {
         inputValue: `${currentDomain.value.domain_key}_copy`,
         inputPattern: /^[A-Za-z_][A-Za-z0-9_]*$/,
@@ -366,10 +369,17 @@ async function copyCurrentDomain() {
       domain_key: value,
       name: `${currentDomain.value.name} 副本`,
     })
-    await loadDomains(Number(result.id || 0) || null)
-    ElMessage.success(result.message || '业务领域已复制')
+    copiedDomainId = Number(result.id || 0) || null
+    if (!copiedDomainId) throw new Error('复制后未返回新业务领域 ID')
+    const ontologyBundle = await exportOntologyBundle(currentDomain.value.id, false)
+    await importOntologyBundle(copiedDomainId, ontologyBundle, true)
+    await loadDomains(copiedDomainId)
+    ElMessage.success('企业模型已复制；请校验后创建新的发布版本')
   } catch (error) {
     if (error === 'cancel' || error === 'close') return
+    if (copiedDomainId) {
+      try { await deleteSemanticDomain(copiedDomainId) } catch { /* 保留原始错误提示 */ }
+    }
     ElMessage.error(errorMessage(error, '业务领域复制失败'))
   }
 }
@@ -377,17 +387,27 @@ async function copyCurrentDomain() {
 async function exportCurrentDomain() {
   if (!currentDomain.value) return
   try {
-    const bundle = await exportSemanticDomain(currentDomain.value.id)
+    const [semantic, ontology] = await Promise.all([
+      exportSemanticDomain(currentDomain.value.id),
+      exportOntologyBundle(currentDomain.value.id, false),
+    ])
+    const bundle = {
+      format: 'wenqu-enterprise-model',
+      version: 1,
+      exported_at: new Date().toISOString(),
+      semantic,
+      ontology,
+    }
     const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `${currentDomain.value.domain_key}.semantic.json`
+    anchor.download = `${currentDomain.value.domain_key}.enterprise-model.json`
     anchor.click()
     URL.revokeObjectURL(url)
-    ElMessage.success('领域语义包已导出')
+    ElMessage.success('企业模型包已导出')
   } catch (error) {
-    ElMessage.error(errorMessage(error, '领域语义包导出失败'))
+    ElMessage.error(errorMessage(error, '企业模型包导出失败'))
   }
 }
 
@@ -404,12 +424,26 @@ async function handleDomainImport(event: Event) {
   const file = input.files?.[0]
   input.value = ''
   if (!file) return
+  let importedDomainId: number | null = null
   try {
-    const result = await importSemanticDomain(JSON.parse(await file.text()))
-    await loadDomains(Number(result.id || 0) || null)
-    ElMessage.success(result.message || '业务领域已导入')
+    const bundle = JSON.parse(await file.text())
+    const enterpriseBundle = bundle?.format === 'wenqu-enterprise-model'
+    const semanticBundle = enterpriseBundle ? bundle.semantic : bundle
+    if (!semanticBundle || typeof semanticBundle !== 'object') throw new Error('企业模型包缺少语义与数据资产')
+    const result = await importSemanticDomain(semanticBundle)
+    importedDomainId = Number(result.id || 0) || null
+    if (!importedDomainId) throw new Error('导入后未返回业务领域 ID')
+    if (enterpriseBundle) {
+      if (!bundle.ontology || typeof bundle.ontology !== 'object') throw new Error('企业模型包缺少业务本体资产')
+      await importOntologyBundle(importedDomainId, bundle.ontology, true)
+    }
+    await loadDomains(importedDomainId)
+    ElMessage.success(enterpriseBundle ? '企业模型已导入，请校验后发布' : '旧版语义包已导入；业务本体仍需补充')
   } catch (error) {
-    ElMessage.error(errorMessage(error, '业务领域导入失败'))
+    if (importedDomainId) {
+      try { await deleteSemanticDomain(importedDomainId) } catch { /* 保留原始错误提示 */ }
+    }
+    ElMessage.error(errorMessage(error, '企业模型导入失败'))
   }
 }
 

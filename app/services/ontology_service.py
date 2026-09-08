@@ -27,6 +27,7 @@ from app.services.decision_audit_service import get_decision_audit_service
 from app.services.model_release_service import get_model_release_service
 from app.services.permission_service import (
     ColumnPolicy,
+    PermissionRuntimeContext,
     PermissionService,
     get_permission_service,
     mask_value,
@@ -77,6 +78,7 @@ _OBJECT_PERMISSION_FIELDS = {
 }
 
 _MASKING_PRIORITY = {"none": 0, "partial": 1, "hash": 2, "redact": 3}
+_RELATION_PROPERTY_SEPARATOR = ","
 
 
 logger = logging.getLogger(__name__)
@@ -131,9 +133,7 @@ def _stable_release_definition(bundle: dict[str, Any]) -> dict[str, Any]:
     }
     for item in bundle.get("object_types") or []:
         object_type = clean_record(item)
-        object_type["properties"] = [
-            clean_record(prop) for prop in item.get("properties") or []
-        ]
+        object_type["properties"] = [clean_record(prop) for prop in item.get("properties") or []]
         definition["object_types"].append(object_type)
     definition["object_types"] = sorted(
         definition["object_types"], key=lambda item: str(item.get("object_key") or "")
@@ -179,6 +179,55 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _relation_property_keys(link_type: dict[str, Any], side: str) -> list[str]:
+    """Return the ordered property tuple for one relationship endpoint.
+
+    New definitions expose ``*_property_keys``.  Existing rows keep using the
+    single ``*_property`` column; compound keys are persisted there as a
+    comma-separated list because property identifiers cannot contain commas.
+    """
+
+    plural_name = f"{side}_property_keys"
+    singular_name = f"{side}_property"
+    raw_plural = link_type.get(plural_name)
+    if raw_plural is not None:
+        if not isinstance(raw_plural, list):
+            raise ValueError(f"关系{side}复合属性键格式无效")
+        keys = [str(value).strip() for value in raw_plural]
+    else:
+        raw_singular = link_type.get(singular_name)
+        keys = (
+            [part.strip() for part in str(raw_singular).split(_RELATION_PROPERTY_SEPARATOR)]
+            if raw_singular is not None
+            else []
+        )
+    if not keys or any(not key for key in keys):
+        raise ValueError(f"关系{side}属性键不能为空")
+    if len(keys) != len(set(keys)):
+        raise ValueError(f"关系{side}属性键不能重复")
+    return keys
+
+
+def _normalize_link_type_row(row: dict[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_row(row)
+    source_keys = _relation_property_keys(normalized, "source")
+    target_keys = _relation_property_keys(normalized, "target")
+    if len(source_keys) != len(target_keys):
+        raise ValueError("关系两端的复合属性键数量必须一致")
+    normalized["source_property"] = source_keys[0]
+    normalized["target_property"] = target_keys[0]
+    normalized["source_property_keys"] = source_keys
+    normalized["target_property_keys"] = target_keys
+    return normalized
+
+
+def _encode_relation_property_keys(keys: list[str], side: str) -> str:
+    encoded = _RELATION_PROPERTY_SEPARATOR.join(keys)
+    if len(encoded) > 128:
+        raise ValueError(f"关系{side}复合属性键总长度不能超过 128 个字符")
+    return encoded
+
+
 class OntologyService:
     async def _append_action_audit(
         self,
@@ -201,10 +250,7 @@ class OntologyService:
             entity_id=run_id,
             actor_id=int(user["id"]) if user.get("id") is not None else None,
             actor=str(
-                user.get("display_name")
-                or user.get("username")
-                or user.get("id")
-                or "unknown"
+                user.get("display_name") or user.get("username") or user.get("id") or "unknown"
             ),
             ontology_release_id=release_id,
             payload={
@@ -434,7 +480,7 @@ class OntologyService:
             "SELECT * FROM ontology_link_type WHERE domain_id = :domain_id ORDER BY id ASC",
             {"domain_id": domain_id},
         )
-        return [_normalize_row(row) for row in rows]
+        return [_normalize_link_type_row(row) for row in rows]
 
     async def upsert_link_type(self, payload: OntologyLinkTypePayload) -> int:
         await self._require_domain(payload.domain_id)
@@ -442,12 +488,26 @@ class OntologyService:
         target = await self.get_object_type(payload.domain_id, object_key=payload.target_object_key)
         if not source or not target:
             raise ValueError("关系的起点和终点必须引用已存在的对象类型")
-        source_key = payload.source_property or source["primary_property"]
-        target_key = payload.target_property or target["primary_property"]
-        if source_key not in {item["property_key"] for item in source["properties"]}:
-            raise ValueError("关系起点属性不存在")
-        if target_key not in {item["property_key"] for item in target["properties"]}:
-            raise ValueError("关系终点属性不存在")
+        source_keys = list(
+            payload.source_property_keys
+            or ([payload.source_property] if payload.source_property else [])
+            or [source["primary_property"]]
+        )
+        target_keys = list(
+            payload.target_property_keys
+            or ([payload.target_property] if payload.target_property else [])
+            or [target["primary_property"]]
+        )
+        if len(source_keys) != len(target_keys):
+            raise ValueError("关系两端的复合属性键数量必须一致")
+        source_properties = {item["property_key"] for item in source["properties"]}
+        target_properties = {item["property_key"] for item in target["properties"]}
+        missing_source = [key for key in source_keys if key not in source_properties]
+        missing_target = [key for key in target_keys if key not in target_properties]
+        if missing_source:
+            raise ValueError("关系起点属性不存在: " + "、".join(missing_source))
+        if missing_target:
+            raise ValueError("关系终点属性不存在: " + "、".join(missing_target))
         db = get_management_db()
         duplicate = await db.execute_query(
             "SELECT id FROM ontology_link_type WHERE domain_id = :domain_id "
@@ -461,9 +521,9 @@ class OntologyService:
         if duplicate:
             raise ValueError(f"关系标识已存在: {payload.link_key}")
         params = {
-            **payload.model_dump(exclude={"id"}),
-            "source_property": source_key,
-            "target_property": target_key,
+            **payload.model_dump(exclude={"id", "source_property_keys", "target_property_keys"}),
+            "source_property": _encode_relation_property_keys(source_keys, "起点"),
+            "target_property": _encode_relation_property_keys(target_keys, "终点"),
         }
         if payload.id:
             existing = await db.execute_query(
@@ -536,8 +596,7 @@ class OntologyService:
             warning = {
                 "code": "enterprise_model_release_fallback",
                 "message": (
-                    "当前领域没有激活的企业模型版本，运行时回退到实时定义和最新 "
-                    "Ontology 发布。"
+                    "当前领域没有激活的企业模型版本，运行时回退到实时定义和最新 Ontology 发布。"
                 ),
                 "details": {"domain_id": domain_id},
             }
@@ -551,9 +610,7 @@ class OntologyService:
                 "ORDER BY version DESC LIMIT 1",
                 {"domain_id": domain_id},
             )
-            ontology_release = (
-                _normalize_row(release_rows[0]) if release_rows else None
-            )
+            ontology_release = _normalize_row(release_rows[0]) if release_rows else None
             return None, None, ontology_release, None, [warning]
 
         release_rows = await get_management_db().execute_query(
@@ -573,9 +630,7 @@ class OntologyService:
             raise ValueError("激活企业模型版本关联的 Ontology 发布定义无效")
         actual_definition_hash = _content_hash(definition)
         release_definition_hash = str(release_row.get("definition_hash") or "")
-        model_definition_hash = str(
-            model_release.get("ontology_definition_hash") or ""
-        )
+        model_definition_hash = str(model_release.get("ontology_definition_hash") or "")
         if (
             not release_definition_hash
             or release_definition_hash != actual_definition_hash
@@ -585,9 +640,7 @@ class OntologyService:
         expected_model_hash = _content_hash(
             {
                 "format": "wenqu-enterprise-model-release/v1",
-                "semantic_snapshot_hash": str(
-                    model_release.get("semantic_snapshot_hash") or ""
-                ),
+                "semantic_snapshot_hash": str(model_release.get("semantic_snapshot_hash") or ""),
                 "ontology_definition_hash": actual_definition_hash,
             }
         )
@@ -621,9 +674,7 @@ class OntologyService:
         }
         return model_metadata, semantic_snapshot, ontology_release, definition, []
 
-    async def build_agent_context(
-        self, domain_id: int, *, role: str = "user"
-    ) -> dict[str, Any]:
+    async def build_agent_context(self, domain_id: int, *, role: str = "user") -> dict[str, Any]:
         """Build the bounded, runtime-facing Ontology context for an agent.
 
         Draft/deprecated definitions are deliberately omitted from the agent
@@ -710,6 +761,10 @@ class OntologyService:
                 "target_object_key": item.get("target_object_key"),
                 "source_property": item.get("source_property"),
                 "target_property": item.get("target_property"),
+                "source_property_keys": item.get("source_property_keys")
+                or [item.get("source_property")],
+                "target_property_keys": item.get("target_property_keys")
+                or [item.get("target_property")],
                 "cardinality": item.get("cardinality"),
                 "description": item.get("description") or "",
             }
@@ -731,8 +786,7 @@ class OntologyService:
         return {
             "domain": {
                 "id": int(domain["id"]),
-                "domain_key": released_domain.get("domain_key")
-                or domain.get("domain_key"),
+                "domain_key": released_domain.get("domain_key") or domain.get("domain_key"),
                 "name": released_domain.get("name") or domain.get("name"),
                 "description": released_domain.get("description")
                 or domain.get("description")
@@ -895,14 +949,42 @@ class OntologyService:
                 continue
             source_properties = source.get("properties") or []
             target_properties = target.get("properties") or []
-            if item.get("source_property") not in {
+            try:
+                source_keys = _relation_property_keys(item, "source")
+                target_keys = _relation_property_keys(item, "target")
+            except ValueError as exc:
+                errors.append({"asset": item["link_key"], "message": str(exc)})
+                continue
+            if len(source_keys) != len(target_keys):
+                errors.append(
+                    {
+                        "asset": item["link_key"],
+                        "message": "关系两端的复合属性键数量必须一致",
+                    }
+                )
+                continue
+            source_property_keys = {
                 p["property_key"] for p in source_properties if isinstance(p, dict)
-            }:
-                errors.append({"asset": item["link_key"], "message": "关系起点属性不存在"})
-            if item.get("target_property") not in {
+            }
+            target_property_keys = {
                 p["property_key"] for p in target_properties if isinstance(p, dict)
-            }:
-                errors.append({"asset": item["link_key"], "message": "关系终点属性不存在"})
+            }
+            missing_source = [key for key in source_keys if key not in source_property_keys]
+            missing_target = [key for key in target_keys if key not in target_property_keys]
+            if missing_source:
+                errors.append(
+                    {
+                        "asset": item["link_key"],
+                        "message": "关系起点属性不存在: " + "、".join(missing_source),
+                    }
+                )
+            if missing_target:
+                errors.append(
+                    {
+                        "asset": item["link_key"],
+                        "message": "关系终点属性不存在: " + "、".join(missing_target),
+                    }
+                )
 
         for item in action_types:
             target = objects.get(item["target_object_key"])
@@ -1040,15 +1122,38 @@ class OntologyService:
         self,
         domain: dict[str, Any],
         access_agent_id: int | None,
-    ) -> tuple[int, dict[str, bool], dict[tuple[str, str], ColumnPolicy]] | None:
+    ) -> (
+        PermissionRuntimeContext
+        | tuple[int, dict[str, bool], dict[tuple[str, str], ColumnPolicy]]
+        | None
+    ):
         datasource_id = int(domain.get("datasource_id") or 0)
         if not datasource_id:
             return None
+        permission_service = get_permission_service()
+        resolver = getattr(permission_service, "resolve_domain_permission_context", None)
+        if callable(resolver):
+            context = await resolver(
+                int(domain.get("id") or 0),
+                datasource_id,
+                compatibility_agent_id=access_agent_id,
+                allow_agent_fallback=bool(access_agent_id),
+            )
+            # Empty domain rules still allow platform-created objects. The
+            # existing source_kind filter hides every database-backed object;
+            # synchronization and SQL execution remain default-deny.
+            if context.source == "agent_compatibility" and (
+                not access_agent_id
+                or not await get_datasource_service().belongs_to_agent(
+                    datasource_id, access_agent_id
+                )
+            ):
+                raise PermissionError("兼容权限智能体无权访问领域数据源")
+            return context
         if not access_agent_id:
             raise PermissionError("对象数据访问缺少明确的权限主体")
         if not await get_datasource_service().belongs_to_agent(datasource_id, access_agent_id):
             raise PermissionError("当前权限主体无权访问领域数据源")
-        permission_service = get_permission_service()
         return (
             datasource_id,
             await permission_service.get_table_permissions(access_agent_id, datasource_id),
@@ -1066,8 +1171,7 @@ class OntologyService:
         if output_policy is not None:
             return output_policy
         policies = [
-            column_permissions.get((table.lower(), property_key.lower()))
-            for table in source_tables
+            column_permissions.get((table.lower(), property_key.lower())) for table in source_tables
         ]
         matched = [policy for policy in policies if policy is not None]
         if not matched:
@@ -1080,15 +1184,23 @@ class OntologyService:
         )
 
     @staticmethod
-    def _permission_metadata(
-        row: dict[str, Any], object_type: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _permission_metadata(row: dict[str, Any], object_type: dict[str, Any]) -> dict[str, Any]:
         return {
             **row,
             "_permission_source_query": object_type.get("source_query"),
             "_permission_primary_property": object_type.get("primary_property"),
             "_permission_display_property": object_type.get("display_property"),
         }
+
+    @staticmethod
+    def _permission_context_metadata(
+        permission_context: PermissionRuntimeContext
+        | tuple[int, dict[str, bool], dict[tuple[str, str], ColumnPolicy]]
+        | None,
+    ) -> dict[str, Any] | None:
+        if isinstance(permission_context, PermissionRuntimeContext):
+            return permission_context.metadata()
+        return None
 
     @classmethod
     def _validate_sync_key_permissions(
@@ -1100,18 +1212,14 @@ class OntologyService:
         result_column_policies: dict[str, ColumnPolicy] | None = None,
     ) -> None:
         primary_property = str(object_type.get("primary_property") or "")
-        relation_properties = {
-            str(link_type.get("source_property") or "")
-            for link_type in link_types
-            if link_type.get("status") == "active"
-            and link_type.get("source_object_key") == object_type.get("object_key")
-        }
-        relation_properties.update(
-            str(link_type.get("target_property") or "")
-            for link_type in link_types
-            if link_type.get("status") == "active"
-            and link_type.get("target_object_key") == object_type.get("object_key")
-        )
+        relation_properties: set[str] = set()
+        for link_type in link_types:
+            if link_type.get("status") != "active":
+                continue
+            if link_type.get("source_object_key") == object_type.get("object_key"):
+                relation_properties.update(_relation_property_keys(link_type, "source"))
+            if link_type.get("target_object_key") == object_type.get("object_key"):
+                relation_properties.update(_relation_property_keys(link_type, "target"))
         for property_key, label in [
             (primary_property, "主标识"),
             *((property_key, "关系键") for property_key in sorted(relation_properties)),
@@ -1124,12 +1232,8 @@ class OntologyService:
                 column_permissions,
                 result_column_policies,
             )
-            if policy is not None and (
-                not policy.allowed or policy.masking_policy != "none"
-            ):
-                raise ValueError(
-                    f"{label}字段 {property_key} 不得拒绝访问或脱敏"
-                )
+            if policy is not None and (not policy.allowed or policy.masking_policy != "none"):
+                raise ValueError(f"{label}字段 {property_key} 不得拒绝访问或脱敏")
 
     @classmethod
     def _protect_object_rows(
@@ -1157,8 +1261,7 @@ class OntologyService:
             datasource_id, table_permissions, column_permissions = permission_context
             source_datasource_id = int(row.get("source_datasource_id") or 0)
             database_backed = (
-                str(row.get("source_kind") or "").lower() == "database"
-                or source_datasource_id > 0
+                str(row.get("source_kind") or "").lower() == "database" or source_datasource_id > 0
             )
             if not database_backed:
                 protected_rows.append(row)
@@ -1175,12 +1278,10 @@ class OntologyService:
             if not source_tables:
                 continue
             try:
-                result_column_policies = (
-                    PermissionService.resolve_result_column_policies(
-                        source_query,
-                        source_tables,
-                        column_permissions,
-                    )
+                result_column_policies = PermissionService.resolve_result_column_policies(
+                    source_query,
+                    source_tables,
+                    column_permissions,
                 )
             except ValueError:
                 continue
@@ -1255,9 +1356,7 @@ class OntologyService:
         )
         allowed_ids: list[int] = []
         for row in rows:
-            source_tables = extract_table_references(
-                str(row.get("source_query") or "")
-            )
+            source_tables = extract_table_references(str(row.get("source_query") or ""))
             if not source_tables or any(
                 not get_permission_service().table_allowed(table, table_permissions)
                 for table in source_tables
@@ -1269,8 +1368,7 @@ class OntologyService:
                 column_permissions,
             )
             if primary_policy is not None and (
-                not primary_policy.allowed
-                or primary_policy.masking_policy != "none"
+                not primary_policy.allowed or primary_policy.masking_policy != "none"
             ):
                 continue
             allowed_ids.append(int(row["id"]))
@@ -1293,9 +1391,7 @@ class OntologyService:
             key = f"allowed_type_{index}"
             placeholders.append(f":{key}")
             params[key] = object_type_id
-        where.append(
-            f"({manual_clause} OR o.object_type_id IN ({', '.join(placeholders)}))"
-        )
+        where.append(f"({manual_clause} OR o.object_type_id IN ({', '.join(placeholders)}))")
 
     async def list_objects(
         self,
@@ -1360,11 +1456,14 @@ class OntologyService:
         datasource_id = int(domain.get("datasource_id") or 0)
         if not datasource_id:
             raise ValueError("当前领域没有绑定默认数据源，无法同步对象实例")
-        permission_context = await self._load_object_permission_context(
-            domain, access_agent_id
-        )
+        permission_context = await self._load_object_permission_context(domain, access_agent_id)
         if permission_context is None:
             raise PermissionError("对象同步缺少明确的权限主体")
+        if (
+            isinstance(permission_context, PermissionRuntimeContext)
+            and permission_context.source == "unconfigured"
+        ):
+            raise PermissionError("当前业务领域未配置数据权限")
         object_types = await self.list_object_types(domain_id)
         if object_type_id is not None:
             object_types = [item for item in object_types if int(item["id"]) == object_type_id]
@@ -1404,18 +1503,21 @@ class OntologyService:
             }
             try:
                 base_query = self._validated_source_query(source_query)
-                allowed, reason = await permission_service.validate_sql_access(
-                    access_agent_id, datasource_id, base_query
-                )
+                if isinstance(permission_context, PermissionRuntimeContext):
+                    allowed, reason = PermissionService.validate_sql_access_with_context(
+                        permission_context, base_query
+                    )
+                else:
+                    allowed, reason = await permission_service.validate_sql_access(
+                        access_agent_id, datasource_id, base_query
+                    )
                 if not allowed:
                     raise ValueError(reason)
                 source_tables = extract_table_references(base_query)
-                result_column_policies = (
-                    PermissionService.resolve_result_column_policies(
-                        base_query,
-                        source_tables,
-                        permission_context[2],
-                    )
+                result_column_policies = PermissionService.resolve_result_column_policies(
+                    base_query,
+                    source_tables,
+                    permission_context[2],
                 )
                 self._validate_sync_key_permissions(
                     object_type,
@@ -1465,13 +1567,13 @@ class OntologyService:
                 await self._record_sync_status(
                     int(object_type["id"]),
                     "succeeded" if not result["errors"] else "partial",
-                    len(rows), total, "；".join(result["errors"][:5]),
+                    len(rows),
+                    total,
+                    "；".join(result["errors"][:5]),
                 )
             except Exception as exc:
                 result["errors"].append(str(exc))
-                await self._record_sync_status(
-                    int(object_type["id"]), "failed", 0, 0, str(exc)
-                )
+                await self._record_sync_status(int(object_type["id"]), "failed", 0, 0, str(exc))
             results.append(result)
 
         link_count = 0
@@ -1482,6 +1584,7 @@ class OntologyService:
         return {
             "domain_id": domain_id,
             "datasource_id": datasource_id,
+            "permission": self._permission_context_metadata(permission_context),
             "page": page_number,
             "types": results,
             "objects": [item for result in results for item in result["objects"]],
@@ -1544,13 +1647,9 @@ class OntologyService:
                     after_state = _loads(audit_rows[0].get("after_state"), {})
                     audit_properties = after_state.get("properties") or {}
                     overlay = {
-                        key: audit_properties[key]
-                        for key in effect_keys
-                        if key in audit_properties
+                        key: audit_properties[key] for key in effect_keys if key in audit_properties
                     }
-        overlay = {
-            key: value for key, value in overlay.items() if source_values.get(key) != value
-        }
+        overlay = {key: value for key, value in overlay.items() if source_values.get(key) != value}
         merged = validate_property_values(definitions, {**source_values, **overlay})
         merged[primary_key] = primary_value
         display_key = object_type.get("display_property")
@@ -1658,11 +1757,14 @@ class OntologyService:
         link_types: list[dict[str, Any]] | None = None,
     ) -> int:
         synced_ids = {int(item["id"]) for item in synced_objects}
-        link_types = [
-            item
-            for item in (link_types or await self.list_link_types(domain_id))
-            if item.get("status") == "active"
-        ]
+        link_types = sorted(
+            (
+                item
+                for item in (link_types or await self.list_link_types(domain_id))
+                if item.get("status") == "active"
+            ),
+            key=lambda item: (int(item.get("id") or 0), str(item.get("link_key") or "")),
+        )
         if not link_types:
             return 0
         synced_by_type: dict[str, list[dict[str, Any]]] = {}
@@ -1671,17 +1773,22 @@ class OntologyService:
         statements: list[tuple[str, dict[str, Any]]] = []
         statement_keys: set[tuple[int, int, int]] = set()
         for link_type in link_types:
-            source_property = str(link_type.get("source_property") or "")
-            target_property = str(link_type.get("target_property") or "")
+            source_properties = _relation_property_keys(link_type, "source")
+            target_properties = _relation_property_keys(link_type, "target")
+            if len(source_properties) != len(target_properties):
+                raise ValueError("关系两端的复合属性键数量必须一致")
+            source_property = source_properties[0]
+            target_property = target_properties[0]
             source_type_key = str(link_type["source_object_key"])
             target_type_key = str(link_type["target_object_key"])
             source_objects = list(synced_by_type.get(source_type_key, []))
             target_objects = list(synced_by_type.get(target_type_key, []))
             if source_objects:
                 source_values = {
-                    relation_lookup_key((item.get("properties") or {}).get(source_property))
+                    relation_lookup_key((item.get("properties") or {})[source_property])
                     for item in source_objects
-                    if (item.get("properties") or {}).get(source_property) is not None
+                    if relation_object_lookup_key(item.get("properties") or {}, source_properties)
+                    is not None
                 }
                 target_objects.extend(
                     await self._load_objects_by_property_values(
@@ -1690,9 +1797,10 @@ class OntologyService:
                 )
             if target_objects:
                 target_values = {
-                    relation_lookup_key((item.get("properties") or {}).get(target_property))
+                    relation_lookup_key((item.get("properties") or {})[target_property])
                     for item in target_objects
-                    if (item.get("properties") or {}).get(target_property) is not None
+                    if relation_object_lookup_key(item.get("properties") or {}, target_properties)
+                    is not None
                 }
                 source_objects.extend(
                     await self._load_objects_by_property_values(
@@ -1701,14 +1809,18 @@ class OntologyService:
                 )
             targets: dict[str, list[dict[str, Any]]] = {}
             for target in unique_objects(target_objects):
-                value = (target.get("properties") or {}).get(target_property)
-                if value is not None:
-                    targets.setdefault(relation_lookup_key(value), []).append(target)
+                lookup_key = relation_object_lookup_key(
+                    target.get("properties") or {}, target_properties
+                )
+                if lookup_key is not None:
+                    targets.setdefault(lookup_key, []).append(target)
             for source in unique_objects(source_objects):
-                value = (source.get("properties") or {}).get(source_property)
-                if value is None:
+                lookup_key = relation_object_lookup_key(
+                    source.get("properties") or {}, source_properties
+                )
+                if lookup_key is None:
                     continue
-                for target in targets.get(relation_lookup_key(value), []):
+                for target in targets.get(lookup_key, []):
                     source_id = int(source["id"])
                     target_id = int(target["id"])
                     if source_id not in synced_ids and target_id not in synced_ids:
@@ -1790,9 +1902,7 @@ class OntologyService:
         adapters.
         """
         domain = await self._require_domain(domain_id)
-        permission_context = await self._load_object_permission_context(
-            domain, access_agent_id
-        )
+        permission_context = await self._load_object_permission_context(domain, access_agent_id)
         safe_limit = min(max(int(limit), 1), 100)
         safe_offset = max(int(offset), 0)
         normalized_type = str(object_type_key or "").strip() or None
@@ -1841,6 +1951,7 @@ class OntologyService:
             "limit": safe_limit,
             "offset": safe_offset,
             "has_more": safe_offset + len(protected_rows) < total,
+            "permission": self._permission_context_metadata(permission_context),
         }
 
     async def get_object(
@@ -1854,9 +1965,7 @@ class OntologyService:
         permission_context = None
         if apply_permissions:
             domain = await self._require_domain(domain_id)
-            permission_context = await self._load_object_permission_context(
-                domain, access_agent_id
-            )
+            permission_context = await self._load_object_permission_context(domain, access_agent_id)
         rows = await get_management_db().execute_query(
             "SELECT o.*, t.object_key AS object_type_key, t.name AS object_type_name, "
             "t.source_query AS _permission_source_query, "
@@ -1885,9 +1994,7 @@ class OntologyService:
         if not database_backed:
             return None
         domain = await self._require_domain(domain_id)
-        permission_context = await self._load_object_permission_context(
-            domain, access_agent_id
-        )
+        permission_context = await self._load_object_permission_context(domain, access_agent_id)
         if permission_context is None:
             raise PermissionError("动作执行缺少明确的权限主体")
         protected = self._protect_object_rows(
@@ -1914,6 +2021,9 @@ class OntologyService:
         if permission_context is None:
             return result
         protected_result = dict(result)
+        metadata = cls._permission_context_metadata(permission_context)
+        if metadata is not None:
+            protected_result["permission"] = metadata
         for state_key in ("before_state", "after_state"):
             state = result.get(state_key)
             if not isinstance(state, dict):
@@ -2099,12 +2209,8 @@ class OntologyService:
             visible = True
             for endpoint in ("source", "target"):
                 endpoint_row = {
-                    "source_kind": row.pop(
-                        f"_permission_{endpoint}_source_kind", None
-                    ),
-                    "source_datasource_id": row.pop(
-                        f"_permission_{endpoint}_datasource_id", None
-                    ),
+                    "source_kind": row.pop(f"_permission_{endpoint}_source_kind", None),
+                    "source_datasource_id": row.pop(f"_permission_{endpoint}_datasource_id", None),
                     "primary_value": row.get(f"{endpoint}_primary_value"),
                     "display_name": row.get(f"{endpoint}_name"),
                     "properties": {},
@@ -2120,9 +2226,7 @@ class OntologyService:
                         f"_permission_{endpoint}_display_property", None
                     ),
                 }
-                protected = cls._protect_object_rows(
-                    [endpoint_row], permission_context
-                )
+                protected = cls._protect_object_rows([endpoint_row], permission_context)
                 if not protected:
                     visible = False
                     break
@@ -2131,9 +2235,7 @@ class OntologyService:
                 continue
             for endpoint, endpoint_row in endpoints.items():
                 row[f"{endpoint}_name"] = endpoint_row.get("display_name")
-                row[f"{endpoint}_primary_value"] = endpoint_row.get(
-                    "primary_value"
-                )
+                row[f"{endpoint}_primary_value"] = endpoint_row.get("primary_value")
             for key in list(row):
                 if key.startswith("_permission_"):
                     row.pop(key, None)
@@ -2337,9 +2439,7 @@ class OntologyService:
             effect.get("property") == primary_property for effect in action["effects"]
         ):
             raise ValueError("动作不能修改对象主标识")
-        updated_properties = validate_property_values(
-            object_type["properties"], updated_properties
-        )
+        updated_properties = validate_property_values(object_type["properties"], updated_properties)
         display_key = object_type.get("display_property")
         display_name = (
             str(updated_properties.get(display_key))
@@ -2418,6 +2518,19 @@ class OntologyService:
                 "run_id": run_id,
                 "status": "succeeded",
                 "action": action["action_key"],
+                "state_commit": {
+                    "mode": (
+                        "platform_overlay"
+                        if str(target.get("source_kind") or "").lower() == "database"
+                        else "platform_object"
+                    ),
+                    "business_source_written": False,
+                    "message": (
+                        "动作已更新平台孪生中的叠加状态，尚未写回业务数据源"
+                        if str(target.get("source_kind") or "").lower() == "database"
+                        else "动作已更新平台本地对象；当前没有外部业务系统写回"
+                    ),
+                },
                 "model_release": model_release,
                 "semantic_snapshot": semantic_snapshot,
                 "ontology_release": context["ontology_release"],
@@ -2480,12 +2593,8 @@ class OntologyService:
             row = _normalize_row(raw_row)
             target = {
                 "source_kind": row.pop("_permission_target_source_kind", None),
-                "source_datasource_id": row.pop(
-                    "_permission_target_datasource_id", None
-                ),
-                "primary_value": row.pop(
-                    "_permission_target_primary_value", None
-                ),
+                "source_datasource_id": row.pop("_permission_target_datasource_id", None),
+                "primary_value": row.pop("_permission_target_primary_value", None),
                 "display_name": row.get("target_name"),
                 "properties": {},
                 "source_properties": {},
@@ -2493,12 +2602,8 @@ class OntologyService:
             }
             object_type = {
                 "source_query": row.pop("_permission_target_source_query", None),
-                "primary_property": row.pop(
-                    "_permission_target_primary_property", None
-                ),
-                "display_property": row.pop(
-                    "_permission_target_display_property", None
-                ),
+                "primary_property": row.pop("_permission_target_primary_property", None),
+                "display_property": row.pop("_permission_target_display_property", None),
             }
             protected_target = self._protect_object_rows(
                 [self._permission_metadata(target, object_type)],
@@ -2716,9 +2821,9 @@ class OntologyService:
                 object_id = await self.upsert_object(OntologyObjectPayload.model_validate(item))
             except ValidationError as exc:
                 raise ValueError(f"对象实例定义无效: {exc}") from exc
-            imported_objects[
-                (object_key, object_identity(object_key, raw["primary_value"]))
-            ] = object_id
+            imported_objects[(object_key, object_identity(object_key, raw["primary_value"]))] = (
+                object_id
+            )
 
         for raw in raw_links:
             link_key = raw.get("link_key")
@@ -2952,14 +3057,40 @@ def relation_lookup_key(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
+    if isinstance(value, date | datetime):
+        return value.isoformat()
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
     return str(value)
+
+
+def relation_object_lookup_key(properties: dict[str, Any], property_keys: list[str]) -> str | None:
+    """Build a collision-safe ordered key and reject incomplete endpoints."""
+
+    if not property_keys or any(not key for key in property_keys):
+        raise ValueError("关系属性键不能为空")
+    values: list[str] = []
+    for property_key in property_keys:
+        if property_key not in properties:
+            return None
+        value = properties[property_key]
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        values.append(relation_lookup_key(value))
+    return json.dumps(values, ensure_ascii=False, separators=(",", ":"))
 
 
 def unique_objects(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_id: dict[int, dict[str, Any]] = {}
     for item in values:
         by_id[int(item["id"])] = item
-    return list(by_id.values())
+    return [by_id[object_id] for object_id in sorted(by_id)]
 
 
 def validate_action_parameters(

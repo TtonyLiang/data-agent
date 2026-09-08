@@ -1,4 +1,4 @@
-"""Agent-level datasource permission configuration models."""
+"""Datasource table/column permission configuration models."""
 
 from __future__ import annotations
 
@@ -66,4 +66,11 @@ class DatasourcePermissionConfig(DatasourcePermissionReplace):
     """Stored permission configuration returned by the management API."""
 
     agent_id: int = Field(gt=0)
+    datasource_id: int = Field(gt=0)
+
+
+class DomainDatasourcePermissionConfig(DatasourcePermissionReplace):
+    """Stored permission configuration owned by one business domain."""
+
+    domain_id: int = Field(gt=0)
     datasource_id: int = Field(gt=0)

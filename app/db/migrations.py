@@ -124,6 +124,32 @@ async def run_management_migrations() -> None:
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体列级权限与脱敏'
         """,
         """
+        CREATE TABLE IF NOT EXISTS domain_table_permission (
+            domain_id BIGINT NOT NULL COMMENT '企业业务领域ID',
+            datasource_id BIGINT NOT NULL COMMENT '数据源ID',
+            table_name VARCHAR(256) NOT NULL COMMENT '物理表名',
+            allowed TINYINT(1) DEFAULT 1 COMMENT '是否允许访问',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (domain_id, datasource_id, table_name),
+            INDEX idx_domain_table_permission_ds (datasource_id, table_name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='业务领域表级权限'
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS domain_column_permission (
+            domain_id BIGINT NOT NULL COMMENT '企业业务领域ID',
+            datasource_id BIGINT NOT NULL COMMENT '数据源ID',
+            table_name VARCHAR(256) NOT NULL COMMENT '物理表名',
+            column_name VARCHAR(256) NOT NULL COMMENT '物理字段名',
+            allowed TINYINT(1) DEFAULT 1 COMMENT '是否允许访问',
+            masking_policy VARCHAR(32) DEFAULT 'none' COMMENT 'none/redact/partial/hash',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (domain_id, datasource_id, table_name, column_name),
+            INDEX idx_domain_column_permission_ds (datasource_id, table_name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='业务领域列级权限与脱敏'
+        """,
+        """
         CREATE TABLE IF NOT EXISTS prompt_template (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             prompt_key VARCHAR(128) NOT NULL COMMENT '模板Key，如 nl2lf_generate.system',
@@ -450,6 +476,36 @@ async def run_management_migrations() -> None:
         "(ontology_release_id, created_at)",
     )
     await add_column_if_missing(
+        "capability_grant",
+        "model_release_id",
+        "ALTER TABLE capability_grant ADD COLUMN model_release_id BIGINT DEFAULT NULL "
+        "COMMENT '授权冻结的统一企业模型版本ID' AFTER execution_agent_id",
+    )
+    await add_column_if_missing(
+        "capability_grant",
+        "contract_hash",
+        "ALTER TABLE capability_grant ADD COLUMN contract_hash CHAR(64) DEFAULT NULL "
+        "COMMENT '授权能力合同SHA-256' AFTER model_release_id",
+    )
+    await add_column_if_missing(
+        "capability_grant",
+        "contract_json",
+        "ALTER TABLE capability_grant ADD COLUMN contract_json JSON DEFAULT NULL "
+        "COMMENT '授权时冻结的Query Capability合同' AFTER contract_hash",
+    )
+    await ensure_column_nullable(
+        "capability_grant",
+        "execution_agent_id",
+        "ALTER TABLE capability_grant MODIFY COLUMN execution_agent_id BIGINT DEFAULT NULL "
+        "COMMENT '旧领域兼容的内部数据权限适配ID'",
+    )
+    await create_index_if_missing(
+        "capability_grant",
+        "idx_capability_grant_release",
+        "ALTER TABLE capability_grant ADD INDEX idx_capability_grant_release "
+        "(model_release_id)",
+    )
+    await add_column_if_missing(
         "capability_invocation_audit",
         "model_release_id",
         "ALTER TABLE capability_invocation_audit "
@@ -495,6 +551,7 @@ async def run_management_migrations() -> None:
     await backfill_agent_domain_bindings()
     await cleanup_orphan_agent_domain_bindings()
     await backfill_agent_semantic_domains()
+    await backfill_domain_permissions_from_legacy_agents()
     await ensure_column_not_nullable(
         "semantic_domain",
         "workspace_id",
@@ -887,6 +944,91 @@ async def backfill_agent_domain_bindings() -> None:
         "INSERT IGNORE INTO agent_semantic_domain (agent_id, domain_id) "
         "SELECT id, semantic_domain_id FROM agent WHERE semantic_domain_id IS NOT NULL"
     )
+
+
+async def backfill_domain_permissions_from_legacy_agents() -> None:
+    """One-time migration from the legacy domain owner Agent permission rules.
+
+    Only ``semantic_domain.agent_id`` is used as the deterministic legacy source;
+    permissions from multiple consumer Agents are never unioned. A persistent
+    marker prevents later administrator-cleared domain rules from being restored
+    on every application startup.
+    """
+    db = get_management_db()
+    marker_key = "migration.domain_permission_backfill_v1"
+    completed = await db.execute_query(
+        "SELECT param_key FROM system_parameter WHERE param_key = :param_key",
+        {"param_key": marker_key},
+    )
+    if completed:
+        return
+    scopes = await db.execute_query(
+        "SELECT sd.id AS domain_id, sd.datasource_id, sd.agent_id "
+        "FROM semantic_domain sd JOIN agent_datasource ad "
+        "ON ad.agent_id = sd.agent_id AND ad.datasource_id = sd.datasource_id "
+        "LEFT JOIN (SELECT DISTINCT domain_id, datasource_id "
+        "FROM domain_table_permission) dtp "
+        "ON dtp.domain_id = sd.id AND dtp.datasource_id = sd.datasource_id "
+        "LEFT JOIN (SELECT DISTINCT domain_id, datasource_id "
+        "FROM domain_column_permission) dcp "
+        "ON dcp.domain_id = sd.id AND dcp.datasource_id = sd.datasource_id "
+        "WHERE sd.agent_id IS NOT NULL AND sd.datasource_id IS NOT NULL "
+        "AND dtp.domain_id IS NULL AND dcp.domain_id IS NULL "
+        "AND EXISTS (SELECT 1 FROM agent_table_permission atp "
+        "WHERE atp.agent_id = sd.agent_id "
+        "AND atp.datasource_id = sd.datasource_id) "
+        "ORDER BY sd.id",
+    )
+    statements: list[tuple[str, dict | None]] = []
+    for scope in scopes:
+        params = {
+            "domain_id": int(scope["domain_id"]),
+            "datasource_id": int(scope["datasource_id"]),
+            "agent_id": int(scope["agent_id"]),
+        }
+        statements.extend(
+            [
+                (
+                    "INSERT IGNORE INTO domain_table_permission "
+                    "(domain_id, datasource_id, table_name, allowed) "
+                    "SELECT :domain_id, atp.datasource_id, atp.table_name, atp.allowed "
+                    "FROM agent_table_permission atp WHERE atp.agent_id = :agent_id "
+                    "AND atp.datasource_id = :datasource_id",
+                    params,
+                ),
+                (
+                    "INSERT IGNORE INTO domain_column_permission "
+                    "(domain_id, datasource_id, table_name, column_name, allowed, "
+                    "masking_policy) SELECT :domain_id, acp.datasource_id, "
+                    "acp.table_name, acp.column_name, acp.allowed, acp.masking_policy "
+                    "FROM agent_column_permission acp JOIN agent_table_permission atp "
+                    "ON atp.agent_id = acp.agent_id "
+                    "AND atp.datasource_id = acp.datasource_id "
+                    "AND atp.table_name = acp.table_name "
+                    "WHERE acp.agent_id = :agent_id "
+                    "AND acp.datasource_id = :datasource_id",
+                    params,
+                ),
+            ]
+        )
+    statements.append(
+        (
+            "INSERT INTO system_parameter "
+            "(param_key, name, value_json, value_type, category, description) "
+            "VALUES (:param_key, :name, CAST(:value_json AS JSON), 'json', "
+            "'migration', :description) ON DUPLICATE KEY UPDATE "
+            "value_json = VALUES(value_json)",
+            (
+                {
+                    "param_key": marker_key,
+                    "name": "领域权限旧数据迁移 V1",
+                    "value_json": json.dumps({"completed": True}),
+                    "description": "从 semantic_domain.agent_id 对应 Agent 迁移表列权限",
+                }
+            ),
+        )
+    )
+    await db.execute_transaction(statements)
 
 
 async def cleanup_orphan_agent_domain_bindings() -> None:

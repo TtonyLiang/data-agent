@@ -1,7 +1,8 @@
 """Prompt 模板数据模型 —— 定义节点提示词的配置化覆盖。
 
 Prompt 模板用于把节点提示词从代码常量中抽出来,允许针对不同业务场景覆盖。
-匹配优先级:同时命中 agent + model + semantic_domain 的模板优先于全局模板;
+业务语义关键模板只按 model + semantic_domain + 全局解析；交互和输出类模板
+仍可叠加 agent 作用域。
 模板变量渲染失败时自动回退到代码内默认模板,避免配置错误打断问数链路。
 
 当前支持的 prompt_key(见各节点 load_prompt 调用):
@@ -15,18 +16,50 @@ Prompt 模板用于把节点提示词从代码常量中抽出来,允许针对不
 
 from pydantic import BaseModel, Field
 
+# These prompts can change the business interpretation, query contract, or
+# executable analysis. Existing Agent-scoped rows remain readable, but runtime
+# resolution ignores them and new writes are rejected.
+BUSINESS_SEMANTIC_PROMPT_KEYS = frozenset(
+    {
+        "intent_recognition.system",
+        "semantic_enhance.system",
+        "nl2lf_generate.system",
+        "nl2sql_fallback.system",
+        "phase3_python_generate.system",
+        "phase3_python_generate.user",
+    }
+)
+AGENT_SCOPED_INTERACTION_OUTPUT_PROMPT_KEYS = frozenset(
+    {
+        "phase3_python_analyze.system",
+        "phase3_report_generator.system",
+        "phase3_report_generator.user",
+    }
+)
+
+
+def prompt_allows_agent_scope(prompt_key: str) -> bool:
+    """Return whether a prompt may vary by the built-in validation Agent."""
+    key = str(prompt_key or "").strip()
+    if key in BUSINESS_SEMANTIC_PROMPT_KEYS:
+        return False
+    return key in AGENT_SCOPED_INTERACTION_OUTPUT_PROMPT_KEYS
+
 
 class PromptTemplateBase(BaseModel):
     """Prompt 模板基础字段 —— Create/Update/Prompt 共用的字段定义。
 
-    ``agent_id`` / ``model_config_id`` / ``semantic_domain_id`` 三个作用域
-    字段可任意组合(均可空),匹配时按具体程度排序:命中的非空作用域越多优先级越高。
+    ``model_config_id`` / ``semantic_domain_id`` 可用于所有模板；``agent_id``
+    仅用于交互或输出类模板，业务语义关键模板会由 service 层拒绝该组合。
     """
 
     prompt_key: str = Field(description="模板 key,如 nl2lf_generate.system")
     name: str = Field(description="模板展示名称")
     description: str | None = Field(default=None, description="模板说明")
-    agent_id: int | None = Field(default=None, description="适用智能体;为空表示对所有 agent 生效")
+    agent_id: int | None = Field(
+        default=None,
+        description="交互/输出类模板的适用智能体;业务语义关键模板不允许设置",
+    )
     model_config_id: int | None = Field(
         default=None, description="适用模型配置;为空表示对所有模型生效"
     )

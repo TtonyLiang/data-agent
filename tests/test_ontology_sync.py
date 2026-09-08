@@ -144,12 +144,8 @@ async def test_legacy_sync_preserves_object_type_default_page_size(monkeypatch):
         "result": {"domain_id": DOMAIN_ID, "types": [], "objects": []},
     }
     monkeypatch.setattr(ontology_api, "get_twin_runtime_service", lambda: runtime)
-    monkeypatch.setattr(
-        ontology_api, "require_domain_access", AsyncMock(return_value=None)
-    )
-    monkeypatch.setattr(
-        ontology_api, "_resolve_data_access_agent", AsyncMock(return_value=7)
-    )
+    monkeypatch.setattr(ontology_api, "require_domain_access", AsyncMock(return_value=None))
+    monkeypatch.setattr(ontology_api, "_resolve_data_access_agent", AsyncMock(return_value=7))
 
     await ontology_api.sync_objects_from_datasource(
         DOMAIN_ID,
@@ -190,8 +186,8 @@ class FakeManagementDB:
         self.next_id = 1000
         self.objects: dict[tuple[int, str], dict[str, Any]] = {}
         for item in objects or []:
-            self.objects[(int(item["object_type_id"]), str(item["primary_value"]))] = (
-                copy.deepcopy(item)
+            self.objects[(int(item["object_type_id"]), str(item["primary_value"]))] = copy.deepcopy(
+                item
             )
 
     async def execute_query(
@@ -210,9 +206,7 @@ class FakeManagementDB:
             object_type_key = str(bound["object_type_key"])
             json_path = str(bound["json_path"])
             property_key = json_path.removeprefix('$."').removesuffix('"')
-            values = {
-                str(value) for key, value in bound.items() if key.startswith("value_")
-            }
+            values = {str(value) for key, value in bound.items() if key.startswith("value_")}
             return [
                 copy.deepcopy(item)
                 for item in self.objects.values()
@@ -238,8 +232,7 @@ class FakeManagementDB:
                     "source_kind": "database",
                     "source_datasource_id": int(bound["datasource_id"]),
                     "status": "active",
-                    "version": int(current.get("version") or 1)
-                    + int(bound["version_increment"]),
+                    "version": int(current.get("version") or 1) + int(bound["version_increment"]),
                 }
             )
             return []
@@ -248,9 +241,7 @@ class FakeManagementDB:
             return []
         return []
 
-    async def execute_insert(
-        self, sql: str, params: dict[str, Any] | None = None
-    ) -> int:
+    async def execute_insert(self, sql: str, params: dict[str, Any] | None = None) -> int:
         bound = dict(params or {})
         object_id = self.next_id
         self.next_id += 1
@@ -273,9 +264,7 @@ class FakeManagementDB:
             self.objects[(item["object_type_id"], item["primary_value"])] = item
         return object_id
 
-    async def execute_transaction(
-        self, statements: list[tuple[str, dict[str, Any]]]
-    ) -> None:
+    async def execute_transaction(self, statements: list[tuple[str, dict[str, Any]]]) -> None:
         self.transactions.append(copy.deepcopy(statements))
 
 
@@ -330,6 +319,29 @@ def test_sync_key_permission_uses_projection_alias_lineage():
         )
 
 
+def test_sync_key_permission_checks_every_compound_relation_property():
+    restricted = ColumnPolicy(allowed=True, masking_policy="hash")
+
+    with pytest.raises(ValueError, match="关系键字段 tenant_id"):
+        OntologyService._validate_sync_key_permissions(
+            {
+                "object_key": "LoanApplication",
+                "primary_property": "application_id",
+            },
+            [
+                {
+                    "status": "active",
+                    "source_object_key": "Customer",
+                    "target_object_key": "LoanApplication",
+                    "source_property_keys": ["tenant_id", "customer_id"],
+                    "target_property_keys": ["tenant_id", "customer_id"],
+                }
+            ],
+            ["loan_application_indicator"],
+            {("loan_application_indicator", "tenant_id"): restricted},
+        )
+
+
 def _configure_sync(
     monkeypatch,
     service: OntologyService,
@@ -381,6 +393,8 @@ def _configure_sync(
         "get_datasource_service",
         lambda: BoundDatasourceService(),
     )
+
+
 @pytest.mark.asyncio
 async def test_sync_uses_read_only_select_with_limit_offset_pagination(monkeypatch):
     source_db = FakeSourceDB(
@@ -712,7 +726,7 @@ async def test_sync_does_not_fallback_to_legacy_domain_agent(monkeypatch):
 
     monkeypatch.setattr(service, "_require_domain", require_domain)
 
-    with pytest.raises(PermissionError, match="明确的权限主体"):
+    with pytest.raises(PermissionError, match="未配置数据权限"):
         await service.sync_objects_from_datasource(DOMAIN_ID, access_agent_id=None)
 
 
@@ -830,3 +844,194 @@ async def test_sync_rebuilds_relation_from_configured_join_properties(monkeypatc
     assert params["source_object_id"] == 501
     assert params["target_object_id"] == result["objects"][0]["id"]
     assert json.loads(params["properties"]) == {"source": "database_sync"}
+
+
+@pytest.mark.asyncio
+async def test_sync_matches_compound_relation_keys_and_skips_blank_components(monkeypatch):
+    customers = [
+        {
+            "id": 502,
+            "domain_id": DOMAIN_ID,
+            "object_type_id": 10,
+            "object_type_key": "Customer",
+            "object_type_name": "客户",
+            "primary_value": "TENANT-2:C-100",
+            "display_name": "二号租户客户",
+            "properties": {"tenant_id": 2, "customer_id": 100},
+            "source_properties": {"tenant_id": 2, "customer_id": 100},
+            "overlay_properties": {},
+            "source_kind": "database",
+            "source_datasource_id": DATASOURCE_ID,
+            "version": 1,
+            "status": "active",
+        },
+        {
+            "id": 501,
+            "domain_id": DOMAIN_ID,
+            "object_type_id": 10,
+            "object_type_key": "Customer",
+            "object_type_name": "客户",
+            "primary_value": "TENANT-1:C-100",
+            "display_name": "一号租户客户",
+            "properties": {"tenant_id": 1, "customer_id": 100},
+            "source_properties": {"tenant_id": 1, "customer_id": 100},
+            "overlay_properties": {},
+            "source_kind": "database",
+            "source_datasource_id": DATASOURCE_ID,
+            "version": 1,
+            "status": "active",
+        },
+    ]
+    application_type = {
+        "id": 20,
+        "domain_id": DOMAIN_ID,
+        "object_key": "LoanApplication",
+        "name": "贷款申请",
+        "primary_property": "application_id",
+        "display_property": "application_no",
+        "sync_enabled": True,
+        "source_query": (
+            "SELECT application_id, application_no, tenant_id, customer_id "
+            "FROM loan_application_indicator ORDER BY application_id"
+        ),
+        "sync_limit": 100,
+        "status": "active",
+        "properties": [
+            _property("application_id", "integer"),
+            _property("application_no"),
+            _property("tenant_id", "integer"),
+            _property("customer_id", required=False),
+        ],
+    }
+    link_type = {
+        "id": 31,
+        "link_key": "customer_has_application",
+        "source_object_key": "Customer",
+        "target_object_key": "LoanApplication",
+        "source_property": "tenant_id",
+        "target_property": "tenant_id",
+        "source_property_keys": ["tenant_id", "customer_id"],
+        "target_property_keys": ["tenant_id", "customer_id"],
+        "status": "active",
+    }
+    source_db = FakeSourceDB(
+        {
+            "loan_application_indicator": [
+                {
+                    "application_id": 900001,
+                    "application_no": "APP-900001",
+                    "tenant_id": 2,
+                    "customer_id": 100,
+                },
+                {
+                    "application_id": 900002,
+                    "application_no": "APP-900002",
+                    "tenant_id": 2,
+                    "customer_id": "",
+                },
+            ]
+        }
+    )
+    management_db = FakeManagementDB(customers)
+    service = OntologyService()
+    _configure_sync(
+        monkeypatch,
+        service,
+        source_db=source_db,
+        management_db=management_db,
+        object_types=[application_type],
+        link_types=[link_type],
+    )
+
+    result = await service.sync_objects_from_datasource(
+        DOMAIN_ID, access_agent_id=7, sync_links=True
+    )
+
+    assert result["links_synced"] == 1
+    statements = management_db.transactions[0]
+    assert len(statements) == 1
+    _, params = statements[0]
+    assert params["source_object_id"] == 502
+    assert params["target_object_id"] == result["objects"][0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_relation_sync_orders_compound_matches_stably(monkeypatch):
+    management_db = FakeManagementDB()
+    monkeypatch.setattr(ontology_service, "get_management_db", lambda: management_db)
+    service = OntologyService()
+    synced_objects = [
+        {"id": 4, "object_type_key": "Customer", "properties": {"tenant_id": 2, "customer_id": 20}},
+        {
+            "id": 3,
+            "object_type_key": "LoanApplication",
+            "properties": {"tenant_id": 2, "customer_id": 20},
+        },
+        {"id": 2, "object_type_key": "Customer", "properties": {"tenant_id": 1, "customer_id": 10}},
+        {
+            "id": 1,
+            "object_type_key": "LoanApplication",
+            "properties": {"tenant_id": 1, "customer_id": 10},
+        },
+    ]
+    link_types = [
+        {
+            "id": 32,
+            "link_key": "secondary_customer_application",
+            "source_object_key": "Customer",
+            "target_object_key": "LoanApplication",
+            "source_property_keys": ["tenant_id", "customer_id"],
+            "target_property_keys": ["tenant_id", "customer_id"],
+            "status": "active",
+        },
+        {
+            "id": 31,
+            "link_key": "customer_application",
+            "source_object_key": "Customer",
+            "target_object_key": "LoanApplication",
+            "source_property_keys": ["tenant_id", "customer_id"],
+            "target_property_keys": ["tenant_id", "customer_id"],
+            "status": "active",
+        },
+    ]
+
+    count = await service._sync_links_for_objects(DOMAIN_ID, synced_objects, link_types=link_types)
+
+    assert count == 4
+    assert [
+        (
+            params["link_type_id"],
+            params["source_object_id"],
+            params["target_object_id"],
+        )
+        for _, params in management_db.transactions[0]
+    ] == [(31, 2, 1), (31, 4, 3), (32, 2, 1), (32, 4, 3)]
+
+
+@pytest.mark.asyncio
+async def test_relation_sync_rejects_empty_runtime_property_keys(monkeypatch):
+    monkeypatch.setattr(ontology_service, "get_management_db", lambda: FakeManagementDB())
+    service = OntologyService()
+
+    with pytest.raises(ValueError, match="关系source属性键不能为空"):
+        await service._sync_links_for_objects(
+            DOMAIN_ID,
+            [
+                {
+                    "id": 1,
+                    "object_type_key": "Customer",
+                    "properties": {"tenant_id": 1},
+                }
+            ],
+            link_types=[
+                {
+                    "id": 31,
+                    "link_key": "invalid_relation",
+                    "source_object_key": "Customer",
+                    "target_object_key": "LoanApplication",
+                    "source_property_keys": ["tenant_id", ""],
+                    "target_property_keys": ["tenant_id", "customer_id"],
+                    "status": "active",
+                }
+            ],
+        )

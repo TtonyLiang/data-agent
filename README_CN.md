@@ -44,6 +44,10 @@
 
 问渠 WenQu 的目标是成为公司的**智能中枢和决策引擎**。平台把业务人员对公司的理解，与数据库、API、文件和业务事件中的数据连接起来，形成随业务状态更新的运营数字孪生。平台内置 Agent 只用于调试和验证；第三方 Agent 通过标准能力接口消费同一套业务模型、数据和规则。
 
+> **第一性目标：让业务语义成为企业资产，让数据库成为数据来源，让 Agent 成为能力消费者。**
+
+这意味着对象、关系、状态、规则、动作、指标和版本属于企业模型；表、字段和 SQL 是数据来源与实现方式；Agent 不拥有或复制企业模型，只按授权消费已发布能力。
+
 这不是 3D 仿真，也不是复制一份数据库。这里的“数字孪生”包括三部分：
 
 1. **企业模型中心**：统一对象、关系、指标、规则、状态、动作、数据映射、权限和版本；现有“查询语义”和“本体建模”在产品上合并为同一套企业业务模型。
@@ -473,10 +477,9 @@ Planner 根据结果数据特征自动推断分析模式：
 
 ```mermaid
 flowchart LR
-    subgraph Layer1[第一层：验证客户端数据源授权]
-        A1[验证 Agent A] -->|绑定| D1[数据源 1]
-        A1 -->|绑定| D2[数据源 2]
-        A2[验证 Agent B] -->|绑定| D3[数据源 3]
+    subgraph Layer1[第一层：业务领域数据源边界]
+        B1[业务领域 A] -->|使用| D1[数据源 1]
+        B2[业务领域 B] -->|使用| D2[数据源 2]
     end
 
     subgraph Layer2[第二层：表级权限]
@@ -493,9 +496,11 @@ flowchart LR
 
 | 层级 | 控制粒度 | 存储表 |
 |------|----------|--------|
-| 数据源授权 | 验证 Agent ↔ 数据源（兼容层） | `agent_datasource` |
-| 表级权限 | 允许/拒绝访问指定表 | `agent_table_permission` |
-| 列级权限 | 允许/禁止 + 脱敏策略 | `agent_column_permission` |
+| 数据源边界 | 业务领域 → 数据源 | `semantic_domain.datasource_id` |
+| 表级权限 | 领域允许/拒绝访问指定表 | `domain_table_permission` |
+| 列级权限 | 领域允许/禁止 + 脱敏策略 | `domain_column_permission` |
+
+`agent_datasource`、`agent_table_permission`、`agent_column_permission` 仅保留为旧领域迁移兼容。
 
 **脱敏策略**：
 
@@ -702,8 +707,9 @@ sequenceDiagram
 | 数据源 | `datasource` | 数据库连接信息 |
 | 关联 | `agent_datasource` | 智能体 ↔ 数据源多对多 |
 | 关联 | `agent_semantic_domain` | 智能体 ↔ 业务领域多对多消费关系 |
-| 权限 | `agent_table_permission` | 表级访问控制 |
-| 权限 | `agent_column_permission` | 列级访问控制与脱敏 |
+| 权限 | `domain_table_permission` | 业务领域表级访问控制 |
+| 权限 | `domain_column_permission` | 业务领域列级访问控制与脱敏 |
+| 兼容权限 | `agent_table_permission` / `agent_column_permission` | 旧领域迁移期间的 Agent 权限适配 |
 | 元数据 | `meta_table` / `meta_column` | 已采集的表结构 |
 | 语义层 | `semantic_domain_snapshot` | 语义层版本快照 |
 | 语义层 | `semantic_concept` | 概念 |

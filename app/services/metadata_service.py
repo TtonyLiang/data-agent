@@ -4,8 +4,8 @@ MetadataService 负责:
 1. ``list_remote_tables``:从业务库 information_schema 读取表清单(未采集的)。
 2. ``collect_schema``:采集指定表的字段、外键信息,存入管理库(meta_table/meta_column)。
 3. ``get_schema``:读取已采集的完整 schema(表 + 字段),供数据定位与 NL2SQL 使用。
-4. ``get_authorized_schema``:在 ``get_schema`` 基础上叠加权限过滤,由
-   ``PermissionService`` 根据 agent 的表/列权限规则移除或脱敏。
+4. ``get_authorized_schema``:在 ``get_schema`` 基础上叠加权限过滤；显式提供
+   ``domain_id`` 时优先使用领域规则，旧领域仅在明确允许时回退 Agent 规则。
 
 采集流程(``collect_schema``):
 1. 从业务库 information_schema.TABLES 读取表清单,按 table_names 过滤。
@@ -225,7 +225,12 @@ class MetadataService:
         return schema
 
     async def get_authorized_schema(
-        self, datasource_id: int, agent_id: int | None = None
+        self,
+        datasource_id: int,
+        agent_id: int | None = None,
+        *,
+        domain_id: int | None = None,
+        allow_agent_fallback: bool = False,
     ) -> list[dict]:
         """返回经权限过滤的 schema。
 
@@ -235,19 +240,72 @@ class MetadataService:
         - 配置了脱敏策略的列标记 masking_policy
         """
         logger.info(
-            "metadata get_authorized_schema datasource_id=%s agent_id=%s", datasource_id, agent_id
+            "metadata get_authorized_schema datasource_id=%s domain_id=%s agent_id=%s",
+            datasource_id,
+            domain_id,
+            agent_id,
         )
         schema = await self.get_schema(datasource_id)
-        result = await get_permission_service().filter_schema(agent_id, datasource_id, schema)
+        permission_service = get_permission_service()
+        permission_source = "agent"
+        if domain_id is not None:
+            context = await permission_service.resolve_domain_permission_context(
+                domain_id,
+                datasource_id,
+                compatibility_agent_id=agent_id,
+                allow_agent_fallback=allow_agent_fallback,
+            )
+            permission_source = context.source
+            result = self._filter_schema_with_permissions(
+                schema,
+                context.table_permissions,
+                context.column_permissions,
+                permission_service,
+            )
+        else:
+            result = await permission_service.filter_schema(
+                agent_id, datasource_id, schema
+            )
         logger.info(
-            "metadata get_authorized_schema result datasource_id=%s agent_id=%s "
-            "table_count=%s column_count=%s",
+            "metadata get_authorized_schema result datasource_id=%s domain_id=%s "
+            "permission_source=%s table_count=%s column_count=%s",
             datasource_id,
-            agent_id,
+            domain_id,
+            permission_source,
             len(result),
             sum(len(table.get("columns", [])) for table in result),
         )
         return result
+
+    @staticmethod
+    def _filter_schema_with_permissions(
+        schema: list[dict],
+        table_permissions: dict[str, bool],
+        column_permissions: dict,
+        permission_service,
+    ) -> list[dict]:
+        """Apply an already resolved domain/compatibility permission context."""
+        filtered: list[dict] = []
+        for table in schema:
+            table_name = str(table.get("table_name") or "")
+            if not permission_service.table_allowed(table_name, table_permissions):
+                continue
+            table_data = dict(table)
+            columns = []
+            for column in table.get("columns") or []:
+                column_name = str(column.get("column_name") or "")
+                policy = column_permissions.get(
+                    (table_name.lower(), column_name.lower())
+                )
+                if policy and not policy.allowed:
+                    continue
+                column_data = dict(column)
+                if policy and policy.masking_policy != "none":
+                    column_data["masking_policy"] = policy.masking_policy
+                columns.append(column_data)
+            table_data["columns"] = columns
+            filtered.append(table_data)
+        return filtered
 
     async def collect_schema(
         self,

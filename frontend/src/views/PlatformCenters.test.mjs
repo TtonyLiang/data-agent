@@ -49,6 +49,14 @@ assert.ok(
     modelSource.includes('语义与数据') &&
     modelSource.includes('版本发布') &&
     modelSource.includes('ModelReleaseCenter') &&
+    modelSource.includes('复制企业模型') &&
+    modelSource.includes('导入企业模型包') &&
+    modelSource.includes('导出企业模型包') &&
+    modelSource.includes('exportOntologyBundle') &&
+    modelSource.includes('importOntologyBundle') &&
+    modelSource.includes("format: 'wenqu-enterprise-model'") &&
+    modelSource.includes('运行实例、发布版本和审计记录不会复制') &&
+    !modelSource.includes('此操作复制语义资产，不复制业务本体') &&
     modelSource.includes(':aria-busy="domainLoading"') &&
     modelSource.includes('aria-label="选择业务领域"') &&
     modelSource.includes('<section class="model-center-workspace" aria-label="企业模型工作区">') &&
@@ -111,7 +119,11 @@ assert.ok(
     twinSource.includes('fetchOntologyLinks') &&
     twinSource.includes('fetchOntologyActionRuns') &&
     twinSource.includes('executeOntologyAction') &&
-    twinSource.includes('记录受控 Ontology Action 的执行结果和状态变化') &&
+    twinSource.includes('平台动作记录') &&
+    twinSource.includes('当前属于平台叠加状态，不代表业务数据库已经写回') &&
+    twinSource.includes('业务库快照 + 平台变更') &&
+    twinSource.includes('尚未写回业务库') &&
+    twinSource.includes('function objectStateSourceLabel') &&
     twinSource.includes('不代表通用 Decision Capability 已完成'),
   'twin runtime should own runtime records without overstating a generic decision capability',
 )
@@ -177,8 +189,14 @@ assert.ok(
     capabilitySource.includes('activeModelRelease') &&
     capabilitySource.includes('POST /api/v1/capabilities/${capability.key}:invoke') &&
     capabilitySource.includes('X-Capability-Key 与 X-Capability-Secret') &&
-    capabilitySource.includes('内部权限适配（过渡）') &&
-    capabilitySource.includes('当前版本仍临时复用所选验证智能体的表列权限') &&
+    capabilitySource.includes('业务领域权限') &&
+    capabilitySource.includes('旧权限兼容适配') &&
+    capabilitySource.includes('数据源、表和字段权限由平台按业务领域自动适配') &&
+    capabilitySource.includes('无需选择或创建内部验证 Agent') &&
+    capabilitySource.includes('授权合同') &&
+    capabilitySource.includes('首次调用时兼容绑定') &&
+    !capabilitySource.includes('grantForm.execution_agent_id') &&
+    !capabilitySource.includes('fetchAgents') &&
     capabilitySource.includes("query: { section: 'release' }") &&
     capabilitySource.includes('独立能力版本、灰度与配额治理仍属于后续建设'),
   'capability center should publish the actual query, action, and tool contracts exposed by the backend',

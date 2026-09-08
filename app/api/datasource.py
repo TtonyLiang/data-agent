@@ -15,6 +15,7 @@ from app.models.user import PublicUser
 from app.services.datasource_service import get_datasource_service
 from app.services.metadata_service import get_metadata_service
 from app.services.permission_service import get_permission_service
+from app.services.semantic_runtime import get_semantic_runtime_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -32,6 +33,16 @@ async def _validate_permission_scope(ds_id: int, agent_id: int) -> None:
         raise HTTPException(status_code=404, detail="数据源不存在")
     if not await datasource_service.belongs_to_agent(ds_id, agent_id):
         raise HTTPException(status_code=400, detail="智能体与数据源尚未绑定")
+
+
+async def _validate_domain_permission_scope(ds_id: int, domain_id: int) -> None:
+    domain = await get_semantic_runtime_service().get_domain(domain_id)
+    if domain is None:
+        raise HTTPException(status_code=404, detail="业务领域不存在")
+    if await get_datasource_service().get(ds_id) is None:
+        raise HTTPException(status_code=404, detail="数据源不存在")
+    if int(domain.datasource_id or 0) != ds_id:
+        raise HTTPException(status_code=400, detail="业务领域未绑定当前数据源")
 
 
 async def _validate_permission_rules(
@@ -149,6 +160,42 @@ async def replace_datasource_permissions(
         request,
     )
     return {"permissions": configuration.model_dump(), "message": "访问权限已保存"}
+
+
+@router.get("/{ds_id}/domain-permissions/{domain_id}")
+async def get_domain_datasource_permissions(
+    ds_id: int,
+    domain_id: int,
+    _: PublicUser = Depends(require_admin),
+):
+    """查看业务领域在该数据源上的正式表/列权限规则。"""
+    await _validate_domain_permission_scope(ds_id, domain_id)
+    configuration = (
+        await get_permission_service().get_domain_permission_configuration(
+            domain_id, ds_id
+        )
+    )
+    return {"permissions": configuration.model_dump()}
+
+
+@router.put("/{ds_id}/domain-permissions/{domain_id}")
+async def replace_domain_datasource_permissions(
+    ds_id: int,
+    domain_id: int,
+    request: DatasourcePermissionReplace,
+    _: PublicUser = Depends(require_admin),
+):
+    """完整替换业务领域在该数据源上的表/列权限规则。"""
+    await _validate_domain_permission_scope(ds_id, domain_id)
+    await _validate_permission_rules(ds_id, request)
+    configuration = (
+        await get_permission_service().replace_domain_permission_configuration(
+            domain_id,
+            ds_id,
+            request,
+        )
+    )
+    return {"permissions": configuration.model_dump(), "message": "领域访问权限已保存"}
 
 
 @router.put("/{ds_id}")

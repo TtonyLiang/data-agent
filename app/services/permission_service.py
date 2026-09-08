@@ -1,4 +1,4 @@
-"""权限服务 —— 智能体级表/列权限控制与结果脱敏。
+"""权限服务 —— 业务领域优先的表/列权限控制与结果脱敏。
 
 PermissionService 负责:
 1. ``filter_schema``:在 schema 读取后叠加表/列权限规则,移除或标记脱敏策略。
@@ -6,8 +6,12 @@ PermissionService 负责:
 3. ``mask_rows``:在 SQL 执行结果返回后,对配置了脱敏策略的列进行脱敏处理。
 
 权限规则存储:
+- ``domain_table_permission`` / ``domain_column_permission``:业务领域的正式权限边界。
 - ``agent_table_permission``:表级允许/拒绝。
 - ``agent_column_permission``:列级允许/拒绝 + 脱敏策略(redact/partial/hash)。
+
+领域运行时优先读取领域规则；只有调用方显式允许兼容且领域尚未配置规则时，
+才会回退到旧 Agent 规则。
 
 脱敏策略:
 - ``redact``:直接替换为 "***"
@@ -31,12 +35,39 @@ from app.models.permission import (
     ColumnPermissionRule,
     DatasourcePermissionConfig,
     DatasourcePermissionReplace,
+    DomainDatasourcePermissionConfig,
     TablePermissionRule,
 )
 from app.utils.sql_validator import extract_table_references, tokenize_sql
 
 logger = logging.getLogger(__name__)
 _MASKING_PRIORITY = {"none": 0, "partial": 1, "hash": 2, "redact": 3}
+DOMAIN_PERMISSION_NOT_CONFIGURED_CODE = "domain_permission_not_configured"
+
+
+def domain_permission_not_configured_detail(
+    domain_id: int,
+    datasource_id: int,
+) -> dict[str, Any]:
+    """Stable API detail for a missing domain-owned data boundary."""
+    return {
+        "code": DOMAIN_PERMISSION_NOT_CONFIGURED_CODE,
+        "message": (
+            "当前业务领域未配置数据权限，请在数据源访问权限中选择该业务领域，"
+            "配置表与字段白名单；无需创建智能体。"
+        ),
+        "domain_id": domain_id,
+        "datasource_id": datasource_id,
+        "permission_subject": "domain",
+    }
+
+
+def _permission_table_is_missing(exc: Exception, table_name: str) -> bool:
+    """Allow a rolling deploy to fall back while new permission tables migrate."""
+    message = str(exc).lower()
+    return table_name.lower() in message and (
+        "doesn't exist" in message or "does not exist" in message or "1146" in message
+    )
 
 
 @dataclass(frozen=True)
@@ -47,8 +78,183 @@ class ColumnPolicy:
     masking_policy: str = "none"
 
 
+@dataclass(frozen=True)
+class PermissionRuntimeContext:
+    """Resolved table/column policies and the principal that supplied them."""
+
+    domain_id: int
+    datasource_id: int
+    source: str
+    table_permissions: dict[str, bool]
+    column_permissions: dict[tuple[str, str], ColumnPolicy]
+    compatibility_agent_id: int | None = None
+
+    # Keep the old ``(datasource_id, tables, columns)`` shape usable by the
+    # existing ontology/twin helpers while carrying the new subject metadata.
+    def __iter__(self):
+        yield self.datasource_id
+        yield self.table_permissions
+        yield self.column_permissions
+
+    def __len__(self) -> int:
+        return 3
+
+    def __getitem__(self, index: int):
+        return (
+            self.datasource_id,
+            self.table_permissions,
+            self.column_permissions,
+        )[index]
+
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "subject_type": "domain",
+            "domain_id": self.domain_id,
+            "datasource_id": self.datasource_id,
+            "source": self.source,
+            "configured": bool(self.table_permissions or self.column_permissions),
+            "compatibility_fallback": self.source == "agent_compatibility",
+            "compatibility_agent_id": (
+                self.compatibility_agent_id
+                if self.source == "agent_compatibility"
+                else None
+            ),
+        }
+
+
 class PermissionService:
-    """智能体级表/列权限与结果脱敏服务。"""
+    """业务领域优先、Agent 兼容的表/列权限与结果脱敏服务。"""
+
+    async def resolve_domain_permission_context(
+        self,
+        domain_id: int,
+        datasource_id: int,
+        *,
+        compatibility_agent_id: int | None = None,
+        allow_agent_fallback: bool = False,
+    ) -> PermissionRuntimeContext:
+        """Resolve domain rules, optionally falling back to one legacy Agent.
+
+        The fallback is deliberately opt-in so a new domain cannot silently
+        inherit an unrelated Agent's data boundary.
+        """
+        table_permissions = await self.get_domain_table_permissions(
+            domain_id, datasource_id
+        )
+        column_permissions = await self.get_domain_column_permissions(
+            domain_id, datasource_id
+        )
+        if table_permissions or column_permissions:
+            return PermissionRuntimeContext(
+                domain_id=domain_id,
+                datasource_id=datasource_id,
+                source="domain",
+                table_permissions=table_permissions,
+                column_permissions=column_permissions,
+            )
+        if allow_agent_fallback and compatibility_agent_id:
+            return PermissionRuntimeContext(
+                domain_id=domain_id,
+                datasource_id=datasource_id,
+                source="agent_compatibility",
+                table_permissions=await self.get_table_permissions(
+                    compatibility_agent_id, datasource_id
+                ),
+                column_permissions=await self.get_column_permissions(
+                    compatibility_agent_id, datasource_id
+                ),
+                compatibility_agent_id=compatibility_agent_id,
+            )
+        return PermissionRuntimeContext(
+            domain_id=domain_id,
+            datasource_id=datasource_id,
+            source="unconfigured",
+            table_permissions={},
+            column_permissions={},
+        )
+
+    async def validate_domain_sql_access(
+        self,
+        domain_id: int,
+        datasource_id: int,
+        sql: str,
+        *,
+        compatibility_agent_id: int | None = None,
+        allow_agent_fallback: bool = False,
+        enforce_table_allowlist: bool = True,
+    ) -> tuple[bool, str, PermissionRuntimeContext]:
+        """Validate SQL against the resolved domain-first permission context."""
+        context = await self.resolve_domain_permission_context(
+            domain_id,
+            datasource_id,
+            compatibility_agent_id=compatibility_agent_id,
+            allow_agent_fallback=allow_agent_fallback,
+        )
+        allowed, reason = self.validate_sql_access_with_context(
+            context,
+            sql,
+            enforce_table_allowlist=enforce_table_allowlist,
+        )
+        return allowed, reason, context
+
+    @classmethod
+    def validate_sql_access_with_context(
+        cls,
+        context: PermissionRuntimeContext,
+        sql: str,
+        *,
+        enforce_table_allowlist: bool = True,
+    ) -> tuple[bool, str]:
+        source_tables = extract_table_references(sql)
+        if not source_tables:
+            return True, "OK"
+        if not context.table_permissions and enforce_table_allowlist:
+            if context.source == "unconfigured":
+                return False, domain_permission_not_configured_detail(
+                    context.domain_id, context.datasource_id
+                )["message"]
+            return False, "当前兼容权限主体未配置表白名单"
+        denied = [
+            table
+            for table in source_tables
+            if not cls.table_allowed(
+                table,
+                context.table_permissions,
+                enforce_table_allowlist=enforce_table_allowlist,
+            )
+        ]
+        if denied:
+            return False, "无权访问表: " + "、".join(denied)
+        denied_columns = cls._denied_column_references(
+            sql,
+            source_tables,
+            context.column_permissions,
+        )
+        if denied_columns:
+            return False, "无权访问字段: " + "、".join(denied_columns)
+        _, lineage_error = cls._masked_result_column_policies(
+            sql,
+            source_tables,
+            context.column_permissions,
+        )
+        if lineage_error:
+            return False, lineage_error
+        return True, "OK"
+
+    @classmethod
+    def get_result_column_policies_with_context(
+        cls,
+        context: PermissionRuntimeContext,
+        sql: str,
+    ) -> dict[str, ColumnPolicy]:
+        source_tables = extract_table_references(sql)
+        if not source_tables:
+            return {}
+        return cls.resolve_result_column_policies(
+            sql,
+            source_tables,
+            context.column_permissions,
+        )
 
     async def filter_schema(
         self,
@@ -454,6 +660,38 @@ class PermissionService:
             return rows, {}
 
         column_permissions = await self.get_column_permissions(agent_id, datasource_id)
+        masked_rows, applied = self.mask_rows_with_context(
+            PermissionRuntimeContext(
+                domain_id=0,
+                datasource_id=datasource_id,
+                source="agent",
+                table_permissions={},
+                column_permissions=column_permissions,
+                compatibility_agent_id=agent_id,
+            ),
+            rows,
+            result_column_policies=result_column_policies,
+        )
+        if applied:
+            logger.info(
+                "permission mask_rows agent_id=%s datasource_id=%s masked_columns=%s",
+                agent_id,
+                datasource_id,
+                applied,
+            )
+        return masked_rows, applied
+
+    @staticmethod
+    def mask_rows_with_context(
+        context: PermissionRuntimeContext,
+        rows: list[dict[str, Any]],
+        *,
+        result_column_policies: dict[str, ColumnPolicy] | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        """Mask result rows using an already resolved permission context."""
+        if not rows:
+            return rows, {}
+        column_permissions = context.column_permissions
         # 构建需要脱敏的字段映射
         masking_by_column: dict[str, str] = {}
         for (_table, column), policy in column_permissions.items():
@@ -487,14 +725,46 @@ class PermissionService:
                 applied[str(key)] = policy
             masked_rows.append(masked)
 
-        if applied:
-            logger.info(
-                "permission mask_rows agent_id=%s datasource_id=%s masked_columns=%s",
-                agent_id,
-                datasource_id,
-                applied,
-            )
         return masked_rows, applied
+
+    async def get_domain_table_permissions(
+        self, domain_id: int, datasource_id: int
+    ) -> dict[str, bool]:
+        """Load the domain-owned table allowlist for one datasource."""
+        try:
+            rows = await get_management_db().execute_query(
+                "SELECT table_name, allowed FROM domain_table_permission "
+                "WHERE domain_id = :domain_id AND datasource_id = :did",
+                {"domain_id": domain_id, "did": datasource_id},
+            )
+        except Exception as exc:
+            if not _permission_table_is_missing(exc, "domain_table_permission"):
+                raise
+            logger.warning(
+                "domain permission table unavailable; using explicit compatibility path"
+            )
+            rows = []
+        return {
+            str(row["table_name"]).lower(): bool(row.get("allowed", 1))
+            for row in rows
+        }
+
+    async def get_domain_column_permissions(
+        self, domain_id: int, datasource_id: int
+    ) -> dict[tuple[str, str], ColumnPolicy]:
+        """Load domain-owned column visibility and masking rules."""
+        try:
+            rows = await get_management_db().execute_query(
+                "SELECT table_name, column_name, allowed, masking_policy "
+                "FROM domain_column_permission "
+                "WHERE domain_id = :domain_id AND datasource_id = :did",
+                {"domain_id": domain_id, "did": datasource_id},
+            )
+        except Exception as exc:
+            if not _permission_table_is_missing(exc, "domain_column_permission"):
+                raise
+            rows = []
+        return self._column_policies(rows)
 
     async def get_table_permissions(self, agent_id: int, datasource_id: int) -> dict[str, bool]:
         """加载 agent 的表级权限规则。返回 {table_name_lower: allowed}。"""
@@ -514,6 +784,10 @@ class PermissionService:
             "WHERE agent_id = :aid AND datasource_id = :did",
             {"aid": agent_id, "did": datasource_id},
         )
+        return self._column_policies(rows)
+
+    @staticmethod
+    def _column_policies(rows: list[dict[str, Any]]) -> dict[tuple[str, str], ColumnPolicy]:
         policies: dict[tuple[str, str], ColumnPolicy] = {}
         for row in rows:
             policy = str(row.get("masking_policy") or "none").lower()
@@ -523,6 +797,131 @@ class PermissionService:
                 ColumnPolicy(allowed=bool(row.get("allowed", 1)), masking_policy=policy)
             )
         return policies
+
+    async def get_domain_permission_configuration(
+        self, domain_id: int, datasource_id: int
+    ) -> DomainDatasourcePermissionConfig:
+        """Return the explicit rules owned by one business domain."""
+        db = get_management_db()
+        table_rows = await db.execute_query(
+            "SELECT table_name, allowed FROM domain_table_permission "
+            "WHERE domain_id = :domain_id AND datasource_id = :did ORDER BY table_name",
+            {"domain_id": domain_id, "did": datasource_id},
+        )
+        column_rows = await db.execute_query(
+            "SELECT table_name, column_name, allowed, masking_policy "
+            "FROM domain_column_permission "
+            "WHERE domain_id = :domain_id AND datasource_id = :did "
+            "ORDER BY table_name, column_name",
+            {"domain_id": domain_id, "did": datasource_id},
+        )
+        return DomainDatasourcePermissionConfig(
+            domain_id=domain_id,
+            datasource_id=datasource_id,
+            table_permissions=[
+                TablePermissionRule(
+                    table_name=str(row["table_name"]),
+                    allowed=bool(row.get("allowed", 1)),
+                )
+                for row in table_rows
+            ],
+            column_permissions=self._column_permission_rules(column_rows),
+        )
+
+    async def replace_domain_permission_configuration(
+        self,
+        domain_id: int,
+        datasource_id: int,
+        configuration: DatasourcePermissionReplace,
+    ) -> DomainDatasourcePermissionConfig:
+        """Atomically replace the domain-owned rules for one datasource."""
+        table_permissions = sorted(
+            configuration.table_permissions,
+            key=lambda rule: rule.table_name.lower(),
+        )
+        column_permissions = sorted(
+            configuration.column_permissions,
+            key=lambda rule: (rule.table_name.lower(), rule.column_name.lower()),
+        )
+        statements: list[tuple[str, dict | None]] = [
+            (
+                "DELETE FROM domain_table_permission "
+                "WHERE domain_id = :domain_id AND datasource_id = :did",
+                {"domain_id": domain_id, "did": datasource_id},
+            ),
+            (
+                "DELETE FROM domain_column_permission "
+                "WHERE domain_id = :domain_id AND datasource_id = :did",
+                {"domain_id": domain_id, "did": datasource_id},
+            ),
+        ]
+        statements.extend(
+            (
+                "INSERT INTO domain_table_permission "
+                "(domain_id, datasource_id, table_name, allowed) "
+                "VALUES (:domain_id, :did, :table_name, :allowed)",
+                {
+                    "domain_id": domain_id,
+                    "did": datasource_id,
+                    "table_name": rule.table_name,
+                    "allowed": int(rule.allowed),
+                },
+            )
+            for rule in table_permissions
+        )
+        statements.extend(
+            (
+                "INSERT INTO domain_column_permission "
+                "(domain_id, datasource_id, table_name, column_name, allowed, masking_policy) "
+                "VALUES (:domain_id, :did, :table_name, :column_name, :allowed, :masking_policy)",
+                {
+                    "domain_id": domain_id,
+                    "did": datasource_id,
+                    "table_name": rule.table_name,
+                    "column_name": rule.column_name,
+                    "allowed": int(rule.allowed),
+                    "masking_policy": rule.masking_policy,
+                },
+            )
+            for rule in column_permissions
+        )
+        db = get_management_db()
+        if hasattr(db, "execute_transaction"):
+            await db.execute_transaction(statements)
+        else:
+            for sql, params in statements:
+                await db.execute_query(sql, params)
+        logger.info(
+            "domain permission configuration replaced domain_id=%s datasource_id=%s "
+            "table_rules=%s column_rules=%s",
+            domain_id,
+            datasource_id,
+            len(table_permissions),
+            len(column_permissions),
+        )
+        return DomainDatasourcePermissionConfig(
+            domain_id=domain_id,
+            datasource_id=datasource_id,
+            table_permissions=table_permissions,
+            column_permissions=column_permissions,
+        )
+
+    @staticmethod
+    def _column_permission_rules(rows: list[dict[str, Any]]) -> list[ColumnPermissionRule]:
+        rules: list[ColumnPermissionRule] = []
+        for row in rows:
+            masking_policy = str(row.get("masking_policy") or "none").lower()
+            if masking_policy not in {"none", "redact", "partial", "hash"}:
+                masking_policy = "redact"
+            rules.append(
+                ColumnPermissionRule(
+                    table_name=str(row["table_name"]),
+                    column_name=str(row["column_name"]),
+                    allowed=bool(row.get("allowed", 1)),
+                    masking_policy=masking_policy,
+                )
+            )
+        return rules
 
     async def get_permission_configuration(
         self, agent_id: int, datasource_id: int

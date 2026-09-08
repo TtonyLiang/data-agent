@@ -101,10 +101,21 @@ class AuditDB:
     def __init__(self, grant: dict):
         self.grant = grant
         self.audit_inserts: list[dict] = []
+        self.grant_updates: list[dict] = []
 
     async def execute_query(self, sql, params=None):
         if "FROM capability_grant" in sql:
             return [dict(self.grant)]
+        if sql.startswith("UPDATE capability_grant SET model_release_id"):
+            self.grant_updates.append(dict(params or {}))
+            self.grant.update(
+                {
+                    "model_release_id": params["model_release_id"],
+                    "contract_hash": params["contract_hash"],
+                    "contract_json": params["contract_json"],
+                }
+            )
+            return []
         raise AssertionError(f"unexpected query: {sql}")
 
     async def execute_insert(self, sql, params=None):
@@ -197,8 +208,11 @@ async def test_internal_and_external_consumers_have_query_capability_parity(monk
 
     assert internal_result["capability"] == external_result["capability"]
     assert internal_result["validation"] == external_result["validation"]
-    assert internal_result["compiled_plan"]["sql"] == external_result["compiled_plan"]["sql"]
-    assert internal_result["executed_sql"] == external_result["executed_sql"] == safe_sql
+    assert internal_result["compiled_plan"]["sql"] == execution_states[0]["compiled_sql"]
+    assert internal_result["executed_sql"] == safe_sql
+    assert "sql" not in external_result["compiled_plan"]
+    assert "executed_sql" not in external_result["compiled_plan"]
+    assert "executed_sql" not in external_result
     assert internal_result["sql_result"] == external_result["sql_result"] == rows
     assert internal_result["final_answer"] == external_result["final_answer"]
 
@@ -210,8 +224,16 @@ async def test_internal_and_external_consumers_have_query_capability_parity(monk
         assert internal_trace[field] == external_trace[field] == context[field]
     assert internal_trace["query_capability_key"] == CAPABILITY_KEY
     assert external_trace["query_capability_key"] == CAPABILITY_KEY
+    assert internal_trace["executed_sql"] == safe_sql
+    assert "executed_sql" not in external_trace
 
     assert len(audit_db.audit_inserts) == 1
+    assert len(audit_db.grant_updates) == 1
+    assert audit_db.grant_updates[0]["model_release_id"] == MODEL_RELEASE_ID
+    frozen_contract = json.loads(audit_db.grant_updates[0]["contract_json"])
+    assert frozen_contract["data_policy"]["strategy"] == "live_source"
+    assert frozen_contract["data_policy"]["as_of"] == {"mode": "invocation_time"}
+    assert frozen_contract["data_policy"]["uses_twin_snapshot"] is False
     audit = audit_db.audit_inserts[0]
     assert audit["trace_id"] == external_trace["trace_id"]
     assert audit["client_id"] == 8

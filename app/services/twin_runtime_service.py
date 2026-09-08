@@ -21,7 +21,11 @@ from app.services.ontology_service import (
     validate_property_values,
     validate_synced_property_values,
 )
-from app.services.permission_service import get_permission_service
+from app.services.permission_service import (
+    PermissionRuntimeContext,
+    PermissionService,
+    get_permission_service,
+)
 from app.services.semantic_runtime import get_semantic_runtime_service
 from app.utils.sql_validator import extract_table_references
 
@@ -34,7 +38,7 @@ class TwinRuntimeService:
         self,
         *,
         domain_id: int,
-        access_agent_id: int,
+        access_agent_id: int | None,
         created_by: int | None,
         object_type_id: int | None,
         page: int,
@@ -51,10 +55,23 @@ class TwinRuntimeService:
         datasource_id = int(domain.datasource_id or 0)
         if not datasource_id:
             raise ValueError("当前领域没有绑定默认数据源")
-        if not await get_datasource_service().belongs_to_agent(
-            datasource_id, access_agent_id
+        permission_context = (
+            await get_permission_service().resolve_domain_permission_context(
+                domain_id,
+                datasource_id,
+                compatibility_agent_id=access_agent_id,
+                allow_agent_fallback=bool(access_agent_id),
+            )
+        )
+        if permission_context.source == "unconfigured":
+            raise PermissionError("当前业务领域未配置数据权限")
+        if permission_context.source == "agent_compatibility" and (
+            not access_agent_id
+            or not await get_datasource_service().belongs_to_agent(
+                datasource_id, access_agent_id
+            )
         ):
-            raise PermissionError("当前权限主体无权访问领域数据源")
+            raise PermissionError("兼容权限智能体无权访问领域数据源")
         release_lineage = await self._validated_active_release(
             domain_id,
             datasource_id=datasource_id,
@@ -115,6 +132,7 @@ class TwinRuntimeService:
                 status=status,
                 statistics={
                     **self._statistics(result),
+                    "permission": permission_context.metadata(),
                     "model_release": release_lineage,
                 },
                 error_summary=error_summary,
@@ -125,6 +143,7 @@ class TwinRuntimeService:
                 status="failed",
                 statistics={
                     "dry_run": dry_run,
+                    "permission": permission_context.metadata(),
                     "model_release": release_lineage,
                 },
                 error_summary=str(exc),
@@ -137,7 +156,7 @@ class TwinRuntimeService:
         self,
         *,
         domain_id: int,
-        access_agent_id: int,
+        access_agent_id: int | None,
         object_type_id: int | None,
         page: int,
         page_size: int | None,
@@ -200,9 +219,14 @@ class TwinRuntimeService:
                 base_query = ontology._validated_source_query(
                     str(object_type.get("source_query") or "").strip().rstrip(";")
                 )
-                allowed, reason = await permission_service.validate_sql_access(
-                    access_agent_id, datasource_id, base_query
-                )
+                if isinstance(permission_context, PermissionRuntimeContext):
+                    allowed, reason = PermissionService.validate_sql_access_with_context(
+                        permission_context, base_query
+                    )
+                else:
+                    allowed, reason = await permission_service.validate_sql_access(
+                        access_agent_id, datasource_id, base_query
+                    )
                 if not allowed:
                     raise PermissionError(reason)
                 source_tables = extract_table_references(base_query)
@@ -271,6 +295,11 @@ class TwinRuntimeService:
         return {
             "domain_id": domain_id,
             "datasource_id": datasource_id,
+            "permission": (
+                permission_context.metadata()
+                if isinstance(permission_context, PermissionRuntimeContext)
+                else None
+            ),
             "page": page_number,
             "dry_run": True,
             "types": type_results,

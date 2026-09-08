@@ -89,6 +89,32 @@ CREATE TABLE IF NOT EXISTS agent_column_permission (
     INDEX idx_agent_column_permission_ds (datasource_id, table_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体列级权限与脱敏';
 
+-- 企业业务领域表级权限；这是平台能力和孪生运行时的首选权限主体
+CREATE TABLE IF NOT EXISTS domain_table_permission (
+    domain_id BIGINT NOT NULL COMMENT '企业业务领域ID',
+    datasource_id BIGINT NOT NULL COMMENT '数据源ID',
+    table_name VARCHAR(256) NOT NULL COMMENT '物理表名',
+    allowed TINYINT(1) DEFAULT 1 COMMENT '是否允许访问',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (domain_id, datasource_id, table_name),
+    INDEX idx_domain_table_permission_ds (datasource_id, table_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='业务领域表级权限';
+
+-- 企业业务领域列级权限与脱敏；未配置列默认允许且不脱敏
+CREATE TABLE IF NOT EXISTS domain_column_permission (
+    domain_id BIGINT NOT NULL COMMENT '企业业务领域ID',
+    datasource_id BIGINT NOT NULL COMMENT '数据源ID',
+    table_name VARCHAR(256) NOT NULL COMMENT '物理表名',
+    column_name VARCHAR(256) NOT NULL COMMENT '物理字段名',
+    allowed TINYINT(1) DEFAULT 1 COMMENT '是否允许访问',
+    masking_policy VARCHAR(32) DEFAULT 'none' COMMENT 'none/redact/partial/hash',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (domain_id, datasource_id, table_name, column_name),
+    INDEX idx_domain_column_permission_ds (datasource_id, table_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='业务领域列级权限与脱敏';
+
 -- 元数据表(表信息)
 CREATE TABLE IF NOT EXISTS meta_table (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -732,13 +758,16 @@ CREATE TABLE IF NOT EXISTS capability_client (
     INDEX idx_capability_client_status (status, updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='第三方能力调用方';
 
--- 外部调用方授权；execution_agent_id 只作为现有数据权限链路的内部适配
+-- 外部调用方授权；execution_agent_id 仅在旧领域回退 Agent 权限时使用
 CREATE TABLE IF NOT EXISTS capability_grant (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     client_id BIGINT NOT NULL COMMENT '能力调用方ID',
     domain_id BIGINT NOT NULL COMMENT '授权业务领域ID',
     capability_key VARCHAR(128) NOT NULL COMMENT '授权能力标识',
-    execution_agent_id BIGINT NOT NULL COMMENT '内部数据权限执行适配ID',
+    execution_agent_id BIGINT DEFAULT NULL COMMENT '旧领域兼容的内部数据权限适配ID',
+    model_release_id BIGINT DEFAULT NULL COMMENT '授权冻结的统一企业模型版本ID',
+    contract_hash CHAR(64) DEFAULT NULL COMMENT '授权能力合同SHA-256',
+    contract_json JSON DEFAULT NULL COMMENT '授权时冻结的Query Capability合同',
     status VARCHAR(32) NOT NULL DEFAULT 'active' COMMENT 'active/revoked',
     created_by BIGINT DEFAULT NULL COMMENT '创建管理员ID',
     updated_by BIGINT DEFAULT NULL COMMENT '最近修改管理员ID',
@@ -746,7 +775,8 @@ CREATE TABLE IF NOT EXISTS capability_grant (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_capability_grant (client_id, domain_id, capability_key),
     INDEX idx_capability_grant_lookup (client_id, domain_id, capability_key, status),
-    INDEX idx_capability_grant_execution_agent (execution_agent_id)
+    INDEX idx_capability_grant_execution_agent (execution_agent_id),
+    INDEX idx_capability_grant_release (model_release_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='第三方调用方能力授权';
 
 -- 仅记录请求/结果摘要，不保存查询结果全文

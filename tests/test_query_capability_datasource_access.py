@@ -45,6 +45,16 @@ def patch_query_route(monkeypatch, runtime: SemanticRuntime):
         AsyncMock(return_value=({"domain": {"id": 7}}, runtime)),
     )
     monkeypatch.setattr(ontology_api, "get_datasource_service", lambda: datasource_service)
+    monkeypatch.setattr(
+        ontology_api,
+        "_resolve_data_access_agent",
+        AsyncMock(return_value=11),
+    )
+    monkeypatch.setattr(
+        ontology_api,
+        "_data_permission_metadata",
+        AsyncMock(return_value={"source": "agent_compatibility"}),
+    )
     monkeypatch.setattr(ontology_api, "invoke_ontology_tool", invoke)
     return ontology_service, datasource_service, invoke
 
@@ -103,6 +113,9 @@ async def test_query_capability_invokes_tool_for_agent_owned_datasource(monkeypa
     assert args[4] == user.model_dump()
     assert kwargs == {
         "access_agent_id": None,
-        "ontology_context": {"domain": {"id": 7}},
+        "ontology_context": {
+            "domain": {"id": 7},
+            "data_permission": {"source": "agent_compatibility"},
+        },
         "semantic_runtime": runtime,
     }

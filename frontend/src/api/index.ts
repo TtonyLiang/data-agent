@@ -28,6 +28,8 @@ export function buildAuthHeaders(): Record<string, string> {
 export type ChatTurnMode = 'new_task' | 'continue' | 'refine' | 'retry' | 'analyze' | 'respond'
 
 export interface ChatTaskMetadata {
+  domain_id?: number | null
+  model_release_id?: number | null
   task_id?: string
   turn_id?: string
   turn_mode?: ChatTurnMode
@@ -49,6 +51,8 @@ api.interceptors.request.use((config) => {
 
 export interface ChatRequest {
   question: string
+  domain_id?: number | null
+  model_release_id?: number | null
   agent_id?: number
   datasource_id?: number | null
   session_id?: string
@@ -146,6 +150,13 @@ export interface DatasourceColumnPermissionRule {
 
 export interface DatasourcePermissionConfig {
   agent_id: number
+  datasource_id: number
+  table_permissions: DatasourceTablePermissionRule[]
+  column_permissions: DatasourceColumnPermissionRule[]
+}
+
+export interface DomainDatasourcePermissionConfig {
+  domain_id: number
   datasource_id: number
   table_permissions: DatasourceTablePermissionRule[]
   column_permissions: DatasourceColumnPermissionRule[]
@@ -256,6 +267,8 @@ export interface PromptCatalogItem {
   description: string
   node: string
   template_text: string
+  agent_scope_allowed?: boolean
+  scope_policy?: 'business_semantics' | 'interaction_or_output'
 }
 
 export interface SystemParameterItem {
@@ -659,6 +672,28 @@ export async function updateDatasourcePermissions(
   return data.permissions
 }
 
+export async function fetchDomainDatasourcePermissions(
+  dsId: number,
+  domainId: number,
+): Promise<DomainDatasourcePermissionConfig> {
+  const { data } = await api.get<{ permissions: DomainDatasourcePermissionConfig }>(
+    `/datasource/${dsId}/domain-permissions/${domainId}`,
+  )
+  return data.permissions
+}
+
+export async function updateDomainDatasourcePermissions(
+  dsId: number,
+  domainId: number,
+  permissions: DatasourcePermissionReplace,
+): Promise<DomainDatasourcePermissionConfig> {
+  const { data } = await api.put<{ permissions: DomainDatasourcePermissionConfig }>(
+    `/datasource/${dsId}/domain-permissions/${domainId}`,
+    permissions,
+  )
+  return data.permissions
+}
+
 export interface SemanticDomain {
   id: number
   workspace_id?: number | null
@@ -968,6 +1003,8 @@ export interface OntologyLinkType {
   target_object_key: string
   source_property?: string | null
   target_property?: string | null
+  source_property_keys?: string[]
+  target_property_keys?: string[]
   cardinality: 'one_to_one' | 'one_to_many' | 'many_to_one' | 'many_to_many'
   description?: string
   status: 'draft' | 'active' | 'deprecated'
@@ -1745,7 +1782,10 @@ export interface CapabilityGrant {
   client_id: number
   domain_id: number
   capability_key: string
-  execution_agent_id: number
+  execution_agent_id?: number | null
+  model_release_id?: number | null
+  contract_hash?: string | null
+  contract_json?: Record<string, unknown> | null
   status: 'active' | 'revoked'
   created_at?: string | null
   updated_at?: string | null
@@ -1805,7 +1845,9 @@ export async function fetchCapabilityGrants(clientId: number): Promise<Capabilit
 
 export async function updateCapabilityGrant(
   clientId: number,
-  grant: Pick<CapabilityGrant, 'domain_id' | 'capability_key' | 'execution_agent_id' | 'status'>,
+  grant: Pick<CapabilityGrant, 'domain_id' | 'capability_key' | 'status'> & {
+    execution_agent_id?: number | null
+  },
 ) {
   const { data } = await api.put<{ grant: CapabilityGrant }>(
     `/capability-clients/${clientId}/grants`,

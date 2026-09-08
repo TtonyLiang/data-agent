@@ -29,6 +29,10 @@ from app.models.ontology import (
 from app.models.user import PublicUser
 from app.services.datasource_service import get_datasource_service
 from app.services.ontology_service import get_ontology_service
+from app.services.permission_service import (
+    domain_permission_not_configured_detail,
+    get_permission_service,
+)
 from app.services.semantic_runtime import get_semantic_runtime_service
 from app.services.twin_runtime_service import get_twin_runtime_service
 from app.services.user_service import get_user_service
@@ -75,12 +79,48 @@ async def _resolve_data_access_agent(
         raise HTTPException(status_code=404, detail="企业业务领域不存在")
     if domain.datasource_id is None:
         return None
-    if isinstance(access_agent_id, int) and access_agent_id > 0:
+    datasource_id = int(domain.datasource_id)
+    permission_context = await get_permission_service().resolve_domain_permission_context(
+        domain_id,
+        datasource_id,
+        compatibility_agent_id=access_agent_id,
+        allow_agent_fallback=bool(access_agent_id),
+    )
+    if permission_context.source == "domain":
+        return None
+    if permission_context.source == "agent_compatibility":
         return access_agent_id
-    resolved = await runtime_service.resolve_domain_agent(domain_id)
-    if resolved is None:
-        raise HTTPException(status_code=403, detail="领域没有可用于数据权限校验的智能体")
-    return resolved
+    return None
+
+
+async def _data_permission_metadata(
+    domain_id: int,
+    compatibility_agent_id: int | None = None,
+) -> dict | None:
+    """Expose the resolved domain-first data permission subject to callers."""
+    domain = await get_semantic_runtime_service().get_domain(domain_id)
+    if domain is None or domain.datasource_id is None:
+        return None
+    context = await get_permission_service().resolve_domain_permission_context(
+        domain_id,
+        int(domain.datasource_id),
+        compatibility_agent_id=compatibility_agent_id,
+        allow_agent_fallback=bool(compatibility_agent_id),
+    )
+    return context.metadata()
+
+
+async def _permission_http_error(
+    domain_id: int, exc: PermissionError
+) -> HTTPException:
+    if "未配置数据权限" not in str(exc):
+        return HTTPException(status_code=403, detail=str(exc))
+    domain = await get_semantic_runtime_service().get_domain(domain_id)
+    datasource_id = int(domain.datasource_id or 0) if domain is not None else 0
+    return HTTPException(
+        status_code=409,
+        detail=domain_permission_not_configured_detail(domain_id, datasource_id),
+    )
 
 
 @router.get("/domains/{domain_id}/summary")
@@ -225,7 +265,7 @@ async def query_objects(
             offset=offset,
         )
     except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+        raise await _permission_http_error(domain_id, exc) from exc
 
 
 @router.post("/domains/{domain_id}/agent-tools/{tool_name}")
@@ -280,30 +320,22 @@ async def run_agent_tool(
                         "拒绝回退到默认 business DB"
                     ),
                 )
-            runtime_service = get_semantic_runtime_service()
-            preferred_agent_id = runtime.domain.agent_id
-            if isinstance(access_agent_id, int):
-                execution_agent_id = access_agent_id
-            elif current_user.role == "admin":
-                execution_agent_id = await runtime_service.resolve_domain_agent(
-                    domain_id,
-                    preferred_agent_id,
-                )
-            else:
-                # Compatibility for direct function callers/tests that replace
-                # the access dependency without returning its resolved Agent.
-                execution_agent_id = preferred_agent_id
-            if execution_agent_id is None:
-                raise HTTPException(status_code=403, detail="领域尚未绑定当前用户可用的智能体")
-            runtime.domain.agent_id = execution_agent_id
-            if not await get_datasource_service().belongs_to_agent(
-                datasource_id,
-                execution_agent_id,
-            ):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Query Capability 无权访问该数据源",
-                )
+            execution_agent_id = await _resolve_data_access_agent(
+                domain_id, access_agent_id
+            )
+            if execution_agent_id is not None:
+                runtime.domain.agent_id = execution_agent_id
+                if not await get_datasource_service().belongs_to_agent(
+                    datasource_id,
+                    execution_agent_id,
+                ):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="兼容权限智能体无权访问该数据源",
+                    )
+            context["data_permission"] = await _data_permission_metadata(
+                domain_id, execution_agent_id
+            )
             query_context = {
                 "ontology_context": context,
                 "semantic_runtime": runtime,
@@ -318,7 +350,7 @@ async def run_agent_tool(
             **query_context,
         )
     except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+        raise await _permission_http_error(domain_id, exc) from exc
     except ValueError as exc:
         raise bad_request(exc) from exc
 
@@ -434,7 +466,7 @@ async def sync_objects_from_datasource(
         )
         return response["result"]
     except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+        raise await _permission_http_error(domain_id, exc) from exc
     except ValueError as exc:
         raise bad_request(exc) from exc
 
@@ -457,10 +489,13 @@ async def list_objects(
                 limit=limit,
                 offset=offset,
                 access_agent_id=permission_agent_id,
-            )
+            ),
+            "permission": await _data_permission_metadata(
+                domain_id, permission_agent_id
+            ),
         }
     except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+        raise await _permission_http_error(domain_id, exc) from exc
 
 
 @router.post("/domains/{domain_id}/objects")
@@ -495,8 +530,11 @@ async def list_links(domain_id: int, current_user: PublicUser = Depends(get_curr
             domain_id, access_agent_id=permission_agent_id
         )
     except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    return {"links": links}
+        raise await _permission_http_error(domain_id, exc) from exc
+    return {
+        "links": links,
+        "permission": await _data_permission_metadata(domain_id, permission_agent_id),
+    }
 
 
 @router.post("/domains/{domain_id}/links")
@@ -540,7 +578,7 @@ async def execute_action(
             access_agent_id=permission_agent_id,
         )
     except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+        raise await _permission_http_error(domain_id, exc) from exc
     except ValueError as exc:
         raise bad_request(exc) from exc
 
@@ -562,5 +600,8 @@ async def list_action_runs(
             access_agent_id=permission_agent_id,
         )
     except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    return {"runs": runs}
+        raise await _permission_http_error(domain_id, exc) from exc
+    return {
+        "runs": runs,
+        "permission": await _data_permission_metadata(domain_id, permission_agent_id),
+    }

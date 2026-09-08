@@ -297,76 +297,172 @@
       </el-tabs>
     </template>
 
-    <el-dialog v-model="objectTypeDialog" :title="objectTypeForm.id ? '编辑对象类型' : '新建对象类型'" width="900px" @opened="focusControl(objectKeyInput)">
-      <el-form :model="objectTypeForm" label-position="top">
-        <div class="form-grid three">
-          <el-form-item label="对象标识" required><el-input ref="objectKeyInput" v-model="objectTypeForm.object_key" placeholder="如 WorkOrder" /></el-form-item>
-          <el-form-item label="业务名称" required><el-input v-model="objectTypeForm.name" /></el-form-item>
-          <el-form-item label="状态"><el-select v-model="objectTypeForm.status"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item>
-        </div>
-        <el-form-item label="业务定义">
-          <el-input v-model="objectTypeForm.description" type="textarea" :rows="2" />
-          <span class="form-help">填写对象代表什么，例如“贷款申请单”；流程步骤请配置为动作或事件。</span>
-        </el-form-item>
-        <div class="form-grid two">
-          <el-form-item label="主属性" required><el-select v-model="objectTypeForm.primary_property"><el-option v-for="p in objectTypeForm.properties" :key="p.property_key" :label="p.name || p.property_key" :value="p.property_key" /></el-select></el-form-item>
-          <el-form-item label="显示属性"><el-select v-model="objectTypeForm.display_property" clearable><el-option v-for="p in objectTypeForm.properties" :key="p.property_key" :label="p.name || p.property_key" :value="p.property_key" /></el-select></el-form-item>
-        </div>
-        <div class="form-grid two">
-          <el-form-item label="业务库同步"><el-switch v-model="objectTypeForm.sync_enabled" /></el-form-item>
-          <el-form-item label="默认分页大小"><el-input-number v-model="objectTypeForm.sync_limit" :min="1" :max="1000" controls-position="right" /></el-form-item>
-        </div>
-        <el-form-item v-if="objectTypeForm.sync_enabled" label="只读同步 SELECT" required>
-          <el-input
-            v-model="objectTypeForm.source_query"
-            class="source-query-input"
-            type="textarea"
-            :rows="8"
-            spellcheck="false"
-            placeholder="SELECT physical_column AS property_key FROM business_table ORDER BY primary_key DESC"
-          />
-        </el-form-item>
-        <div class="subsection-title"><strong>属性</strong><el-button text type="primary" :icon="Plus" @click="addProperty">添加属性</el-button></div>
-        <div class="builder-list">
-          <div v-for="(property, index) in objectTypeForm.properties" :key="index" class="builder-row property-builder">
-            <el-input v-model="property.property_key" placeholder="属性标识" />
-            <el-input v-model="property.name" placeholder="业务名称" />
-            <el-select v-model="property.data_type"><el-option v-for="item in propertyTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select>
-            <el-checkbox v-model="property.required">必填</el-checkbox>
-            <el-checkbox v-model="property.unique">唯一</el-checkbox>
-            <el-button text type="danger" :icon="Delete" :aria-label="`移除属性 ${property.name || property.property_key || index + 1}`" title="移除属性" @click="removeProperty(index)" />
+    <el-dialog v-model="objectTypeDialog" class="object-type-dialog" :title="objectTypeForm.id ? '编辑对象类型' : '新建对象类型'" width="900px" @opened="focusControl(objectKeyInput)">
+      <el-form class="object-type-form" :model="objectTypeForm" label-position="top">
+        <div class="object-form-guide" role="note" aria-label="对象类型配置顺序">
+          <div class="object-form-guide-title">
+            <strong>建议按顺序配置</strong>
+            <span>先确认业务含义，再完成技术映射</span>
           </div>
+          <ol class="object-form-steps">
+            <li><b>1</b><span><strong>定义业务对象</strong><small>业务人员确认</small></span></li>
+            <li><b>2</b><span><strong>定义属性与身份</strong><small>业务与技术共同确认</small></span></li>
+            <li><b>3</b><span><strong>映射业务数据</strong><small>管理员或数据工程师配置</small></span></li>
+          </ol>
         </div>
+
+        <section class="object-form-section" aria-labelledby="object-business-title">
+          <header class="object-form-section-heading">
+            <div>
+              <span class="object-form-step">1</span>
+              <div><strong id="object-business-title">业务定义</strong><p>说明这个对象在业务中代表什么。</p></div>
+            </div>
+            <el-tag type="success" effect="plain">业务确认</el-tag>
+          </header>
+          <div class="form-grid three">
+            <el-form-item label="对象标识" required><el-input ref="objectKeyInput" v-model="objectTypeForm.object_key" placeholder="如 WorkOrder" /></el-form-item>
+            <el-form-item label="业务名称" required><el-input v-model="objectTypeForm.name" placeholder="如 工单" /></el-form-item>
+            <el-form-item label="状态"><el-select v-model="objectTypeForm.status"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item>
+          </div>
+          <el-form-item label="业务定义">
+            <el-input v-model="objectTypeForm.description" type="textarea" :rows="2" placeholder="说明对象的业务含义、边界和生命周期" />
+            <span class="form-help">填写对象代表什么，例如“贷款申请单”；流程步骤请配置为动作或事件。</span>
+          </el-form-item>
+        </section>
+
+        <section class="object-form-section" aria-labelledby="object-property-title">
+          <header class="object-form-section-heading">
+            <div>
+              <span class="object-form-step">2</span>
+              <div><strong id="object-property-title">属性与对象身份</strong><p>先添加属性，再选择对象的唯一标识和页面展示字段。</p></div>
+            </div>
+            <el-tag type="primary" effect="plain">共同确认</el-tag>
+          </header>
+          <div class="subsection-title object-property-title">
+            <div><strong>对象属性</strong><span>属性标识用于数据映射，业务名称用于页面阅读。</span></div>
+            <el-button text type="primary" :icon="Plus" @click="addProperty">添加属性</el-button>
+          </div>
+          <div class="property-builder-head" aria-hidden="true">
+            <span>属性标识</span><span>业务名称</span><span>类型</span><span>必填</span><span>唯一</span><span></span>
+          </div>
+          <div class="builder-list object-property-list">
+            <div v-for="(property, index) in objectTypeForm.properties" :key="index" class="builder-row property-builder">
+              <el-input v-model="property.property_key" placeholder="如 order_id" />
+              <el-input v-model="property.name" placeholder="如 工单ID" />
+              <el-select v-model="property.data_type"><el-option v-for="item in propertyTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select>
+              <el-checkbox v-model="property.required">必填</el-checkbox>
+              <el-checkbox v-model="property.unique">唯一</el-checkbox>
+              <el-button text type="danger" :icon="Delete" :aria-label="`移除属性 ${property.name || property.property_key || index + 1}`" title="移除属性" @click="removeProperty(index)" />
+            </div>
+          </div>
+          <div class="form-grid two identity-property-grid">
+            <el-form-item label="对象唯一标识属性（主属性）" required>
+              <el-select v-model="objectTypeForm.primary_property" :disabled="objectPropertyOptions.length === 0" placeholder="请先填写上方的属性标识">
+                <el-option v-for="property in objectPropertyOptions" :key="property.property_key" :label="propertyOptionLabel(property)" :value="property.property_key" />
+              </el-select>
+              <span class="form-help">用于识别、去重和更新对象实例，通常选择业务主键，并同时勾选“必填”和“唯一”。</span>
+            </el-form-item>
+            <el-form-item label="显示属性">
+              <el-select v-model="objectTypeForm.display_property" :disabled="objectPropertyOptions.length === 0" placeholder="可选，用于页面展示" clearable>
+                <el-option v-for="property in objectPropertyOptions" :key="property.property_key" :label="propertyOptionLabel(property)" :value="property.property_key" />
+              </el-select>
+              <span class="form-help">选择业务人员容易识别的名称或编号，例如客户名称、申请编号。</span>
+            </el-form-item>
+          </div>
+        </section>
+
+        <section class="object-form-section technical-section" aria-labelledby="object-mapping-title">
+          <header class="object-form-section-heading">
+            <div>
+              <span class="object-form-step">3</span>
+              <div><strong id="object-mapping-title">技术数据映射（可选）</strong><p>把业务数据库字段映射到上面定义的对象属性。</p></div>
+            </div>
+            <el-tag type="info" effect="plain">技术配置</el-tag>
+          </header>
+          <div class="technical-guidance" role="note">
+            <strong>当前版本采用只读 SQL 映射</strong>
+            <span>由平台管理员或数据工程师配置。数据库列通过 <code>AS 属性标识</code> 对应对象属性，保存时只校验和记录配置，不执行同步。</span>
+          </div>
+          <div class="form-grid two sync-config-grid">
+            <el-form-item label="从业务库同步"><el-switch v-model="objectTypeForm.sync_enabled" active-text="启用" inactive-text="不启用" /></el-form-item>
+            <el-form-item label="单次读取上限"><el-input-number v-model="objectTypeForm.sync_limit" :min="1" :max="1000" controls-position="right" /></el-form-item>
+          </div>
+          <el-form-item v-if="objectTypeForm.sync_enabled" label="只读同步 SELECT（技术配置）" required>
+            <el-input
+              v-model="objectTypeForm.source_query"
+              class="source-query-input"
+              type="textarea"
+              :rows="7"
+              spellcheck="false"
+              placeholder="SELECT physical_column AS property_key FROM business_table ORDER BY primary_key DESC"
+            />
+            <span class="form-help">仅支持安全的只读 SELECT，并且必须包含稳定的 ORDER BY。保存后完成模型校验与激活，再到“孪生运行”先预览、后执行。</span>
+          </el-form-item>
+          <p v-else class="sync-disabled-note">不启用时仍可保存对象定义，后续可以通过页面、接口或导入本体包创建对象实例。</p>
+        </section>
       </el-form>
-      <template #footer><el-button @click="objectTypeDialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveObjectType">保存</el-button></template>
+      <template #footer>
+        <div class="object-dialog-footer">
+          <span>保存只记录对象模型，不会直接读取或写入业务数据库。</span>
+          <div><el-button @click="objectTypeDialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveObjectType">保存对象类型</el-button></div>
+        </div>
+      </template>
     </el-dialog>
 
-    <el-dialog v-model="linkTypeDialog" :title="linkTypeForm.id ? '编辑关系类型' : '新建关系类型'" width="720px" @opened="focusControl(linkKeyInput)">
-      <el-form :model="linkTypeForm" label-position="top">
-        <div class="form-grid two"><el-form-item label="关系标识" required><el-input ref="linkKeyInput" v-model="linkTypeForm.link_key" /></el-form-item><el-form-item label="关系名称" required><el-input v-model="linkTypeForm.name" /></el-form-item></div>
-        <div class="form-grid two"><el-form-item label="起点对象" required><el-select v-model="linkTypeForm.source_object_key"><el-option v-for="item in objectTypes" :key="item.id" :label="item.name" :value="item.object_key" /></el-select></el-form-item><el-form-item label="终点对象" required><el-select v-model="linkTypeForm.target_object_key"><el-option v-for="item in objectTypes" :key="item.id" :label="item.name" :value="item.object_key" /></el-select></el-form-item></div>
-        <div class="form-grid two"><el-form-item label="关系基数"><el-select v-model="linkTypeForm.cardinality"><el-option v-for="item in cardinalities" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item><el-form-item label="状态"><el-select v-model="linkTypeForm.status"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item></div>
-        <el-form-item label="业务定义"><el-input v-model="linkTypeForm.description" type="textarea" :rows="3" /></el-form-item>
+    <el-dialog v-model="linkTypeDialog" class="model-type-dialog" :title="linkTypeForm.id ? '编辑业务关系' : '新建业务关系'" width="720px" @opened="focusControl(linkKeyInput)">
+      <el-form class="business-definition-form" :model="linkTypeForm" label-position="top">
+        <div class="model-editor-guide" role="note">
+          <strong>先定义业务关系，再处理技术关联</strong>
+          <span>例如“客户提交贷款申请”。系统默认使用两端对象的主属性关联；只有默认关联不适用时，才展开高级配置。</span>
+        </div>
+        <div class="form-grid two"><el-form-item label="关系名称" required><el-input ref="linkKeyInput" v-model="linkTypeForm.name" placeholder="如 客户提交贷款申请" /></el-form-item><el-form-item label="关系基数"><el-select v-model="linkTypeForm.cardinality"><el-option v-for="item in cardinalities" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item></div>
+        <div class="form-grid two"><el-form-item label="起点对象" required><el-select v-model="linkTypeForm.source_object_key" @change="clearLinkProperties('source')"><el-option v-for="item in objectTypes" :key="item.id" :label="`${item.name} · ${item.object_key}`" :value="item.object_key" /></el-select></el-form-item><el-form-item label="终点对象" required><el-select v-model="linkTypeForm.target_object_key" @change="clearLinkProperties('target')"><el-option v-for="item in objectTypes" :key="item.id" :label="`${item.name} · ${item.object_key}`" :value="item.object_key" /></el-select></el-form-item></div>
+        <el-form-item label="业务定义"><el-input v-model="linkTypeForm.description" type="textarea" :rows="3" placeholder="说明两个对象在业务上为什么有关联，以及基数含义" /></el-form-item>
+        <div class="default-mapping-summary" role="note">
+          <div><strong>默认技术关联</strong><el-tag size="small" effect="plain">自动推导</el-tag></div>
+          <code>{{ relationMappingSummary }}</code>
+          <span>默认使用两端对象的唯一标识属性。只有真实数据并非按该字段关联时，才需要修改高级配置。</span>
+        </div>
+        <details class="advanced-model-settings">
+          <summary>高级技术配置（通常无需修改）</summary>
+          <div class="form-grid two advanced-model-grid">
+            <el-form-item label="起点关联属性"><el-select v-model="linkTypeForm.source_property_keys" multiple clearable collapse-tags placeholder="默认使用起点主属性"><el-option v-for="property in linkSourceProperties" :key="property.property_key" :label="propertyOptionLabel(property)" :value="property.property_key" /></el-select><span class="form-help">只有单字段不能唯一关联时才多选；顺序必须与终点一致。</span></el-form-item>
+            <el-form-item label="终点关联属性"><el-select v-model="linkTypeForm.target_property_keys" multiple clearable collapse-tags placeholder="默认使用终点主属性"><el-option v-for="property in linkTargetProperties" :key="property.property_key" :label="propertyOptionLabel(property)" :value="property.property_key" /></el-select><span class="form-help">复合关联要求两端属性数量一致，并按选择顺序逐项匹配。</span></el-form-item>
+            <el-form-item label="技术标识"><el-input v-model="linkTypeForm.link_key" placeholder="留空则根据关系与对象自动生成" /><span class="form-help">供 API、版本和能力引用，通常不需要业务人员填写。</span></el-form-item>
+            <el-form-item label="模型状态"><el-select v-model="linkTypeForm.status"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item>
+          </div>
+        </details>
       </el-form>
-      <template #footer><el-button @click="linkTypeDialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveLinkType">保存</el-button></template>
+      <template #footer><el-button @click="linkTypeDialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveLinkType">保存业务关系</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="actionTypeDialog" :title="actionTypeForm.id ? '编辑动作类型' : '新建动作类型'" width="960px" @opened="focusControl(actionKeyInput)">
-      <el-form :model="actionTypeForm" label-position="top">
-        <div class="form-grid three"><el-form-item label="动作标识" required><el-input ref="actionKeyInput" v-model="actionTypeForm.action_key" /></el-form-item><el-form-item label="动作名称" required><el-input v-model="actionTypeForm.name" /></el-form-item><el-form-item label="目标对象" required><el-select v-model="actionTypeForm.target_object_key"><el-option v-for="item in objectTypes" :key="item.id" :label="item.name" :value="item.object_key" /></el-select></el-form-item></div>
-        <el-form-item label="业务定义">
-          <el-input v-model="actionTypeForm.description" type="textarea" :rows="2" />
-          <span class="form-help">动作建议使用动词描述，例如“审批申请”“发起催收”。</span>
-        </el-form-item>
-        <div class="form-grid three"><el-form-item label="授权角色"><el-select v-model="actionTypeForm.allowed_roles" multiple><el-option label="管理员" value="admin" /><el-option label="业务用户" value="user" /></el-select></el-form-item><el-form-item label="状态"><el-select v-model="actionTypeForm.status"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item><el-form-item label="审批单号要求"><el-switch v-model="actionTypeForm.requires_approval" active-text="需要审批单号" inactive-text="不要求审批单号" /></el-form-item></div>
-        <div class="subsection-title"><strong>动作参数</strong><el-button text type="primary" :icon="Plus" @click="addActionParameter">添加参数</el-button></div>
-        <div class="builder-list"><div v-for="(parameter, index) in actionTypeForm.parameters" :key="index" class="builder-row parameter-builder"><el-input v-model="parameter.parameter_key" placeholder="参数标识" /><el-input v-model="parameter.name" placeholder="业务名称" /><el-select v-model="parameter.data_type"><el-option v-for="item in propertyTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select><el-input v-model="parameter.options_text" placeholder="选项，逗号分隔" /><el-checkbox v-model="parameter.required">必填</el-checkbox><el-button text type="danger" :icon="Delete" :aria-label="`移除动作参数 ${parameter.name || parameter.parameter_key || index + 1}`" @click="actionTypeForm.parameters.splice(index, 1)" /></div></div>
-        <div class="subsection-title"><strong>前置条件</strong><el-button text type="primary" :icon="Plus" @click="addPrecondition">添加条件</el-button></div>
-        <div class="builder-list"><div v-for="(condition, index) in actionTypeForm.preconditions" :key="index" class="builder-row condition-builder"><el-select v-model="condition.property" placeholder="对象属性"><el-option v-for="p in targetProperties" :key="p.property_key" :label="p.name" :value="p.property_key" /></el-select><el-select v-model="condition.operator"><el-option v-for="item in operators" :key="item.value" :label="item.label" :value="item.value" /></el-select><el-input v-model="condition.value_text" placeholder="期望值或 $param.x" /><el-input v-model="condition.message" placeholder="不满足时提示" /><el-button text type="danger" :icon="Delete" :aria-label="`移除前置条件 ${index + 1}`" @click="actionTypeForm.preconditions.splice(index, 1)" /></div></div>
-        <div class="subsection-title"><strong>状态效果</strong><el-button text type="primary" :icon="Plus" @click="addEffect">添加效果</el-button></div>
-        <div class="builder-list"><div v-for="(effect, index) in actionTypeForm.effects" :key="index" class="builder-row effect-builder"><el-select v-model="effect.property" placeholder="写入属性"><el-option v-for="p in targetProperties" :key="p.property_key" :label="p.name" :value="p.property_key" /></el-select><el-input v-model="effect.value_text" placeholder="常量、$param.x、$now、$user.name" /><el-button text type="danger" :icon="Delete" :aria-label="`移除状态效果 ${index + 1}`" @click="actionTypeForm.effects.splice(index, 1)" /></div></div>
+    <el-dialog v-model="actionTypeDialog" class="model-type-dialog" :title="actionTypeForm.id ? '编辑业务动作' : '新建业务动作'" width="960px" @opened="focusControl(actionKeyInput)">
+      <el-form class="business-definition-form" :model="actionTypeForm" label-position="top">
+        <div class="model-editor-guide" role="note">
+          <strong>先表达业务意图和状态变化</strong>
+          <span>例如“审批贷款申请：人工复核 → 已通过”。参数、权限、前置条件和技术效果属于高级执行配置。</span>
+        </div>
+        <div class="form-grid two"><el-form-item label="动作名称" required><el-input ref="actionKeyInput" v-model="actionTypeForm.name" placeholder="如 审批贷款申请" /></el-form-item><el-form-item label="目标对象" required><el-select v-model="actionTypeForm.target_object_key" @change="resetActionPropertyBindings"><el-option v-for="item in objectTypes" :key="item.id" :label="`${item.name} · ${item.object_key}`" :value="item.object_key" /></el-select></el-form-item></div>
+        <el-form-item label="业务定义"><el-input v-model="actionTypeForm.description" type="textarea" :rows="2" placeholder="说明这个动作的业务意图、适用范围和结果" /><span class="form-help">动作建议使用动词描述；它应表达业务意图，不要直接填写 SQL。</span></el-form-item>
+        <section class="business-action-section" aria-labelledby="action-state-title">
+          <div class="subsection-title"><div><strong id="action-state-title">业务状态变化（可选）</strong><span>直接说明“什么状态下，可以变成什么状态”。</span></div></div>
+          <div class="form-grid three"><el-form-item label="状态属性"><el-select v-model="actionTypeForm.status_property" clearable placeholder="选择目标对象的状态属性"><el-option v-for="property in targetStatusProperties" :key="property.property_key" :label="propertyOptionLabel(property)" :value="property.property_key" /></el-select></el-form-item><el-form-item label="执行前状态"><el-input v-model="actionTypeForm.from_status" placeholder="如 manual_review" /></el-form-item><el-form-item label="执行后状态"><el-input v-model="actionTypeForm.to_status" placeholder="如 approved" /></el-form-item></div>
+          <span class="form-help">保存时自动转换为动作的状态前置条件和状态效果，不需要业务人员编写表达式。</span>
+        </section>
+        <div class="subsection-title"><div><strong>输入参数</strong><span>只有 Agent 或业务应用需要提供的输入才添加。</span></div><el-button text type="primary" :icon="Plus" @click="addActionParameter">添加参数</el-button></div>
+        <div class="builder-list"><div v-for="(parameter, index) in actionTypeForm.parameters" :key="index" class="builder-row parameter-builder"><el-input v-model="parameter.name" placeholder="业务名称，如 审批金额" /><el-select v-model="parameter.data_type"><el-option v-for="item in propertyTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select><el-checkbox v-model="parameter.required">必填</el-checkbox><el-input v-model="parameter.parameter_key" placeholder="技术标识（留空自动生成）" /><el-input v-model="parameter.options_text" placeholder="可选值，逗号分隔" /><el-button text type="danger" :icon="Delete" :aria-label="`移除动作参数 ${parameter.name || parameter.parameter_key || index + 1}`" @click="actionTypeForm.parameters.splice(index, 1)" /></div></div>
+        <details class="advanced-model-settings">
+          <summary>高级执行与治理配置</summary>
+          <div class="advanced-section-note">供平台管理员配置权限、复杂条件和执行效果；基础业务动作通常保持默认即可。</div>
+          <div class="form-grid three advanced-model-grid"><el-form-item label="授权角色"><el-select v-model="actionTypeForm.allowed_roles" multiple><el-option label="管理员" value="admin" /><el-option label="业务用户" value="user" /></el-select></el-form-item><el-form-item label="模型状态"><el-select v-model="actionTypeForm.status"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item><el-form-item label="审批单号要求"><el-switch v-model="actionTypeForm.requires_approval" active-text="需要审批单号" inactive-text="不要求审批单号" /></el-form-item></div>
+          <div class="subsection-title"><strong>前置条件</strong><el-button text type="primary" :icon="Plus" @click="addPrecondition">添加条件</el-button></div>
+          <div class="builder-list"><div v-for="(condition, index) in actionTypeForm.preconditions" :key="index" class="builder-row condition-builder"><el-select v-model="condition.property" placeholder="对象属性"><el-option v-for="p in targetProperties" :key="p.property_key" :label="p.name" :value="p.property_key" /></el-select><el-select v-model="condition.operator"><el-option v-for="item in operators" :key="item.value" :label="item.label" :value="item.value" /></el-select><el-input v-model="condition.value_text" placeholder="期望值或 $param.x" /><el-input v-model="condition.message" placeholder="不满足时提示" /><el-button text type="danger" :icon="Delete" :aria-label="`移除前置条件 ${index + 1}`" @click="actionTypeForm.preconditions.splice(index, 1)" /></div></div>
+          <div class="subsection-title"><strong>状态效果</strong><el-button text type="primary" :icon="Plus" @click="addEffect">添加效果</el-button></div>
+          <div class="builder-list"><div v-for="(effect, index) in actionTypeForm.effects" :key="index" class="builder-row effect-builder"><el-select v-model="effect.property" placeholder="写入属性"><el-option v-for="p in targetProperties" :key="p.property_key" :label="p.name" :value="p.property_key" /></el-select><el-input v-model="effect.value_text" placeholder="常量、$param.x、$now、$user.name" /><el-button text type="danger" :icon="Delete" :aria-label="`移除状态效果 ${index + 1}`" @click="actionTypeForm.effects.splice(index, 1)" /></div></div>
+          <el-form-item label="技术标识"><el-input v-model="actionTypeForm.action_key" placeholder="留空则根据动作与目标对象自动生成" /><span class="form-help">供 API、版本和 Agent 能力调用，通常不需要业务人员填写。</span></el-form-item>
+        </details>
       </el-form>
-      <template #footer><el-button @click="actionTypeDialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveActionType">保存</el-button></template>
+      <template #footer><el-button @click="actionTypeDialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveActionType">保存业务动作</el-button></template>
     </el-dialog>
 
     <el-drawer v-model="validationDrawer" title="本体校验" size="520px">
@@ -479,12 +575,42 @@ const validationDrawer = ref(false)
 const validationResult = ref<any>(null)
 
 const targetProperties = computed<OntologyProperty[]>(() => objectTypes.value.find((item) => item.object_key === actionTypeForm.target_object_key)?.properties || [])
+const linkSourceProperties = computed<OntologyProperty[]>(() => objectTypes.value.find((item) => item.object_key === linkTypeForm.source_object_key)?.properties || [])
+const linkTargetProperties = computed<OntologyProperty[]>(() => objectTypes.value.find((item) => item.object_key === linkTypeForm.target_object_key)?.properties || [])
+const relationMappingSummary = computed(() => {
+  const source = objectTypes.value.find((item) => item.object_key === linkTypeForm.source_object_key)
+  const target = objectTypes.value.find((item) => item.object_key === linkTypeForm.target_object_key)
+  const sourceKeys = cleanPropertyKeys(linkTypeForm.source_property_keys)
+  const targetKeys = cleanPropertyKeys(linkTypeForm.target_property_keys)
+  const sourceProperty = sourceKeys.length
+    ? sourceKeys.join(' + ')
+    : cleanText(linkTypeForm.source_property) || source?.primary_property || '未选择'
+  const targetProperty = targetKeys.length
+    ? targetKeys.join(' + ')
+    : cleanText(linkTypeForm.target_property) || target?.primary_property || '未选择'
+  return `${source?.name || linkTypeForm.source_object_key || '起点对象'}.${sourceProperty} ↔ ${target?.name || linkTypeForm.target_object_key || '终点对象'}.${targetProperty}`
+})
+function isStatusProperty(property: Pick<OntologyProperty, 'property_key' | 'name'>) {
+  const text = `${property.property_key} ${property.name || ''}`.toLowerCase()
+  return /status|state|stage|phase|step|progress|阶段|状态|进度|环节/.test(text)
+}
+const targetStatusProperties = computed<OntologyProperty[]>(() => {
+  const likelyStatusProperties = targetProperties.value.filter(isStatusProperty)
+  const otherProperties = targetProperties.value.filter((property) => !isStatusProperty(property))
+  return [...likelyStatusProperties, ...otherProperties]
+})
+const objectPropertyOptions = computed<OntologyProperty[]>(() => (objectTypeForm.properties || []).filter(
+  (property: OntologyProperty) => Boolean(String(property.property_key || '').trim()),
+))
 
 function emptyObjectType() { return { id: null, object_key: '', name: '', description: '', primary_property: '', display_property: '', sync_enabled: false, source_query: '', sync_limit: 200, status: 'draft', properties: [] as any[] } }
-function emptyLinkType() { return { id: null, link_key: '', name: '', source_object_key: '', target_object_key: '', cardinality: 'many_to_many', description: '', status: 'draft' } }
-function emptyActionType() { return { id: null, action_key: '', name: '', target_object_key: '', description: '', parameters: [] as any[], preconditions: [] as any[], effects: [] as any[], allowed_roles: ['admin'], requires_approval: false, status: 'draft' } }
+function emptyLinkType() { return { id: null, link_key: '', name: '', source_object_key: '', target_object_key: '', source_property: '', target_property: '', source_property_keys: [] as string[], target_property_keys: [] as string[], cardinality: 'many_to_many', description: '', status: 'draft' } }
+function emptyActionType() { return { id: null, action_key: '', name: '', target_object_key: '', description: '', status_property: '', from_status: '', to_status: '', parameters: [] as any[], preconditions: [] as any[], effects: [] as any[], allowed_roles: ['admin'], requires_approval: false, status: 'draft' } }
 function replaceReactive(target: any, value: any) { Object.keys(target).forEach((key) => delete target[key]); Object.assign(target, value) }
 function typeLabel(type: string) { return propertyTypes.find((item) => item.value === type)?.label || type }
+function propertyOptionLabel(property: OntologyProperty) { return property.name ? `${property.name} · ${property.property_key}` : property.property_key }
+function cleanPropertyKeys(value: unknown): string[] { return Array.isArray(value) ? value.map(cleanText).filter(Boolean) : [] }
+function clearLinkProperties(side: 'source' | 'target') { linkTypeForm[`${side}_property`] = ''; linkTypeForm[`${side}_property_keys`] = [] }
 function cardinalityLabel(value: string) { return cardinalities.find((item) => item.value === value)?.label || value }
 function statusLabel(value: string) { return ({ draft: '草稿', active: '生效', deprecated: '废弃' } as any)[value] || value }
 function statusType(value: string) { return value === 'active' ? 'success' : value === 'deprecated' ? 'info' : 'warning' }
@@ -506,7 +632,82 @@ function parseValue(value: string) {
   if ((text.startsWith('[') && text.endsWith(']')) || (text.startsWith('{') && text.endsWith('}'))) { try { return JSON.parse(text) } catch { return text } }
   return text
 }
-function errorMessage(error: any) { return error?.response?.data?.detail?.message || error?.response?.data?.detail || error?.message || '操作失败' }
+function cleanText(value: unknown) { return String(value ?? '').trim() }
+function displayValue(value: unknown) {
+  if (value === null || value === undefined) return ''
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
+function generatedKey(prefix: string, value: string, source = '', target = '', usedKeys: string[] = []) {
+  const normalized = cleanText(`${source}_${target}_${value}`)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase()
+  const base = (normalized || `${prefix}_${toIdentifier(source || target, 'item')}`).slice(0, 112)
+  const used = new Set(usedKeys)
+  if (!used.has(base)) return base
+  let index = 2
+  while (used.has(`${base}_${index}`)) index += 1
+  return `${base}_${index}`
+}
+function toIdentifier(value: unknown, fallback: string) {
+  const normalized = cleanText(value)
+    .replace(/[^A-Za-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase()
+  return normalized || fallback
+}
+function actionParameterHasInput(parameter: any) {
+  return Boolean(
+    cleanText(parameter.parameter_key) ||
+    cleanText(parameter.name) ||
+    cleanText(parameter.options_text) ||
+    cleanText(parameter.description) ||
+    parameter.required ||
+    (parameter.data_type && parameter.data_type !== 'string')
+  )
+}
+function validationFieldLabel(location: unknown) {
+  if (!Array.isArray(location)) return ''
+  const labels: Record<string, string> = {
+    action_key: '动作标识',
+    name: '业务名称',
+    target_object_key: '目标对象',
+    parameters: '动作参数',
+    parameter_key: '参数标识',
+    preconditions: '前置条件',
+    effects: '状态效果',
+    property: '对象属性',
+    allowed_roles: '授权角色',
+    status: '状态',
+  }
+  return location
+    .filter((part) => part !== 'body')
+    .map((part) => typeof part === 'number' ? `第 ${part + 1} 项` : labels[String(part)] || String(part))
+    .join(' ')
+}
+function validationIssueMessage(issue: unknown) {
+  if (!issue || typeof issue !== 'object') return cleanText(issue)
+  const item = issue as { loc?: unknown; msg?: string; type?: string }
+  const field = validationFieldLabel(item.loc)
+  let message = item.msg || '校验不通过'
+  if (item.type === 'missing' || item.type === 'string_too_short') message = '不能为空'
+  if (item.type === 'string_pattern_mismatch') message = '格式不正确，需以英文字母开头且只能包含字母、数字和下划线'
+  if (item.type === 'string_too_long') message = '内容过长'
+  if (item.type === 'literal_error') message = '选项无效'
+  return field ? `${field}：${message}` : message
+}
+function errorMessage(error: any) {
+  const detail = error?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    const messages = detail.map(validationIssueMessage).filter(Boolean)
+    if (messages.length) return messages.slice(0, 3).join('；') + (messages.length > 3 ? `；另有 ${messages.length - 3} 项错误` : '')
+  }
+  if (detail?.message) return cleanText(detail.message)
+  return cleanText(error?.message) || '操作失败'
+}
 
 function focusControl(control: FocusableControl | undefined) {
   requestAnimationFrame(() => control?.focus())
@@ -595,7 +796,11 @@ function renderGraph() {
 }
 
 function addProperty() { objectTypeForm.properties.push({ property_key: '', name: '', data_type: 'string', required: false, unique: false, description: '', default_value: null, sort_order: objectTypeForm.properties.length }) }
-function removeProperty(index: number) { objectTypeForm.properties.splice(index, 1) }
+function removeProperty(index: number) {
+  const [removed] = objectTypeForm.properties.splice(index, 1)
+  if (removed?.property_key === objectTypeForm.primary_property) objectTypeForm.primary_property = ''
+  if (removed?.property_key === objectTypeForm.display_property) objectTypeForm.display_property = ''
+}
 function openObjectTypeDialog(row?: OntologyObjectType) {
   const value = row ? { ...emptyObjectType(), ...JSON.parse(JSON.stringify(row)), source_query: row.source_query || '' } : emptyObjectType()
   replaceReactive(objectTypeForm, value)
@@ -612,21 +817,127 @@ async function saveObjectType() {
 }
 async function removeObjectType(row: OntologyObjectType) { await ElMessageBox.confirm(`删除对象类型“${row.name}”将同时删除相关关系、动作和实例。`, '删除对象类型', { type: 'warning' }); await deleteOntologyObjectType(row.domain_id, row.id); ElMessage.success('已删除'); await refreshAll() }
 
-function openLinkTypeDialog(row?: OntologyLinkType) { replaceReactive(linkTypeForm, row ? JSON.parse(JSON.stringify(row)) : { ...emptyLinkType(), source_object_key: objectTypes.value[0]?.object_key || '', target_object_key: objectTypes.value[1]?.object_key || objectTypes.value[0]?.object_key || '' }); linkTypeDialog.value = true }
-async function saveLinkType() { if (!domainId.value || !linkTypeForm.link_key || !linkTypeForm.name) return ElMessage.warning('请完整填写关系标识和名称'); saving.value = true; try { await saveOntologyLinkType(domainId.value, { ...linkTypeForm, domain_id: domainId.value }); ElMessage.success('关系类型已保存'); linkTypeDialog.value = false; await refreshAll() } catch (error) { ElMessage.error(String(errorMessage(error))) } finally { saving.value = false } }
+function openLinkTypeDialog(row?: OntologyLinkType) { replaceReactive(linkTypeForm, row ? { ...emptyLinkType(), ...JSON.parse(JSON.stringify(row)) } : { ...emptyLinkType(), source_object_key: objectTypes.value[0]?.object_key || '', target_object_key: objectTypes.value[1]?.object_key || objectTypes.value[0]?.object_key || '' }); linkTypeDialog.value = true }
+async function saveLinkType() {
+  const name = cleanText(linkTypeForm.name)
+  if (!domainId.value || !name || !linkTypeForm.source_object_key || !linkTypeForm.target_object_key) return ElMessage.warning('请完整填写关系名称、起点对象和终点对象')
+  const usedKeys = linkTypes.value.filter((item) => item.id !== linkTypeForm.id).map((item) => item.link_key)
+  const linkKey = cleanText(linkTypeForm.link_key) || generatedKey('relation', name, linkTypeForm.source_object_key, linkTypeForm.target_object_key, usedKeys)
+  if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(linkKey)) return ElMessage.warning('关系标识需以英文字母开头，且只能包含字母、数字和下划线')
+  const sourcePropertyKeys = cleanPropertyKeys(linkTypeForm.source_property_keys)
+  const targetPropertyKeys = cleanPropertyKeys(linkTypeForm.target_property_keys)
+  if (sourcePropertyKeys.length !== targetPropertyKeys.length) return ElMessage.warning('复合关系两端的关联属性数量必须一致')
+  const payload = {
+    ...linkTypeForm,
+    link_key: linkKey,
+    name,
+    source_object_key: cleanText(linkTypeForm.source_object_key),
+    target_object_key: cleanText(linkTypeForm.target_object_key),
+    source_property: sourcePropertyKeys[0] || cleanText(linkTypeForm.source_property) || null,
+    target_property: targetPropertyKeys[0] || cleanText(linkTypeForm.target_property) || null,
+    source_property_keys: sourcePropertyKeys.length ? sourcePropertyKeys : null,
+    target_property_keys: targetPropertyKeys.length ? targetPropertyKeys : null,
+    description: cleanText(linkTypeForm.description),
+    domain_id: domainId.value,
+  }
+  saving.value = true; try { await saveOntologyLinkType(domainId.value, payload); ElMessage.success('业务关系已保存'); linkTypeDialog.value = false; await refreshAll() } catch (error) { ElMessage.error(String(errorMessage(error))) } finally { saving.value = false }
+}
 async function removeLinkType(row: OntologyLinkType) { await ElMessageBox.confirm(`删除关系类型“${row.name}”？`, '删除关系', { type: 'warning' }); await deleteOntologyLinkType(row.domain_id, row.id); await refreshAll() }
 
 function openActionTypeDialog(row?: OntologyActionType) {
-  const value: any = row ? JSON.parse(JSON.stringify(row)) : { ...emptyActionType(), target_object_key: objectTypes.value[0]?.object_key || '' }
-  value.parameters = (value.parameters || []).map((item: any) => ({ ...item, options_text: (item.options || []).join(',') })); value.preconditions = (value.preconditions || []).map((item: any) => ({ ...item, value_text: typeof item.value === 'string' ? item.value : JSON.stringify(item.value) })); value.effects = (value.effects || []).map((item: any) => ({ ...item, value_text: typeof item.value === 'string' ? item.value : JSON.stringify(item.value) }))
+  const value: any = row ? { ...emptyActionType(), ...JSON.parse(JSON.stringify(row)) } : { ...emptyActionType(), target_object_key: objectTypes.value[0]?.object_key || '' }
+  value.parameters = (value.parameters || []).map((item: any) => ({ ...item, options_text: (item.options || []).join(',') }))
+  const preconditions = (value.preconditions || []).map((item: any) => ({ ...item, value_text: displayValue(item.value) }))
+  const effects = (value.effects || []).map((item: any) => ({ ...item, value_text: displayValue(item.value) }))
+  const target = objectTypes.value.find((item) => item.object_key === value.target_object_key)
+  const statusPropertyKeys = new Set((target?.properties || []).filter(isStatusProperty).map((item) => item.property_key))
+  const statusConditionIndex = preconditions.findIndex((item: any) => item.operator === 'eq' && statusPropertyKeys.has(item.property))
+  const statusCondition = statusConditionIndex >= 0 ? preconditions.splice(statusConditionIndex, 1)[0] : null
+  const preferredStatusProperty = statusCondition?.property || effects.find((item: any) => statusPropertyKeys.has(item.property))?.property
+  const statusEffectIndex = effects.findIndex((item: any) => item.property === preferredStatusProperty)
+  const statusEffect = statusEffectIndex >= 0 ? effects.splice(statusEffectIndex, 1)[0] : null
+  value.status_property = statusCondition?.property || statusEffect?.property || ''
+  value.from_status = statusCondition?.value_text || ''
+  value.to_status = statusEffect?.value_text || ''
+  value.status_message = statusCondition?.message || ''
+  value.preconditions = preconditions
+  value.effects = effects
   replaceReactive(actionTypeForm, value); actionTypeDialog.value = true
+}
+function resetActionPropertyBindings() {
+  actionTypeForm.status_property = ''
+  actionTypeForm.from_status = ''
+  actionTypeForm.to_status = ''
+  actionTypeForm.status_message = ''
+  actionTypeForm.preconditions = []
+  actionTypeForm.effects = []
 }
 function addActionParameter() { actionTypeForm.parameters.push({ parameter_key: '', name: '', data_type: 'string', required: false, options_text: '', description: '' }) }
 function addPrecondition() { actionTypeForm.preconditions.push({ property: targetProperties.value[0]?.property_key || '', operator: 'eq', value_text: '', message: '' }) }
 function addEffect() { actionTypeForm.effects.push({ property: targetProperties.value[0]?.property_key || '', value_text: '' }) }
 async function saveActionType() {
-  if (!domainId.value || !actionTypeForm.action_key || !actionTypeForm.name || !actionTypeForm.target_object_key) return ElMessage.warning('请完整填写动作标识、名称和目标对象')
-  const payload = { ...actionTypeForm, domain_id: domainId.value, parameters: actionTypeForm.parameters.map((item: any) => ({ parameter_key: item.parameter_key, name: item.name, data_type: item.data_type, required: item.required, options: String(item.options_text || '').split(',').map((x) => x.trim()).filter(Boolean), description: item.description || '' })), preconditions: actionTypeForm.preconditions.map((item: any) => ({ property: item.property, operator: item.operator, value: parseValue(item.value_text), message: item.message || '' })), effects: actionTypeForm.effects.map((item: any) => ({ property: item.property, value: parseValue(item.value_text) })) }
+  const actionName = cleanText(actionTypeForm.name)
+  const targetObjectKey = cleanText(actionTypeForm.target_object_key)
+  const usedKeys = actionTypes.value.filter((item) => item.id !== actionTypeForm.id).map((item) => item.action_key)
+  const actionKey = cleanText(actionTypeForm.action_key) || generatedKey('action', actionName, targetObjectKey, '', usedKeys)
+  if (!domainId.value || !actionName || !targetObjectKey) return ElMessage.warning('请完整填写动作名称和目标对象')
+  if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(actionKey)) return ElMessage.warning('动作标识需以英文字母开头，且只能包含字母、数字和下划线')
+  if (!actionTypeForm.allowed_roles?.length) return ElMessage.warning('请至少选择一个授权角色')
+
+  const parameters: any[] = []
+  for (const [index, parameter] of actionTypeForm.parameters.entries()) {
+    if (!actionParameterHasInput(parameter)) continue
+    const parameterName = cleanText(parameter.name)
+    if (!parameterName) return ElMessage.warning(`请填写第 ${index + 1} 个动作参数的业务名称，或删除该行`)
+    const parameterKey = cleanText(parameter.parameter_key) || generatedKey('parameter', parameterName, `parameter_${index + 1}`, '', parameters.map((item) => item.parameter_key))
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(parameterKey)) return ElMessage.warning(`第 ${index + 1} 个动作参数标识格式不正确`)
+    if (parameters.some((item) => item.parameter_key === parameterKey)) return ElMessage.warning(`动作参数标识不能重复：${parameterKey}`)
+    parameters.push({
+      parameter_key: parameterKey,
+      name: parameterName,
+      data_type: parameter.data_type,
+      required: Boolean(parameter.required),
+      options: cleanText(parameter.options_text).split(',').map((item) => item.trim()).filter(Boolean),
+      description: cleanText(parameter.description),
+    })
+  }
+  for (const [index, condition] of actionTypeForm.preconditions.entries()) {
+    if (!cleanText(condition.property)) return ElMessage.warning(`请选择第 ${index + 1} 个前置条件的对象属性`)
+  }
+  for (const [index, effect] of actionTypeForm.effects.entries()) {
+    if (!cleanText(effect.property)) return ElMessage.warning(`请选择第 ${index + 1} 个状态效果的对象属性`)
+  }
+
+  const preconditions = actionTypeForm.preconditions.map((item: any) => ({ property: cleanText(item.property), operator: item.operator, value: parseValue(item.value_text), message: cleanText(item.message) }))
+  const effects = actionTypeForm.effects.map((item: any) => ({ property: cleanText(item.property), value: parseValue(item.value_text) }))
+  const statusProperty = cleanText(actionTypeForm.status_property)
+  const fromStatus = cleanText(actionTypeForm.from_status)
+  const toStatus = cleanText(actionTypeForm.to_status)
+  if (!statusProperty && (fromStatus || toStatus)) return ElMessage.warning('配置执行前后状态时，请先选择状态属性')
+  if (statusProperty && fromStatus) {
+    const existing = preconditions.find((item: any) => item.property === statusProperty && item.operator === 'eq')
+    if (existing) existing.value = fromStatus
+    else preconditions.unshift({ property: statusProperty, operator: 'eq', value: fromStatus, message: cleanText(actionTypeForm.status_message) || '动作只能在指定状态下执行' })
+  }
+  if (statusProperty && toStatus) {
+    const existing = effects.find((item: any) => item.property === statusProperty)
+    if (existing) existing.value = toStatus
+    else effects.unshift({ property: statusProperty, value: toStatus })
+  }
+  const payload = {
+    id: actionTypeForm.id,
+    action_key: actionKey,
+    name: actionName,
+    target_object_key: targetObjectKey,
+    description: cleanText(actionTypeForm.description),
+    parameters,
+    preconditions,
+    effects,
+    allowed_roles: actionTypeForm.allowed_roles,
+    requires_approval: Boolean(actionTypeForm.requires_approval),
+    status: actionTypeForm.status,
+    domain_id: domainId.value,
+  }
   saving.value = true; try { await saveOntologyActionType(domainId.value, payload); ElMessage.success('动作类型已保存'); actionTypeDialog.value = false; await refreshAll() } catch (error) { ElMessage.error(String(errorMessage(error))) } finally { saving.value = false }
 }
 async function removeActionType(row: OntologyActionType) { await ElMessageBox.confirm(`删除动作“${row.name}”？历史执行记录仍将保留。`, '删除动作', { type: 'warning' }); await deleteOntologyActionType(row.domain_id, row.id); await refreshAll() }
@@ -714,11 +1025,32 @@ onBeforeUnmount(() => {
 .table-action-btn.is-danger:hover { color: #b42318; background: #fef3f2; }
 .approval-tag { min-width: 92px; justify-content: center; }
 .primary-cell { display: flex; flex-direction: column; gap: 3px; }.primary-cell strong { font-weight: 620; }.primary-cell code, code { color: #344054; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }.property-grid { display: grid; gap: 5px; padding: 12px 58px; background: #f8fafc; }.property-row { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(140px, 1fr) 80px 70px 60px; align-items: center; gap: 10px; min-height: 30px; }
-.form-grid { display: grid; gap: 14px; }.form-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }.form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }.subsection-title { justify-content: space-between; min-height: 40px; margin-top: 4px; border-bottom: 1px solid var(--wq-border); }.builder-list { display: grid; gap: 7px; margin: 9px 0 14px; }.builder-row { display: grid; align-items: center; gap: 7px; padding: 7px; background: #f7f9fc; border: 1px solid var(--wq-border); border-radius: 6px; }.property-builder { grid-template-columns: 1.2fr 1.2fr 110px 62px 62px 32px; }.parameter-builder { grid-template-columns: 1fr 1fr 105px 1.2fr 62px 32px; }.condition-builder { grid-template-columns: 1fr 110px 1fr 1.2fr 32px; }.effect-builder { grid-template-columns: 1fr 2fr 32px; }
+.form-grid { display: grid; gap: 14px; }.form-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }.form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }.subsection-title { justify-content: space-between; min-height: 40px; margin-top: 4px; border-bottom: 1px solid var(--wq-border); }.builder-list { display: grid; gap: 7px; margin: 9px 0 14px; }.builder-row { display: grid; align-items: center; gap: 7px; padding: 7px; background: #f7f9fc; border: 1px solid var(--wq-border); border-radius: 6px; }.property-builder, .property-builder-head { grid-template-columns: 1.2fr 1.2fr 110px 62px 62px 32px; }.parameter-builder { grid-template-columns: minmax(150px, 1.25fr) 110px 62px minmax(150px, 1fr) minmax(150px, 1fr) 32px; }.condition-builder { grid-template-columns: 1fr 110px 1fr 1.2fr 32px; }.effect-builder { grid-template-columns: 1fr 2fr 32px; }
+.object-type-form { display: grid; gap: 16px; }
+:deep(.object-type-dialog .el-dialog__body) { max-height: calc(100vh - 190px); overflow-y: auto; padding-top: 16px; }
+:deep(.model-type-dialog .el-dialog__body) { max-height: calc(100vh - 190px); overflow-y: auto; padding-top: 16px; }
+.object-form-guide { padding: 12px 14px; background: #f5f9ff; border: 1px solid #b2ddff; border-radius: 8px; }
+.object-form-guide-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.object-form-guide-title strong { color: var(--wq-text); font-size: 14px; }.object-form-guide-title span { color: var(--wq-muted); font-size: 12px; }
+.object-form-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; padding: 0; list-style: none; }
+.object-form-steps li { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 2px 14px; }.object-form-steps li:first-child { padding-left: 0; }.object-form-steps li + li { border-left: 1px solid #c9d8ea; }
+.object-form-steps b, .object-form-step { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 24px; height: 24px; color: var(--wq-primary-strong); background: var(--wq-primary-soft); border: 1px solid #b2ddff; border-radius: 50%; font-size: 12px; font-weight: 700; }
+.object-form-steps li > span { display: grid; min-width: 0; }.object-form-steps strong { color: var(--wq-text); font-size: 12px; }.object-form-steps small { color: var(--wq-muted); font-size: 11px; }
+.object-form-section { padding: 2px 2px 17px; border-bottom: 1px solid var(--wq-border); }.object-form-section:last-child { padding-bottom: 0; border-bottom: 0; }
+.object-form-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.object-form-section-heading > div { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }.object-form-section-heading strong { display: block; color: var(--wq-text); font-size: 15px; line-height: 1.4; }.object-form-section-heading p { margin: 2px 0 0; color: var(--wq-muted); font-size: 12px; line-height: 1.45; }
+.object-property-title > div { display: grid; gap: 1px; }.object-property-title span { color: var(--wq-muted); font-size: 11px; line-height: 1.4; }
+.property-builder-head { display: grid; gap: 7px; padding: 8px 7px 2px; color: var(--wq-muted); font-size: 11px; }.property-builder-head span:nth-child(n + 4) { text-align: center; }
+.object-property-list { margin-top: 5px; }.identity-property-grid { margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--wq-border-subtle); }
+.technical-guidance { display: grid; gap: 3px; margin-bottom: 14px; padding: 10px 12px; background: #f8fafc; border-left: 3px solid var(--wq-primary); border-radius: 5px; }.technical-guidance strong { color: var(--wq-text); font-size: 12px; }.technical-guidance span { color: var(--wq-muted); font-size: 12px; line-height: 1.55; }.technical-guidance code { color: var(--wq-primary-strong); }
+.sync-config-grid { align-items: start; }.sync-disabled-note { margin: -2px 0 2px; color: var(--wq-muted); font-size: 12px; line-height: 1.55; }
+.object-dialog-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; }.object-dialog-footer > span { color: var(--wq-muted); font-size: 12px; text-align: left; }.object-dialog-footer > div { display: flex; flex: 0 0 auto; gap: 8px; }
 .validation-result section { margin-top: 18px; }.validation-result h4 { margin-bottom: 8px; }.validation-item { display: grid; grid-template-columns: 130px 1fr; gap: 10px; margin-bottom: 7px; padding: 10px; border-left: 3px solid; background: #f8fafc; }.validation-item.error { border-color: var(--wq-danger); }.validation-item.warning { border-color: var(--wq-warning); }
 .form-help { display: block; margin-top: 5px; color: var(--wq-muted); font-size: 12px; line-height: 1.45; }
+.business-definition-form { display: grid; gap: 16px; }.model-editor-guide { display: grid; gap: 4px; padding: 11px 13px; background: #f5f9ff; border: 1px solid #b2ddff; border-left: 3px solid var(--wq-primary); border-radius: 6px; }.model-editor-guide strong { color: var(--wq-text); font-size: 13px; }.model-editor-guide span { color: var(--wq-muted); font-size: 12px; line-height: 1.5; }.advanced-model-settings { padding: 0 12px 12px; border: 1px solid var(--wq-border); border-radius: 6px; background: #fafbfc; }.advanced-model-settings summary { padding: 11px 0; color: var(--wq-primary-strong); cursor: pointer; font-size: 13px; font-weight: 650; }.advanced-model-settings[open] summary { margin-bottom: 9px; border-bottom: 1px solid var(--wq-border); }.advanced-model-grid { padding-top: 2px; }
+.default-mapping-summary { display: grid; gap: 5px; padding: 11px 13px; border: 1px solid #d0d5dd; border-radius: 6px; background: #fafbfc; }.default-mapping-summary > div { display: flex; align-items: center; gap: 8px; }.default-mapping-summary strong { color: var(--wq-text); font-size: 12px; }.default-mapping-summary code { color: var(--wq-primary-strong); overflow-wrap: anywhere; }.default-mapping-summary > span, .advanced-section-note { color: var(--wq-muted); font-size: 12px; line-height: 1.5; }.business-action-section { display: grid; gap: 10px; }.business-action-section .subsection-title { margin-top: 0; }.advanced-section-note { margin: 0 0 10px; padding: 8px 10px; border-left: 3px solid var(--wq-border-strong); background: #f5f7fa; }
 @media (max-width: 1100px) { .page-toolbar { align-items: flex-start; }.toolbar-actions { max-width: 64%; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }.metric-strip { grid-template-columns: repeat(3, 1fr); }.form-grid.three { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 760px) { .ontology-page { padding-inline: 16px; padding-bottom: 16px; overflow: auto; }.page-toolbar { flex-direction: column; }.toolbar-actions { width: 100%; max-width: none; justify-content: flex-start; overflow-x: auto; padding-bottom: 4px; }.metric-strip { grid-template-columns: repeat(2, 1fr); }.form-grid.two, .form-grid.three { grid-template-columns: 1fr; }.property-builder, .parameter-builder, .condition-builder, .effect-builder { grid-template-columns: 1fr; }.section-toolbar { flex-wrap: wrap; } }
+@media (max-width: 760px) { .ontology-page { padding-inline: 16px; padding-bottom: 16px; overflow: auto; }.page-toolbar { flex-direction: column; }.toolbar-actions { width: 100%; max-width: none; justify-content: flex-start; overflow-x: auto; padding-bottom: 4px; }.metric-strip { grid-template-columns: repeat(2, 1fr); }.form-grid.two, .form-grid.three { grid-template-columns: 1fr; }.property-builder, .parameter-builder, .condition-builder, .effect-builder { grid-template-columns: 1fr; }.property-builder-head { display: none; }.object-form-guide-title { align-items: flex-start; flex-direction: column; gap: 2px; }.object-form-steps { grid-template-columns: 1fr; }.object-form-steps li { padding: 8px 0; }.object-form-steps li + li { border-top: 1px solid #c9d8ea; border-left: 0; }.object-form-section-heading { align-items: flex-start; }.object-dialog-footer { align-items: stretch; flex-direction: column; }.object-dialog-footer > div { justify-content: flex-end; }.section-toolbar { flex-wrap: wrap; } }
 
 /* Dense workbench surfaces use hierarchy, not more decoration, to separate scan paths. */
 .section-toolbar { gap: 16px; padding: 8px 16px; background: var(--wq-surface); }

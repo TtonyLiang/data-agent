@@ -7,7 +7,7 @@
           <span>{{ sessions.length }} 个</span>
         </div>
         <div class="sidebar-actions">
-          <el-button class="new-chat-button" type="primary" :disabled="loading || !hasSelectedAgent" @click="newSession">
+          <el-button class="new-chat-button" type="primary" :disabled="loading || !hasSelectedAgent || !hasSelectedDomain" @click="newSession">
             <el-icon><Plus /></el-icon>
             <span>新对话</span>
           </el-button>
@@ -84,6 +84,22 @@
           <p>{{ selectedAgentName }}</p>
         </div>
         <div class="chat-controls">
+          <el-select
+            v-model="domainId"
+            :placeholder="domains.length ? '选择业务领域' : '暂无可用领域'"
+            style="width: 220px"
+            size="small"
+            :disabled="loading || domains.length === 0"
+            aria-label="选择企业业务领域"
+          >
+            <el-option v-if="domains.length === 0" label="暂无可用领域" :value="0" disabled />
+            <el-option
+              v-for="domain in domains"
+              :key="domain.id"
+              :label="domain.name"
+              :value="domain.id"
+            />
+          </el-select>
           <el-select
             v-model="agentId"
             :placeholder="agents.length ? '选择智能体' : '暂无可用智能体'"
@@ -572,9 +588,9 @@
             v-model="inputText"
             type="textarea"
             aria-label="输入查询问题"
-            :placeholder="hasSelectedAgent ? '输入你的问题，支持自然语言查询数据...' : '请先选择可用智能体'"
+            :placeholder="hasSelectedAgent && hasSelectedDomain ? '输入你的问题，支持自然语言查询数据...' : '请先选择业务领域和验证智能体'"
             :autosize="{ minRows: 2, maxRows: 4 }"
-            :disabled="loading || !hasSelectedAgent"
+            :disabled="loading || !hasSelectedAgent || !hasSelectedDomain"
             @keydown.enter.exact.prevent="handleSend()"
           />
           <div class="composer-footer">
@@ -591,7 +607,7 @@
             </div>
             <el-button
               :icon="Promotion"
-              :disabled="!hasSelectedAgent || !inputText.trim()"
+              :disabled="!hasSelectedAgent || !hasSelectedDomain || !inputText.trim()"
               :loading="loading"
               type="primary"
               @click="handleSend()"
@@ -1009,9 +1025,9 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { Promotion, Loading, ChatDotRound, Plus, Delete, CircleCheck, Clock, Search, Refresh, Download, DocumentCopy, WarningFilled, ArrowDown, ArrowRight, InfoFilled, FullScreen } from '@element-plus/icons-vue'
 import {
   sendMessageStream, fetchAgents, fetchSessions, fetchHistory, deleteSession,
-  fetchSemanticAssets, fetchSemanticDomains, fetchOntologyObjects, createRiskIssueFromChat,
+  fetchSemanticAssets, fetchOntologyDomains, fetchOntologyObjects, createRiskIssueFromChat,
   type AgentItem, type SessionItem, type HistoryItem, type ChatTurnMode,
-  type ChatRiskIssueCreateRequest, type OntologyObject, type RiskSeverity,
+  type ChatRiskIssueCreateRequest, type OntologyObject, type RiskSeverity, type SemanticDomain,
 } from '../api'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { setChatBusy } from '../stores/chatRun'
@@ -1059,7 +1075,9 @@ const sessionSearch = ref('')
 const activeResultTab = ref('chain')
 const loading = ref(false)
 const agentId = ref<number>(Number(localStorage.getItem('wenqu_agent_id')) || 1)
+const domainId = ref<number>(Number(localStorage.getItem('wenqu_domain_id')) || 0)
 const agents = ref<AgentItem[]>([])
+const domains = ref<SemanticDomain[]>([])
 const sessions = ref<SessionItem[]>([])
 const agentsLoading = ref(true)
 const agentsLoadError = ref(false)
@@ -1183,14 +1201,16 @@ const defaultQuickQueries = [
   '最近三个月的异常变化有哪些',
 ]
 const selectedAgent = computed(() => agents.value.find(agent => agent.id === agentId.value) || null)
+const selectedDomain = computed(() => domains.value.find(domain => domain.id === domainId.value) || null)
 const quickQueries = computed(() => {
   const agentQuestions = normalizeAgentDefaultQuestions(selectedAgent.value?.default_questions)
   if (agentQuestions.length) return agentQuestions.slice(0, 4)
   const configured = semanticExampleQueries.value.filter(Boolean)
   return configured.length ? configured.slice(0, 4) : defaultQuickQueries
 })
-const semanticHintText = computed(() => semanticHint.value || '选择智能体后，可以用自然语言查询已授权的数据。')
+const semanticHintText = computed(() => semanticHint.value || '先选择企业业务领域，再由验证智能体消费统一业务语义并查询已授权数据。')
 const hasSelectedAgent = computed(() => agents.value.some(agent => agent.id === agentId.value))
+const hasSelectedDomain = computed(() => domains.value.some(domain => domain.id === domainId.value))
 
 const filteredSessions = computed(() => {
   const keyword = sessionSearch.value.trim().toLowerCase()
@@ -1199,7 +1219,9 @@ const filteredSessions = computed(() => {
 })
 
 const selectedAgentName = computed(() => {
-  return selectedAgent.value?.name || '未选择智能体'
+  const domainName = selectedDomain.value?.name || '未选择业务领域'
+  const agentName = selectedAgent.value?.name || '未选择验证智能体'
+  return `${domainName} · ${agentName}`
 })
 
 function normalizeAgentDefaultQuestions(value: unknown) {
@@ -1293,6 +1315,19 @@ watch(agentId, async (id) => {
   await refreshAgentScopedData()
 })
 
+watch(domainId, async (id, previousId) => {
+  if (id > 0) {
+    localStorage.setItem('wenqu_domain_id', String(id))
+  } else {
+    localStorage.removeItem('wenqu_domain_id')
+  }
+  if (id !== previousId) {
+    cancelActiveStream()
+    resetConversation()
+  }
+  await loadSemanticLabels()
+})
+
 watch(latestAssistant, () => {
   resultPage.value = 1
 })
@@ -1317,6 +1352,8 @@ async function loadAgents() {
     }
     if (agents.value.length === 0) {
       agentId.value = 0
+      domainId.value = 0
+      domains.value = []
       sessions.value = []
       semanticLabels.value = {}
       semanticExampleQueries.value = []
@@ -1333,20 +1370,43 @@ async function loadAgents() {
 }
 
 async function refreshAgentScopedData() {
-  await loadSemanticLabels()
+  await loadSemanticDomains()
   await loadSessions()
 }
 
-async function loadSemanticLabels() {
+async function loadSemanticDomains() {
   if (!hasSelectedAgent.value) {
+    domains.value = []
+    domainId.value = 0
+    return
+  }
+  try {
+    domains.value = await fetchOntologyDomains()
+    if (!domains.value.some(domain => domain.id === domainId.value)) {
+      const defaultDomainId = Number(selectedAgent.value?.semantic_domain_id || 0)
+      domainId.value = domains.value.some(domain => domain.id === defaultDomainId)
+        ? defaultDomainId
+        : Number(domains.value[0]?.id || 0)
+    }
+    await loadSemanticLabels()
+  } catch {
+    domains.value = []
+    domainId.value = 0
+    semanticLabels.value = {}
+    semanticExampleQueries.value = []
+    semanticHint.value = ''
+  }
+}
+
+async function loadSemanticLabels() {
+  if (!hasSelectedAgent.value || !hasSelectedDomain.value) {
     semanticLabels.value = {}
     semanticExampleQueries.value = []
     semanticHint.value = ''
     return
   }
   try {
-    const domains = await fetchSemanticDomains(agentId.value)
-    const domain = domains[0]
+    const domain = selectedDomain.value
     if (!domain?.id) {
       semanticLabels.value = {}
       semanticExampleQueries.value = []
@@ -1569,6 +1629,8 @@ function historyToMessage(item: HistoryItem, sid: string, index: number): Tracea
       report_payload: item.report_payload,
       trace_id: traceableItem.trace_id,
       execution_trace: traceableItem.execution_trace,
+      domain_id: item.domain_id,
+      model_release_id: item.model_release_id,
       task_id: item.task_id,
       turn_id: item.turn_id,
       turn_mode: item.turn_mode,
@@ -1628,9 +1690,9 @@ function emptyRiskIssueForm(): RiskIssueFormModel {
 }
 
 function canCreateRiskIssue(message: ChatMessage) {
-  const domainId = Number(selectedAgent.value?.semantic_domain_id || 0)
+  const activeDomainId = Number(domainId.value || 0)
   const hasRiskSource = Boolean(message.sql?.trim()) || Boolean(message.sql_result?.length) || Boolean(message.report_payload)
-  return message.role === 'assistant' && message.status === 'complete' && domainId > 0 && hasRiskSource
+  return message.role === 'assistant' && message.status === 'complete' && activeDomainId > 0 && hasRiskSource
 }
 
 function messageTraceId(message: ChatMessage) {
@@ -1677,10 +1739,10 @@ function buildRiskIssueKey(message: ChatMessage) {
 }
 
 async function openRiskIssueDialog(message: ChatMessage, messageIndex: number) {
-  const domainId = Number(selectedAgent.value?.semantic_domain_id || 0)
+  const activeDomainId = Number(domainId.value || 0)
   const traceId = messageTraceId(message)
-  if (!domainId) {
-    ElMessage.warning('当前智能体未绑定业务领域，无法创建风险事项')
+  if (!activeDomainId) {
+    ElMessage.warning('请先选择业务领域，再创建风险事项')
     return
   }
   if (!traceId) {
@@ -1696,7 +1758,7 @@ async function openRiskIssueDialog(message: ChatMessage, messageIndex: number) {
   riskSourceMessageIndex.value = messageIndex
   riskSourceSessionId.value = sessionId.value
   riskSourceAgentId.value = agentId.value
-  riskSourceDomainId.value = domainId
+  riskSourceDomainId.value = activeDomainId
   riskForm.value = {
     ...emptyRiskIssueForm(),
     issue_key: buildRiskIssueKey(message),
@@ -1707,7 +1769,7 @@ async function openRiskIssueDialog(message: ChatMessage, messageIndex: number) {
   showRiskIssueDialog.value = true
   await nextTick()
   riskFormRef.value?.clearValidate()
-  void loadRiskObjects(domainId)
+  void loadRiskObjects(activeDomainId)
 }
 
 async function loadRiskObjects(domainId: number) {
@@ -3202,6 +3264,10 @@ function handleSend(turnMode?: ChatTurnMode) {
     ElMessage.warning('暂无可访问智能体，请联系管理员分配权限')
     return
   }
+  if (!domainId.value || !hasSelectedDomain.value) {
+    ElMessage.warning('请先选择可访问的企业业务领域')
+    return
+  }
   const runId = activeRunId + 1
   activeRunId = runId
 
@@ -3215,6 +3281,7 @@ function handleSend(turnMode?: ChatTurnMode) {
   abortController = sendMessageStream(
     {
       question: q,
+      domain_id: domainId.value,
       agent_id: agentId.value,
       session_id: sessionId.value || undefined,
       turn_mode: turnMode,

@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 Key = str
 PropertyType = Literal[
@@ -61,11 +61,44 @@ class OntologyLinkTypePayload(BaseModel):
     target_object_key: Key = Field(pattern=KEY_PATTERN, max_length=128)
     source_property: Key | None = Field(default=None, pattern=KEY_PATTERN, max_length=128)
     target_property: Key | None = Field(default=None, pattern=KEY_PATTERN, max_length=128)
+    source_property_keys: list[Key] | None = Field(default=None, min_length=1)
+    target_property_keys: list[Key] | None = Field(default=None, min_length=1)
     cardinality: Literal["one_to_one", "one_to_many", "many_to_one", "many_to_many"] = (
         "many_to_many"
     )
     description: str = ""
     status: Literal["draft", "active", "deprecated"] = "draft"
+
+    @field_validator("source_property_keys", "target_property_keys")
+    @classmethod
+    def validate_property_keys(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        if any(
+            not isinstance(key, str)
+            or not key
+            or len(key) > 128
+            or not key[0].isascii()
+            or not key[0].isalpha()
+            or not all(
+                character.isascii() and (character.isalnum() or character == "_")
+                for character in key
+            )
+            for key in value
+        ):
+            raise ValueError("关系属性键必须是非空英文标识")
+        if len(value) != len(set(value)):
+            raise ValueError("同一侧的关系属性键不能重复")
+        return value
+
+    @model_validator(mode="after")
+    def validate_legacy_property_aliases(self) -> "OntologyLinkTypePayload":
+        for side in ("source", "target"):
+            singular = getattr(self, f"{side}_property")
+            plural = getattr(self, f"{side}_property_keys")
+            if singular and plural and singular != plural[0]:
+                raise ValueError(f"{side} 单属性键必须与复合属性键首项一致")
+        return self
 
 
 class OntologyActionParameter(BaseModel):
@@ -143,6 +176,8 @@ class OntologyActionExecutePayload(BaseModel):
     decision_context: dict[str, Any] = Field(default_factory=dict)
     approval_reference: str | None = Field(default=None, max_length=256)
     expected_version: int | None = Field(default=None, gt=0)
+
+
 class OntologyPublishPayload(BaseModel):
     name: str | None = Field(default=None, max_length=256)
     description: str = ""

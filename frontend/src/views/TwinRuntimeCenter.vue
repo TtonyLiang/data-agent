@@ -278,11 +278,14 @@
                 </template>
               </el-table-column>
               <el-table-column prop="object_type_name" label="对象类型" min-width="150" />
-              <el-table-column label="来源" width="120">
+              <el-table-column label="状态来源" min-width="170">
                 <template #default="{ row }">
-                  <el-tag :type="row.source_kind === 'database' ? 'success' : 'info'" effect="plain">
-                    {{ row.source_kind === 'database' ? '业务库' : '本地' }}
-                  </el-tag>
+                  <div class="object-state-source">
+                    <el-tag :type="row.source_kind === 'database' ? 'success' : 'info'" effect="plain">
+                      {{ objectStateSourceLabel(row) }}
+                    </el-tag>
+                    <small v-if="objectOverlayCount(row)">平台变更 {{ objectOverlayCount(row) }} 项，尚未写回业务库</small>
+                  </div>
                 </template>
               </el-table-column>
               <el-table-column label="属性" min-width="420">
@@ -402,8 +405,8 @@
           <section class="runtime-entity-panel">
             <div class="panel-heading runtime-view-heading">
               <div>
-                <h3>动作执行记录</h3>
-                <p>记录受控 Ontology Action 的执行结果和状态变化，不代表通用 Decision Capability 已完成。</p>
+                <h3>平台动作记录</h3>
+                <p>记录受控 Ontology Action 对孪生对象的状态变化；当前属于平台叠加状态，不代表业务数据库已经写回，也不代表通用 Decision Capability 已完成。</p>
               </div>
               <div class="view-actions">
                 <el-button :icon="Refresh" :loading="runtimeViewLoading" @click="loadActionRuns">刷新</el-button>
@@ -1017,6 +1020,15 @@ function decisionContextEntries(value: Record<string, unknown> | undefined) {
 
 function objectPropertyEntries(value: Record<string, unknown> | undefined) {
   return Object.entries(value || {}).map(([key, item]) => ({ key, value: item, tone: auditFieldTone(key) }))
+}
+
+function objectOverlayCount(value: OntologyObject) {
+  return Object.keys(value.overlay_properties || {}).length
+}
+
+function objectStateSourceLabel(value: OntologyObject) {
+  if (value.source_kind !== 'database') return '平台本地对象'
+  return objectOverlayCount(value) ? '业务库快照 + 平台变更' : '业务库快照'
 }
 
 function objectPropertyAriaLabel(value: Record<string, unknown> | undefined) {

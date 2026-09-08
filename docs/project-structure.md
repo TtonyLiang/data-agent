@@ -1,11 +1,15 @@
 # 问渠 WenQu 项目结构与功能边界
 
-> 基准日期：2026-09-07
+> 基准日期：2026-09-08
 > 文档用途：给开发、业务、数据和测试人员提供一张“项目地图”。本文按**公司内部单一部署**描述项目，不设计多租户、多企业空间或企业间隔离。
 
 ## 1. 先记住一条主线
 
 问渠的核心不是“做一个 Agent 产品”，而是把公司的业务理解和数据沉淀为可复用的企业能力：
+
+> **第一性目标：让业务语义成为企业资产，让数据库成为数据来源，让 Agent 成为能力消费者。**
+
+这也是本项目的分层原则：企业模型不随 Agent 生命周期复制或删除；数据库和 SQL 负责来源与执行；Agent/业务应用通过能力接口消费已发布模型。
 
 ```text
 公司内部用户 / 角色与数据权限
@@ -36,7 +40,7 @@
 
 | 层 | 功能块 | 负责什么 | 主要输入 | 主要输出 | 当前口径 |
 |---|---|---|---|---|---|
-| 1 | 公司级治理与权限 | 用户、角色、业务领域、模型配置和数据访问边界 | 用户、协作约束、配置 | 可访问范围和运行上下文 | 公司单一部署；当前登录角色只有 `admin/user` |
+| 1 | 公司级治理与权限 | 业务领域、模型配置、数据访问边界和当前登录门禁 | 业务/技术协作约束、配置 | 可访问范围和运行上下文 | 公司单一部署；`admin/user` 仅为当前管理与验证角色，不扩建普通用户产品体系 |
 | 2 | 数据接入与治理 | 连接业务库、采集 Schema、表/列权限和脱敏 | MySQL 只读库、表清单、字段说明 | `datasource`、`meta_table`、`meta_column`、显式权限规则 | 当前只支持 MySQL；表白名单默认拒绝并已有管理入口 |
 | 3 | 企业模型中心 | 统一维护 Ontology 与查询语义 | 对象、关系、状态、指标、规则、字段映射 | 模型草稿、服务端校验、统一激活版本 | 产品入口和发布生命周期统一，底层资产表仍分开维护 |
 | 4 | 数据处理与孪生运行时 | 建立对象身份、同步当前状态、关联来源和关系 | 激活模型、`source_query`、业务库数据 | `ontology_object`、`ontology_link`、`twin_sync_run` | 当前支持预览和管理员手动分页同步，强制校验版本/数据源漂移 |
@@ -81,7 +85,7 @@
 |---|---|---|
 | `/api/auth`、`/api/users` | 登录、用户和验证 Agent 授权 | `app/api/auth.py`、`user.py`、`app/services/user_service.py` |
 | `/api/agent` | 内置验证 Agent、数据源/领域绑定 | `app/api/agent.py` |
-| `/api/datasource` | 数据源连接、Schema 采集和 Agent 表/列权限 | `app/api/datasource.py`、`datasource_service.py`、`metadata_service.py` |
+| `/api/datasource` | 数据源连接、Schema 采集和领域级表/列权限；旧 Agent 权限仅作迁移兼容 | `app/api/datasource.py`、`datasource_service.py`、`metadata_service.py` |
 | `/api/semantic` | 查询语义资产、快照和向量同步 | `app/api/semantic.py`、`semantic_runtime.py` |
 | `/api/ontology` | Ontology 定义、实例与动作兼容 API；旧同步入口统一委托孪生运行治理 | `app/api/ontology.py`、`ontology_service.py` |
 | `/api/model-releases` | 统一企业模型版本的创建、校验、激活、停用和回滚 | `app/api/model_release.py`、`model_release_service.py` |
@@ -104,7 +108,7 @@
 |---|---|---|
 | 公司级治理与身份 | `app_user`、`user_agent_permission`、`semantic_domain`、`agent_semantic_domain`、`agent` | 公司内部用户、业务领域和验证 Agent 的访问关系 |
 | 内部兼容容器 | `enterprise_workspace`、`semantic_domain.workspace_id` | 当前单公司部署的历史兼容字段；不是多企业模型 |
-| 数据接入与权限 | `datasource`、`agent_datasource`、`meta_table`、`meta_column`、`agent_table_permission`、`agent_column_permission` | 连接、Schema、表白名单和列脱敏 |
+| 数据接入与权限 | `datasource`、`meta_table`、`meta_column`、`domain_table_permission`、`domain_column_permission`；`agent_datasource`、`agent_*_permission` 为兼容表 | 连接、Schema、领域表白名单和列脱敏；Agent 规则只用于旧领域迁移 |
 | 企业模型 | `semantic_concept`、`semantic_relation`、`semantic_metric`、`semantic_rule`、`semantic_mapping`、`logic_form_template`、`semantic_domain_snapshot`、`ontology_object_type`、`ontology_property`、`ontology_link_type`、`ontology_action_type`、`ontology_release`、`enterprise_model_release` | 业务定义、映射、动作和统一激活版本 |
 | 孪生运行与审计 | `ontology_object`、`ontology_link`、`ontology_action_run`、`twin_sync_run`、`decision_audit_event`、`decision_audit_head` | 对象实例、同步运行、动作结果和审计链 |
 | 外部能力调用 | `capability_client`、`capability_grant`、`capability_invocation_audit` | 第三方调用身份、领域能力授权和调用摘要 |

@@ -23,7 +23,10 @@ CAPABILITY_ACCESS_TABLE_STATEMENTS = [
         client_id BIGINT NOT NULL COMMENT '能力调用方ID',
         domain_id BIGINT NOT NULL COMMENT '授权业务领域ID',
         capability_key VARCHAR(128) NOT NULL COMMENT '授权能力标识',
-        execution_agent_id BIGINT NOT NULL COMMENT '内部数据权限执行适配ID',
+        execution_agent_id BIGINT DEFAULT NULL COMMENT '旧领域兼容的内部数据权限适配ID',
+        model_release_id BIGINT DEFAULT NULL COMMENT '授权冻结的统一企业模型版本ID',
+        contract_hash CHAR(64) DEFAULT NULL COMMENT '授权能力合同SHA-256',
+        contract_json JSON DEFAULT NULL COMMENT '授权时冻结的Query Capability合同',
         status VARCHAR(32) NOT NULL DEFAULT 'active' COMMENT 'active/revoked',
         created_by BIGINT DEFAULT NULL COMMENT '创建管理员ID',
         updated_by BIGINT DEFAULT NULL COMMENT '最近修改管理员ID',
@@ -35,7 +38,8 @@ CAPABILITY_ACCESS_TABLE_STATEMENTS = [
         INDEX idx_capability_grant_lookup (
             client_id, domain_id, capability_key, status
         ),
-        INDEX idx_capability_grant_execution_agent (execution_agent_id)
+        INDEX idx_capability_grant_execution_agent (execution_agent_id),
+        INDEX idx_capability_grant_release (model_release_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='第三方调用方能力授权'
     """,
     """

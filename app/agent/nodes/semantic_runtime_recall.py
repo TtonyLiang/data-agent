@@ -1,7 +1,7 @@
 """语义运行时召回节点 —— 加载语义层资产并构建 SemanticRuntime。
 
 SemanticRuntimeRecallNode 负责:
-1. 按 agent_id / domain_key / domain_id 从管理库加载语义层资产。
+1. 优先按显式 domain_id / model_release_id 加载企业模型，旧调用再回退 Agent 默认领域。
 2. 组装 SemanticRuntime 对象(metrics/mappings/rules/concepts/relations/templates)。
 3. 向量召回(可选):从 Milvus 检索语义资产向量,作为额外证据。
 4. 向量召回失败时安全降级到关键词证据(keyword_runtime_evidence)。
@@ -34,18 +34,34 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
         logger,
         "semantic_runtime_recall",
         state,
-        keys=("trace_id", "agent_id", "datasource_id", "enhanced_question", "question"),
+        keys=(
+            "trace_id",
+            "domain_id",
+            "model_release_id",
+            "agent_id",
+            "datasource_id",
+            "enhanced_question",
+            "question",
+        ),
     )
     agent_id = state.get("agent_id", 0)
     datasource_id = state.get("datasource_id")
+    requested_domain_id = state.get("domain_id")
+    requested_model_release_id = state.get("model_release_id")
     question = state.get("enhanced_question") or state.get("question", "")
     svc = get_semantic_runtime_service()
-    domain_id = await resolve_runtime_domain_id(agent_id, datasource_id)
+    domain_id = await resolve_runtime_domain_id(
+        agent_id,
+        datasource_id,
+        explicit_domain_id=requested_domain_id,
+    )
     logger.info(
-        "semantic runtime resolved domain agent_id=%s datasource_id=%s domain_id=%s question=%s",
+        "semantic runtime resolved domain agent_id=%s datasource_id=%s domain_id=%s "
+        "model_release_id=%s question=%s",
         agent_id,
         datasource_id,
         domain_id,
+        requested_model_release_id,
         truncate_text(question, 600),
     )
 
@@ -73,6 +89,26 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
             raise ValueError("企业业务领域不存在")
         if str(runtime_domain.status or "").lower() != "active":
             raise ValueError("当前业务领域已停用")
+        if (
+            datasource_id
+            and runtime_domain.datasource_id
+            and int(runtime_domain.datasource_id) != int(datasource_id)
+        ):
+            raise ValueError("当前数据源与所选企业业务领域不一致")
+        model_release = (
+            ontology_context.get("model_release")
+            if isinstance(ontology_context, dict)
+            else None
+        )
+        resolved_model_release_id = (
+            int(model_release["id"])
+            if isinstance(model_release, dict) and model_release.get("id")
+            else None
+        )
+        if requested_model_release_id is not None and resolved_model_release_id != int(
+            requested_model_release_id
+        ):
+            raise ValueError("指定企业模型版本不是当前业务领域的激活版本")
         semantic_snapshot = (
             ontology_context.get("semantic_snapshot")
             if isinstance(ontology_context, dict)
@@ -125,8 +161,34 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
 
     evidence: list[dict] = []
     try:
-        query_vector = await get_embedding_service().embed_query(question, agent_id=agent_id)
+        embedding_service = get_embedding_service()
+        query_vector = await embedding_service.embed_query(question, agent_id=agent_id)
         logger.info("semantic runtime embedding generated dims=%s", len(query_vector or []))
+        search_kwargs = {"domain_id": runtime.domain.id}
+        identity_resolver = getattr(embedding_service, "get_index_identity", None)
+        if callable(identity_resolver):
+            embedding_identity = await identity_resolver(agent_id)
+            semantic_snapshot_id = (
+                int(semantic_snapshot["id"])
+                if isinstance(semantic_snapshot, dict) and semantic_snapshot.get("id")
+                else None
+            )
+            if resolved_model_release_id or semantic_snapshot_id:
+                search_kwargs.update(
+                    {
+                        "model_release_id": resolved_model_release_id,
+                        "semantic_snapshot_id": semantic_snapshot_id,
+                        "embedding_model_config_id": embedding_identity.get(
+                            "config_id"
+                        ),
+                        "embedding_model_version": str(
+                            embedding_identity["version"]
+                        ),
+                        # A released/snapshotted runtime must not read an
+                        # unversioned Agent collection from another model state.
+                        "allow_legacy_fallback": False,
+                    }
+                )
         evidence = [
             {
                 "content": item.content,
@@ -138,7 +200,7 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
             for item in get_vector_store().search(
                 agent_id,
                 query_vector,
-                domain_id=runtime.domain.id,
+                **search_kwargs,
             )
         ]
         logger.info("semantic runtime vector evidence count=%s", len(evidence))
@@ -153,6 +215,8 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
         evidence = keyword_runtime_evidence(question, runtime.model_dump())
 
     result = {
+        "domain_id": int(runtime.domain.id),
+        "model_release_id": resolved_model_release_id,
         "semantic_runtime": runtime.model_dump(),
         "runtime_evidence": evidence[:8],
         "semantic_error": None,
@@ -227,8 +291,20 @@ async def semantic_runtime_recall_node(state: dict) -> dict:
     return result
 
 
-async def resolve_runtime_domain_id(agent_id: int, datasource_id: int | None) -> int | None:
-    """Prefer the semantic layer explicitly selected on the agent."""
+async def resolve_runtime_domain_id(
+    agent_id: int,
+    datasource_id: int | None,
+    *,
+    explicit_domain_id: int | None = None,
+) -> int | None:
+    """Prefer an explicitly selected enterprise domain, then the Agent fallback."""
+    if explicit_domain_id is not None:
+        logger.info(
+            "semantic runtime using request domain agent_id=%s domain_id=%s",
+            agent_id,
+            explicit_domain_id,
+        )
+        return int(explicit_domain_id)
     domain = await get_semantic_runtime_service().get_agent_bound_domain(agent_id)
     if domain is None:
         logger.info("semantic runtime no agent-bound domain agent_id=%s", agent_id)

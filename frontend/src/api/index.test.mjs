@@ -107,12 +107,19 @@ function stripAxiosConfig(calls) {
   const clients = await api.fetchCapabilityClients()
   const credential = await api.createCapabilityClient({ name: '审批助手' })
   await api.updateCapabilityClientStatus(8, 'disabled')
-  axiosGetData = { grants: [{ id: 3, client_id: 8, domain_id: 7 }] }
+  axiosGetData = {
+    grants: [{
+      id: 3,
+      client_id: 8,
+      domain_id: 7,
+      model_release_id: 12,
+      contract_hash: 'a'.repeat(64),
+    }],
+  }
   const grants = await api.fetchCapabilityGrants(8)
   await api.updateCapabilityGrant(8, {
     domain_id: 7,
     capability_key: 'query_loan_application',
-    execution_agent_id: 4,
     status: 'active',
   })
   axiosGetData = { invocations: [{ id: 12, trace_id: 'trc_12' }] }
@@ -121,6 +128,7 @@ function stripAxiosConfig(calls) {
   assert.equal(clients[0].client_key, 'cap_demo')
   assert.equal(credential.client_secret, 'one-time-secret')
   assert.equal(grants[0].domain_id, 7)
+  assert.equal(grants[0].model_release_id, 12)
   assert.equal(audits[0].trace_id, 'trc_12')
   assert.deepEqual(stripAxiosConfig(axiosCalls), [
     ['get', '/capability-clients'],
@@ -130,7 +138,6 @@ function stripAxiosConfig(calls) {
     ['put', '/capability-clients/8/grants', {
       domain_id: 7,
       capability_key: 'query_loan_application',
-      execution_agent_id: 4,
       status: 'active',
     }],
     ['get', '/capability-invocations'],
@@ -406,8 +413,11 @@ assert.ok(
 )
 
 assert.ok(
-  source.includes('turn_mode?: ChatTurnMode') && source.includes('reused_artifacts?: string[]'),
-  'chat API contracts should expose persistent task mode and reuse metadata',
+  source.includes('turn_mode?: ChatTurnMode') &&
+    source.includes('domain_id?: number | null') &&
+    source.includes('model_release_id?: number | null') &&
+    source.includes('reused_artifacts?: string[]'),
+  'chat API contracts should expose enterprise-model context, persistent task mode, and reuse metadata',
 )
 
 {

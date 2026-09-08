@@ -179,6 +179,8 @@ def reconcile_task_state(
     session_id: str,
     datasource_id: int | None,
     trace_id: str,
+    domain_id: int | None = None,
+    model_release_id: int | None = None,
     context: dict[str, Any],
     requested_mode: str | None = None,
     require_sql_confirmation: bool = False,
@@ -267,6 +269,10 @@ def reconcile_task_state(
 
     prior_trace = previous.get("execution_trace") or {}
     reused = _reused_artifacts(state)
+    selected_domain_id = domain_id or context.get("domain_id") or context.get(
+        "semantic_domain_id"
+    )
+    selected_model_release_id = model_release_id or context.get("model_release_id")
     state.update(
         {
             "question": working_question,
@@ -275,6 +281,15 @@ def reconcile_task_state(
             "user_id": user_id,
             "session_id": session_id,
             "datasource_id": datasource_id,
+            "domain_id": int(selected_domain_id) if selected_domain_id else None,
+            "model_release_id": (
+                int(selected_model_release_id) if selected_model_release_id else None
+            ),
+            "permission_domain_id": (
+                int(selected_domain_id) if selected_domain_id else None
+            ),
+            "permission_compatibility_agent_id": agent_id,
+            "allow_agent_permission_fallback": True,
             "trace_id": trace_id,
             "task_id": task_id,
             "task_subject_question": previous_subject if mode != "new_task" else question,
@@ -305,6 +320,12 @@ def reconcile_task_state(
                     "reused_artifacts": reused,
                     "invalidated_artifacts": sorted(invalidated),
                     "prior_trace_id": prior_trace.get("trace_id"),
+                    "domain_id": int(selected_domain_id) if selected_domain_id else None,
+                    "model_release_id": (
+                        int(selected_model_release_id)
+                        if selected_model_release_id
+                        else None
+                    ),
                 },
                 **(
                     {"compile_strategy": prior_trace.get("compile_strategy")}
@@ -518,7 +539,14 @@ class TaskCheckpointService:
             },
         )
 
-    async def context(self, agent_id: int, datasource_id: int | None) -> dict[str, Any]:
+    async def context(
+        self,
+        agent_id: int,
+        datasource_id: int | None,
+        *,
+        domain_id: int | None = None,
+        model_release_id: int | None = None,
+    ) -> dict[str, Any]:
         db = get_management_db()
         identity_rows = await db.execute_query(
             "SELECT a.id AS agent_id, a.updated_at AS agent_updated_at, "
@@ -538,9 +566,13 @@ class TaskCheckpointService:
             "agent_id": agent_id,
             "datasource_id": datasource_id,
         }
-        domain_id = identity.get("semantic_domain_id")
+        # domain_id is the canonical business context.  The Agent default is a
+        # compatibility fallback for older callers that do not select a domain.
+        selected_domain_id = domain_id or identity.get("semantic_domain_id")
+        identity["selected_domain_id"] = selected_domain_id
+        identity["selected_model_release_id"] = model_release_id
         semantic_versions = []
-        if domain_id:
+        if selected_domain_id:
             semantic_versions = await db.execute_query(
                 "SELECT 'concept' AS kind, COUNT(*) AS item_count, MAX(updated_at) AS latest "
                 "FROM semantic_concept WHERE domain_id = :domain_id UNION ALL "
@@ -554,7 +586,7 @@ class TaskCheckpointService:
                 "WHERE domain_id = :domain_id UNION ALL "
                 "SELECT 'template', COUNT(*), MAX(updated_at) FROM logic_form_template "
                 "WHERE domain_id = :domain_id",
-                {"domain_id": domain_id},
+                {"domain_id": selected_domain_id},
             )
         schema_version = []
         if datasource_id:
@@ -576,7 +608,7 @@ class TaskCheckpointService:
             "release_available": False,
             "release": None,
         }
-        if domain_id:
+        if selected_domain_id:
             try:
                 ontology_rows = await db.execute_query(
                     "SELECT 'object_type' AS kind, COUNT(*) AS item_count, "
@@ -589,12 +621,12 @@ class TaskCheckpointService:
                     "FROM ontology_link_type WHERE domain_id = :domain_id UNION ALL "
                     "SELECT 'action_type', COUNT(*), MAX(updated_at) "
                     "FROM ontology_action_type WHERE domain_id = :domain_id",
-                    {"domain_id": domain_id},
+                    {"domain_id": selected_domain_id},
                 )
             except DBAPIError as exc:
                 logger.warning(
                     "ontology definition version signal unavailable domain_id=%s error=%s",
-                    domain_id,
+                    selected_domain_id,
                     exc,
                 )
             else:
@@ -619,7 +651,7 @@ class TaskCheckpointService:
                 release_rows = await db.execute_query(
                     "SELECT id, version, definition_hash, created_at FROM ontology_release "
                     "WHERE domain_id = :domain_id ORDER BY version DESC, id DESC LIMIT 1",
-                    {"domain_id": domain_id},
+                    {"domain_id": selected_domain_id},
                 )
                 ontology_version["release_available"] = True
             except DBAPIError:
@@ -627,13 +659,13 @@ class TaskCheckpointService:
                     release_rows = await db.execute_query(
                         "SELECT id, version, created_at FROM ontology_release "
                         "WHERE domain_id = :domain_id ORDER BY version DESC, id DESC LIMIT 1",
-                        {"domain_id": domain_id},
+                        {"domain_id": selected_domain_id},
                     )
                     ontology_version["release_available"] = True
                 except DBAPIError as exc:
                     logger.warning(
                         "ontology release version signal unavailable domain_id=%s error=%s",
-                        domain_id,
+                        selected_domain_id,
                         exc,
                     )
             if release_rows:
@@ -645,19 +677,27 @@ class TaskCheckpointService:
                     "created_at": release.get("created_at"),
                 }
             try:
+                release_selector = (
+                    "AND id = :model_release_id"
+                    if model_release_id is not None
+                    else "AND status = 'active'"
+                )
+                release_params: dict[str, Any] = {"domain_id": selected_domain_id}
+                if model_release_id is not None:
+                    release_params["model_release_id"] = model_release_id
                 model_release_rows = await db.execute_query(
                     "SELECT id, version, model_hash, semantic_snapshot_id, "
                     "semantic_snapshot_hash, ontology_release_id, "
                     "ontology_definition_hash, activated_at "
                     "FROM enterprise_model_release WHERE domain_id = :domain_id "
-                    "AND status = 'active' LIMIT 1",
-                    {"domain_id": domain_id},
+                    f"{release_selector} LIMIT 1",
+                    release_params,
                 )
                 enterprise_model_version["release_available"] = True
             except DBAPIError as exc:
                 logger.warning(
                     "enterprise model release signal unavailable domain_id=%s error=%s",
-                    domain_id,
+                    selected_domain_id,
                     exc,
                 )
             else:
@@ -688,7 +728,14 @@ class TaskCheckpointService:
         return {
             "fingerprint": fingerprint,
             "datasource_id": datasource_id,
-            "semantic_domain_id": domain_id,
+            "domain_id": selected_domain_id,
+            "semantic_domain_id": selected_domain_id,
+            "model_release_id": model_release_id,
+            "resolved_model_release_id": (
+                enterprise_model_version["release"].get("id")
+                if enterprise_model_version.get("release")
+                else None
+            ),
             "chat_model_config_id": identity.get("chat_model_config_id"),
             "embedding_model_config_id": identity.get("embedding_model_config_id"),
             "ontology_version": ontology_version,
@@ -704,12 +751,23 @@ class TaskCheckpointService:
         session_id: str,
         datasource_id: int | None,
         trace_id: str,
+        domain_id: int | None = None,
+        model_release_id: int | None = None,
         requested_mode: str | None = None,
         require_sql_confirmation: bool = False,
         enable_low_confidence_clarification: bool = False,
     ) -> dict[str, Any]:
         previous = await self.load(user_id, agent_id, session_id)
-        context = await self.context(agent_id, datasource_id)
+        selected_domain_id = domain_id or (previous or {}).get("domain_id")
+        selected_model_release_id = model_release_id or (previous or {}).get(
+            "model_release_id"
+        )
+        context = await self.context(
+            agent_id,
+            datasource_id,
+            domain_id=selected_domain_id,
+            model_release_id=selected_model_release_id,
+        )
         state = reconcile_task_state(
             previous,
             question=question,
@@ -718,6 +776,8 @@ class TaskCheckpointService:
             session_id=session_id,
             datasource_id=datasource_id,
             trace_id=trace_id,
+            domain_id=selected_domain_id,
+            model_release_id=selected_model_release_id,
             context=context,
             requested_mode=requested_mode,
             require_sql_confirmation=require_sql_confirmation,

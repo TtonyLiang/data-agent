@@ -1,6 +1,7 @@
 import pytest
 
 from app.agent.prompts import default_prompt_templates
+from app.api.prompt import list_prompt_catalog
 from app.db import migrations
 
 
@@ -18,6 +19,21 @@ def test_default_prompt_catalog_exposes_agent_prompt_files():
     assert "phase3_report_generator.user" in keys
     assert all(item["template_text"].strip() for item in prompts)
     assert all("语义层" not in item["description"] for item in prompts)
+
+
+@pytest.mark.asyncio
+async def test_prompt_catalog_exposes_agent_scope_policy():
+    catalog = (await list_prompt_catalog())["prompts"]
+    by_key = {item["prompt_key"]: item for item in catalog}
+
+    assert by_key["semantic_enhance.system"]["scope_policy"] == "business_semantics"
+    assert by_key["semantic_enhance.system"]["agent_scope_allowed"] is False
+    assert by_key["nl2lf_generate.system"]["agent_scope_allowed"] is False
+    assert by_key["nl2sql_fallback.system"]["agent_scope_allowed"] is False
+    assert by_key["phase3_report_generator.system"]["scope_policy"] == (
+        "interaction_or_output"
+    )
+    assert by_key["phase3_report_generator.system"]["agent_scope_allowed"] is True
 
 
 @pytest.mark.asyncio

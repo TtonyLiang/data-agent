@@ -376,3 +376,61 @@ async def test_schema_recall_marks_age_column_as_relevant(monkeypatch):
         item["column_name"] == "customer_age" and item["table_name"] == "loan_application_indicator"
         for item in result["relevant_columns"]
     )
+
+
+@pytest.mark.asyncio
+async def test_schema_recall_passes_explicit_domain_permission_context(monkeypatch):
+    calls = []
+
+    class DomainAwareMetadataService:
+        async def get_authorized_schema(
+            self,
+            datasource_id,
+            agent_id,
+            *,
+            domain_id,
+            allow_agent_fallback,
+        ):
+            calls.append(
+                {
+                    "datasource_id": datasource_id,
+                    "agent_id": agent_id,
+                    "domain_id": domain_id,
+                    "allow_agent_fallback": allow_agent_fallback,
+                }
+            )
+            return [
+                {
+                    "table_name": "orders",
+                    "table_comment": "",
+                    "columns": [{"column_name": "status", "column_comment": ""}],
+                }
+            ]
+
+    monkeypatch.setattr(
+        schema_recall,
+        "get_metadata_service",
+        lambda: DomainAwareMetadataService(),
+    )
+
+    await schema_recall.schema_recall_node(
+        {
+            "datasource_id": 42,
+            "agent_id": 11,
+            "domain_id": 7,
+            "permission_domain_id": 8,
+            "allow_agent_permission_fallback": True,
+            "question": "orders status",
+            "semantic_runtime": {"metrics": [], "mappings": [], "rules": []},
+            "runtime_evidence": [],
+        }
+    )
+
+    assert calls == [
+        {
+            "datasource_id": 42,
+            "agent_id": 11,
+            "domain_id": 8,
+            "allow_agent_fallback": True,
+        }
+    ]

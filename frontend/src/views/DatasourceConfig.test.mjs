@@ -7,12 +7,18 @@ const apiSource = readFileSync(new URL('../api/index.ts', import.meta.url), 'utf
 assert.ok(
   source.includes('访问权限') &&
     source.includes('openPermissionDrawer') &&
+    source.includes('权限归属业务领域') &&
+    source.includes('permissionEligibleDomains') &&
+    source.includes('fetchAllSemanticDomains') &&
+    source.includes('fetchDomainDatasourcePermissions') &&
+    source.includes('updateDomainDatasourcePermissions') &&
+    source.includes('领域白名单强制生效') &&
     source.includes('验证权限适配（过渡）') &&
     source.includes('permissionEligibleAgents') &&
     source.includes('fetchAgentDatasourceIds') &&
-    source.includes('表白名单强制生效') &&
+    source.includes('领域白名单强制生效') &&
     source.includes('saveDatasourcePermissions'),
-  'datasource management should select the transitional permission adapter only inside the permission editor',
+  'datasource management should make business-domain permissions primary and keep the Agent adapter transitional',
 )
 
 assert.ok(
@@ -24,9 +30,10 @@ assert.ok(
 )
 
 assert.ok(
-  source.includes('平台管理 > 调试与验证智能体') &&
-    source.includes('数据源绑定仍在“调试与验证智能体”中维护'),
-  'missing permission adapters should direct administrators to the correct binding surface',
+  source.includes('企业模型中心') &&
+    source.includes('旧领域兼容入口（仅迁移）') &&
+    source.includes('尚未迁移领域规则'),
+  'permission configuration should direct new setup to the enterprise domain and keep Agent access transitional',
 )
 
 assert.ok(
@@ -39,7 +46,10 @@ assert.ok(
 )
 
 assert.ok(
-  apiSource.includes('fetchDatasourcePermissions') &&
+  apiSource.includes('fetchDomainDatasourcePermissions') &&
+    apiSource.includes('updateDomainDatasourcePermissions') &&
+    apiSource.includes('/domain-permissions/${domainId}') &&
+    apiSource.includes('fetchDatasourcePermissions') &&
     apiSource.includes('updateDatasourcePermissions') &&
     apiSource.includes('/permissions/${agentId}'),
   'frontend API should expose read and replacement operations for datasource permissions',

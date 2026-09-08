@@ -118,6 +118,12 @@ def _build_query_capabilities(
                     metadata={
                         "source": "ontology_semantic_bridge",
                         "metric_object_binding": "explicit",
+                        "data_policy": {
+                            "strategy": "live_source",
+                            "source_kind": "business_datasource",
+                            "as_of_mode": "invocation_time",
+                            "uses_twin_snapshot": False,
+                        },
                     },
                 )
             )

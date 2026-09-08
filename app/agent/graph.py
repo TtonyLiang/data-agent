@@ -9,6 +9,13 @@ class AgentState(TypedDict, total=False):
     # 输入
     question: str
     agent_id: int
+    # 企业模型是运行主上下文；agent_id 仅保留为内置验证客户端、模型配置
+    # 和历史会话兼容入口。未显式传 domain_id 时仍回退到 Agent 默认领域。
+    domain_id: int | None
+    model_release_id: int | None
+    permission_domain_id: int | None
+    permission_compatibility_agent_id: int | None
+    allow_agent_permission_fallback: bool
     session_id: str
     datasource_id: int | None
     trace_id: str

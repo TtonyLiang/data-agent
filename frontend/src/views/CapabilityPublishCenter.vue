@@ -366,8 +366,21 @@
           <el-table-column label="能力" min-width="220">
             <template #default="{ row }"><code>{{ row.capability_key }}</code></template>
           </el-table-column>
-          <el-table-column label="权限适配" min-width="140">
-            <template #default="{ row }">{{ agentName(row.execution_agent_id) }}</template>
+          <el-table-column label="数据边界" min-width="180">
+            <template #default="{ row }">
+              <div class="primary-cell">
+                <strong>{{ row.execution_agent_id ? '旧权限兼容适配' : '业务领域权限' }}</strong>
+                <span class="cell-note">{{ row.execution_agent_id ? `内部适配 #${row.execution_agent_id}，待迁移` : '领域表和字段权限直接生效' }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="授权合同" min-width="170">
+            <template #default="{ row }">
+              <div class="primary-cell">
+                <strong>{{ row.model_release_id ? `模型 #${row.model_release_id}` : '历史授权' }}</strong>
+                <span class="cell-note">{{ row.contract_hash ? `合同 ${row.contract_hash.slice(0, 8)}…` : '首次调用时兼容绑定' }}</span>
+              </div>
+            </template>
           </el-table-column>
           <el-table-column label="状态" width="90">
             <template #default="{ row }">
@@ -427,6 +440,12 @@
 
     <el-dialog v-model="grantDialogVisible" title="新增能力授权" width="560px" @opened="focusControl(grantCapabilitySelect)">
       <el-form :model="grantForm" label-width="110px">
+        <el-alert
+          class="grant-boundary-note"
+          type="info"
+          :closable="false"
+          title="这里只授权调用方可以使用哪些业务能力。数据源、表和字段权限由平台按业务领域自动适配，无需选择或创建内部验证 Agent。"
+        />
         <el-form-item label="业务领域" required>
           <el-select v-model="grantForm.domain_id" disabled class="form-control">
             <el-option
@@ -447,17 +466,6 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="内部权限适配（过渡）" required>
-          <el-select v-model="grantForm.execution_agent_id" class="form-control" placeholder="选择权限适配用验证智能体">
-            <el-option
-              v-for="agent in eligibleAgents"
-              :key="agent.id"
-              :label="agent.name"
-              :value="agent.id"
-            />
-          </el-select>
-          <span class="form-help">外部调用方使用独立凭据；当前版本仍临时复用所选验证智能体的表列权限。</span>
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="grantDialogVisible = false">取消</el-button>
@@ -473,7 +481,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import {
   createCapabilityClient,
-  fetchAgents,
   fetchCapabilityClients,
   fetchCapabilityGrants,
   fetchCapabilityInvocationAudits,
@@ -482,7 +489,6 @@ import {
   fetchOntologyQueryCapabilities,
   updateCapabilityClientStatus,
   updateCapabilityGrant,
-  type AgentItem,
   type CapabilityClient,
   type CapabilityClientCredential,
   type CapabilityGrant,
@@ -518,7 +524,6 @@ const loading = ref(true)
 const contractVisible = ref(false)
 const selectedContract = ref<ContractView | null>(null)
 const clients = ref<CapabilityClient[]>([])
-const agents = ref<AgentItem[]>([])
 const grantsByClient = ref<Record<number, CapabilityGrant[]>>({})
 const audits = ref<CapabilityInvocationAudit[]>([])
 const clientsLoading = ref(false)
@@ -538,7 +543,6 @@ const clientForm = reactive({ name: '', description: '' })
 const grantForm = reactive({
   domain_id: null as number | null,
   capability_key: '',
-  execution_agent_id: null as number | null,
 })
 
 const currentDomain = computed(() => domains.value.find((item) => item.id === domainId.value) || null)
@@ -546,11 +550,6 @@ const actions = computed(() => context.value?.actions || [])
 const tools = computed(() => context.value?.tools || [])
 const canManage = computed(() => isAdmin())
 const activeModelRelease = computed(() => context.value?.model_release || null)
-const eligibleAgents = computed(() => agents.value.filter((agent) => {
-  if (!domainId.value) return false
-  return agent.semantic_domain_id === domainId.value
-    || (agent.semantic_domain_ids || []).includes(domainId.value)
-}))
 const selectedGrants = computed(() => (
   selectedClient.value ? grantsByClient.value[selectedClient.value.id] || [] : []
 ))
@@ -566,7 +565,7 @@ onMounted(async () => {
     domains.value = await fetchOntologyDomains()
     domainId.value = domains.value[0]?.id || null
     if (canManage.value) {
-      await Promise.all([loadClients(), loadAgents()])
+      await loadClients()
     }
   } catch (error) {
     ElMessage.error(errorMessage(error))
@@ -603,10 +602,6 @@ async function loadCapabilities() {
 
 function openModelRelease() {
   router.push({ path: '/enterprise-model', query: { section: 'release' } })
-}
-
-async function loadAgents() {
-  agents.value = await fetchAgents()
 }
 
 async function loadClients() {
@@ -714,7 +709,6 @@ function openGrantDialog() {
   }
   grantForm.domain_id = domainId.value
   grantForm.capability_key = queryCapabilities.value[0]?.key || ''
-  grantForm.execution_agent_id = eligibleAgents.value[0]?.id || null
   grantDialogVisible.value = true
 }
 
@@ -723,13 +717,8 @@ async function saveGrant() {
     !selectedClient.value
     || !grantForm.domain_id
     || !grantForm.capability_key
-    || !grantForm.execution_agent_id
   ) {
-    ElMessage.warning(
-      eligibleAgents.value.length
-        ? '请选择能力和权限执行适配'
-        : '当前领域没有可复用的内部权限适配，请先在“平台管理 > 调试与验证智能体”绑定领域和数据源',
-    )
+    ElMessage.warning('请选择需要授权的业务能力')
     return
   }
   grantSaving.value = true
@@ -737,7 +726,6 @@ async function saveGrant() {
     await updateCapabilityGrant(selectedClient.value.id, {
       domain_id: grantForm.domain_id,
       capability_key: grantForm.capability_key,
-      execution_agent_id: grantForm.execution_agent_id,
       status: 'active',
     })
     grantDialogVisible.value = false
@@ -760,7 +748,6 @@ async function revokeGrant(grant: CapabilityGrant) {
     await updateCapabilityGrant(grant.client_id, {
       domain_id: grant.domain_id,
       capability_key: grant.capability_key,
-      execution_agent_id: grant.execution_agent_id,
       status: 'revoked',
     })
     ElMessage.success('能力授权已撤销')
@@ -781,10 +768,6 @@ function clientName(clientId: number) {
 
 function domainName(id: number) {
   return domains.value.find(item => item.id === id)?.name || `领域 ${id}`
-}
-
-function agentName(id: number) {
-  return agents.value.find(item => item.id === id)?.name || `ID ${id}`
 }
 
 function auditStatusLabel(status: string) {
@@ -894,6 +877,10 @@ function errorMessage(error: unknown) {
 
 .consumer-note {
   margin-bottom: 14px;
+}
+
+.grant-boundary-note {
+  margin-bottom: 18px;
 }
 
 .page-header {

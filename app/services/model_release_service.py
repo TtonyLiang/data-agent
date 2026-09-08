@@ -221,10 +221,33 @@ def _validate_component_payloads(
                 target_keys = {
                     prop.get("property_key") for prop in target.get("properties") or []
                 }
-                if item.get("source_property") not in source_keys:
-                    errors.append(f"关系 {item['link_key']} 的起点属性不存在")
-                if item.get("target_property") not in target_keys:
-                    errors.append(f"关系 {item['link_key']} 的终点属性不存在")
+                source_relation_keys = list(
+                    item.get("source_property_keys")
+                    or [item.get("source_property")]
+                )
+                target_relation_keys = list(
+                    item.get("target_property_keys")
+                    or [item.get("target_property")]
+                )
+                if len(source_relation_keys) != len(target_relation_keys):
+                    errors.append(f"关系 {item['link_key']} 的两端复合属性数量不一致")
+                    continue
+                missing_source = [
+                    key for key in source_relation_keys if key not in source_keys
+                ]
+                missing_target = [
+                    key for key in target_relation_keys if key not in target_keys
+                ]
+                if missing_source:
+                    errors.append(
+                        f"关系 {item['link_key']} 的起点属性不存在: "
+                        + "、".join(str(key) for key in missing_source)
+                    )
+                if missing_target:
+                    errors.append(
+                        f"关系 {item['link_key']} 的终点属性不存在: "
+                        + "、".join(str(key) for key in missing_target)
+                    )
             for item in action_types:
                 if item.get("status") != "active":
                     continue
@@ -290,8 +313,18 @@ def _validate_component_payloads(
             for item in query_context.get("warnings") or []
             if isinstance(item, dict) and item.get("message")
         )
+        bridge = query_context.get("bridge") or {}
+        bridge_errors = (
+            bridge.get("errors") or [] if isinstance(bridge, dict) else []
+        )
+        errors.extend(
+            str(item.get("message") or "")
+            for item in bridge_errors
+            if isinstance(item, dict) and item.get("message")
+        )
         checks["ontology_semantic_bridge"] = {
-            "valid": True,
+            "valid": not bridge_errors,
+            "relation_binding_errors": len(bridge_errors),
             "query_capabilities": len(query_context.get("query_capabilities") or []),
         }
 

@@ -320,6 +320,9 @@ async def _invoke_query_capability(
         "warnings": runtime_warnings,
         "validation": validation_payload,
     }
+    permission_metadata = ontology_context.get("data_permission")
+    if isinstance(permission_metadata, dict):
+        capability_trace["permission"] = permission_metadata
     result: dict[str, Any] = {
         "tool": QUERY_CAPABILITY_TOOL,
         "read_only": True,
@@ -423,6 +426,14 @@ async def _invoke_query_capability(
             "compile_strategy": "deterministic_logic_form",
         },
     }
+    if isinstance(permission_metadata, dict):
+        execution_state["permission_domain_id"] = domain_id
+        execution_state["permission_compatibility_agent_id"] = (
+            permission_metadata.get("compatibility_agent_id")
+        )
+        execution_state["allow_agent_permission_fallback"] = bool(
+            permission_metadata.get("compatibility_fallback")
+        )
     try:
         execution_result = await sql_execute_node(execution_state)
     except Exception as exc:  # pragma: no cover - the node normally normalizes errors

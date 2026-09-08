@@ -40,7 +40,8 @@
         <el-table-column label="作用域" min-width="260">
           <template #default="{ row }">
             <div class="scope-tags">
-              <el-tag v-if="row.agent_id" size="small" effect="plain">验证智能体覆盖：{{ agentName(row.agent_id) }}</el-tag>
+              <el-tag v-if="row.agent_id && promptAllowsAgentScope(row.prompt_key)" size="small" effect="plain">验证智能体覆盖：{{ agentName(row.agent_id) }}</el-tag>
+              <el-tag v-else-if="row.agent_id" size="small" type="warning" effect="plain">历史智能体覆盖：运行时忽略</el-tag>
               <el-tag v-if="row.model_config_id" size="small" effect="plain">模型：{{ modelName(row.model_config_id) }}</el-tag>
               <el-tag v-if="row.semantic_domain_id" size="small" effect="plain">业务领域：{{ domainName(row.semantic_domain_id) }}</el-tag>
               <el-tag v-if="!row.agent_id && !row.model_config_id && !row.semantic_domain_id" size="small" type="info" effect="plain">全局默认</el-tag>
@@ -75,7 +76,8 @@
         <dl class="detail-grid">
           <dt>名称</dt><dd>{{ detailTemplate.name }}</dd>
           <dt>节点</dt><dd>{{ promptKeyLabel(detailTemplate.prompt_key) }}</dd>
-          <dt>验证智能体覆盖</dt><dd>{{ detailTemplate.agent_id ? agentName(detailTemplate.agent_id) : '不限定' }}</dd>
+          <dt>验证智能体覆盖</dt>
+          <dd>{{ promptAgentScopeText(detailTemplate) }}</dd>
           <dt>模型</dt><dd>{{ detailTemplate.model_config_id ? modelName(detailTemplate.model_config_id) : '不限定' }}</dd>
           <dt>业务领域</dt><dd>{{ detailTemplate.semantic_domain_id ? domainName(detailTemplate.semantic_domain_id) : '不限定' }}</dd>
           <dt>状态</dt><dd>{{ detailTemplate.status }}</dd>
@@ -100,9 +102,19 @@
           <el-input v-model="form.description" placeholder="模板用途、适用范围或变更说明" />
         </el-form-item>
         <el-form-item label="验证智能体覆盖">
-          <el-select v-model="form.agent_id" clearable placeholder="不限定验证智能体">
+          <el-select
+            v-model="form.agent_id"
+            clearable
+            :disabled="!selectedPromptAllowsAgentScope"
+            :placeholder="selectedPromptAllowsAgentScope ? '不限定验证智能体' : '业务语义关键节点不可按智能体覆盖'"
+          >
             <el-option v-for="agent in agents" :key="agent.id" :label="agent.name" :value="agent.id" />
           </el-select>
+          <div class="form-help">
+            {{ selectedPromptAllowsAgentScope
+              ? '仅用于交互或输出风格个性化，不改变企业业务语义。'
+              : '该节点会影响业务理解或查询执行，只允许按业务领域、模型或全局配置。' }}
+          </div>
         </el-form-item>
         <el-form-item label="模型">
           <el-select v-model="form.model_config_id" clearable placeholder="不限定模型">
@@ -182,6 +194,19 @@ const fallbackPromptKeyOptions = [
   { label: '深度分析报告生成系统提示词', value: 'phase3_report_generator.system' },
   { label: '深度分析报告生成用户提示词', value: 'phase3_report_generator.user' },
 ]
+const agentScopedInteractionOutputPromptKeys = new Set([
+  'phase3_python_analyze.system',
+  'phase3_report_generator.system',
+  'phase3_report_generator.user',
+])
+const businessSemanticPromptKeys = new Set([
+  'intent_recognition.system',
+  'semantic_enhance.system',
+  'nl2lf_generate.system',
+  'nl2sql_fallback.system',
+  'phase3_python_generate.system',
+  'phase3_python_generate.user',
+])
 
 const loading = ref(false)
 const activePromptKey = ref('')
@@ -204,6 +229,7 @@ const promptKeyOptions = computed(() => {
   return promptCatalog.value.map(item => ({ label: item.name, value: item.prompt_key }))
 })
 const form = ref<PromptTemplateRequest>(defaultForm())
+const selectedPromptAllowsAgentScope = computed(() => promptAllowsAgentScope(form.value.prompt_key))
 
 onMounted(async () => {
   await Promise.all([loadPromptCatalog(), loadTemplates(), loadScopeOptions()])
@@ -281,6 +307,7 @@ function openCreate() {
 }
 
 function handlePromptKeyChange(promptKey: string) {
+  if (!promptAllowsAgentScope(promptKey)) form.value.agent_id = null
   if (editingId.value) return
   form.value = defaultForm(promptKey)
 }
@@ -297,7 +324,7 @@ function openEdit(template: PromptTemplateItem) {
     prompt_key: template.prompt_key,
     name: template.name,
     description: template.description || '',
-    agent_id: template.agent_id || null,
+    agent_id: promptAllowsAgentScope(template.prompt_key) ? template.agent_id || null : null,
     model_config_id: template.model_config_id || null,
     semantic_domain_id: template.semantic_domain_id || null,
     template_text: template.template_text,
@@ -309,6 +336,10 @@ function openEdit(template: PromptTemplateItem) {
 async function handleSubmit() {
   if (!form.value.name || !form.value.prompt_key || !form.value.template_text.trim()) {
     ElMessage.warning('请填写模板名称、节点和模板内容')
+    return
+  }
+  if (!selectedPromptAllowsAgentScope.value && form.value.agent_id) {
+    ElMessage.warning('业务语义关键 Prompt 不允许按验证智能体覆盖')
     return
   }
   try {
@@ -326,6 +357,21 @@ async function handleSubmit() {
   } catch {
     ElMessage.error(editingId.value ? '更新失败' : '创建失败')
   }
+}
+
+function promptAllowsAgentScope(promptKey: string) {
+  const policy = catalogMap.value.get(promptKey)?.agent_scope_allowed
+  if (typeof policy === 'boolean') return policy
+  if (businessSemanticPromptKeys.has(promptKey)) return false
+  return agentScopedInteractionOutputPromptKeys.has(promptKey)
+}
+
+function promptAgentScopeText(template: PromptTemplateItem) {
+  if (!template.agent_id) return '不限定'
+  if (!promptAllowsAgentScope(template.prompt_key)) {
+    return `历史配置：${agentName(template.agent_id)}（运行时忽略）`
+  }
+  return agentName(template.agent_id)
 }
 
 async function handleDelete(template: PromptTemplateItem) {
@@ -446,6 +492,13 @@ async function handleDelete(template: PromptTemplateItem) {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.form-help {
+  margin-top: 6px;
+  color: var(--wq-muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .detail-panel h4 {

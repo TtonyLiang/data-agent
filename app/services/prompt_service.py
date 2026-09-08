@@ -1,8 +1,8 @@
 """Prompt 模板服务 —— 节点提示词的配置化管理与解析。
 
 PromptService 负责 Prompt 模板的 CRUD 和运行时解析。解析逻辑:
-1. 按 prompt_key + agent_id + model_config_id + semantic_domain_id 查找最佳模板。
-2. 命中多个时,按"非空作用域越多越优先"排序,取最具体的那个。
+1. 业务语义关键模板忽略 agent_id，仅按领域、模型和全局作用域匹配。
+2. 交互和输出类模板可叠加 Agent 作用域，并取最具体的匹配项。
 3. 用模板的 template_text.format(**variables) 渲染变量。
 4. 渲染失败(KeyError/ValueError)时自动回退到代码内默认模板,
    避免配置错误直接打断问数链路。
@@ -16,7 +16,11 @@ from __future__ import annotations
 import logging
 
 from app.db.mysql import get_management_db
-from app.models.prompt import PromptTemplateCreate, PromptTemplateUpdate
+from app.models.prompt import (
+    PromptTemplateCreate,
+    PromptTemplateUpdate,
+    prompt_allows_agent_scope,
+)
 from app.utils.logging_helpers import json_for_log, truncate_text
 
 logger = logging.getLogger(__name__)
@@ -44,6 +48,7 @@ class PromptService:
 
         若 template.id 已存在则更新,否则按 prompt_key+作用域唯一性去重后插入。
         """
+        self._validate_scope(template.prompt_key, template.agent_id)
         db = get_management_db()
         logger.info(
             "prompt upsert prompt_key=%s id=%s scope=%s",
@@ -74,6 +79,7 @@ class PromptService:
 
     async def update(self, template_id: int, template: PromptTemplateUpdate) -> bool:
         """用提供的字段替换指定 id 的 Prompt 模板。"""
+        self._validate_scope(template.prompt_key, template.agent_id)
         db = get_management_db()
         logger.info(
             "prompt update id=%s prompt_key=%s template_chars=%s",
@@ -121,7 +127,12 @@ class PromptService:
         而是回退到代码内默认模板继续运行。
         """
         try:
-            row = await self.find_best(prompt_key, agent_id, model_config_id, semantic_domain_id)
+            row = await self.find_best(
+                prompt_key,
+                agent_id,
+                model_config_id,
+                semantic_domain_id,
+            )
         except Exception:
             logger.exception("prompt template resolve failed prompt_key=%s", prompt_key)
             row = None
@@ -150,7 +161,7 @@ class PromptService:
             row.get("id") if row else None,
             json_for_log(
                 {
-                    "agent_id": agent_id,
+                    "agent_id": agent_id if prompt_allows_agent_scope(prompt_key) else None,
                     "model_config_id": model_config_id,
                     "semantic_domain_id": semantic_domain_id,
                 }
@@ -169,12 +180,14 @@ class PromptService:
     ) -> dict | None:
         """查找最匹配的 active 模板。
 
-        匹配逻辑:按 (agent_id, model_config_id, semantic_domain_id) 的非空数量
-        加权排序 —— 命中非空作用域越多优先级越高。同一优先级取 id 最大的(最新)。
+        匹配逻辑:业务语义关键模板先把 Agent 作用域归一为空；其余模板按
+        (agent_id, model_config_id, semantic_domain_id) 的非空数量加权排序。
+        命中非空作用域越多优先级越高，同一优先级取 id 最大的最新记录。
         这保证了:
         - 全局模板(agent/model/semantic 全 NULL)优先级最低
         - 三者全命中的模板优先级最高
         """
+        effective_agent_id = agent_id if prompt_allows_agent_scope(prompt_key) else None
         rows = await get_management_db().execute_query(
             "SELECT * FROM prompt_template WHERE prompt_key = :prompt_key AND status = 'active' "
             # 作用域匹配:NULL 表示"对所有生效"
@@ -189,7 +202,7 @@ class PromptService:
             "LIMIT 1",
             {
                 "prompt_key": prompt_key,
-                "agent_id": agent_id,
+                "agent_id": effective_agent_id,
                 "model_config_id": model_config_id,
                 "semantic_domain_id": semantic_domain_id,
             },
@@ -198,12 +211,20 @@ class PromptService:
             "prompt find_best prompt_key=%s agent_id=%s model_config_id=%s "
             "semantic_domain_id=%s matched=%s",
             prompt_key,
-            agent_id,
+            effective_agent_id,
             model_config_id,
             semantic_domain_id,
             rows[0]["id"] if rows else None,
         )
         return rows[0] if rows else None
+
+    @staticmethod
+    def _validate_scope(prompt_key: str, agent_id: int | None) -> None:
+        if agent_id is not None and not prompt_allows_agent_scope(prompt_key):
+            raise ValueError(
+                "业务语义关键 Prompt 不允许按验证智能体覆盖；"
+                "请改用业务领域、模型或全局作用域"
+            )
 
 
 # 全局单例

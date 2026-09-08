@@ -34,7 +34,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.agent.graph import AgentState, build_mvp_graph
 from app.agent.nodes.intent import rule_based_intent_with_history
-from app.api.deps import get_current_user, require_agent_access
+from app.api.deps import get_current_user, require_agent_access, require_domain_access
 from app.config import get_settings
 from app.db.migrations import run_management_migrations
 from app.db.mysql import close_database_clients, get_management_db
@@ -188,6 +188,8 @@ async def prepare_chat_state(
     *,
     question: str,
     agent_id: int,
+    domain_id: int | None,
+    model_release_id: int | None,
     datasource_id: int | None,
     session_id: str,
     trace_id: str,
@@ -201,6 +203,8 @@ async def prepare_chat_state(
     state = await get_task_checkpoint_service().prepare_turn(
         question=question,
         agent_id=agent_id,
+        domain_id=domain_id,
+        model_release_id=model_release_id,
         user_id=user.id,
         session_id=session_id,
         datasource_id=datasource_id,
@@ -218,6 +222,8 @@ async def prepare_chat_state(
 
 def task_response_fields(state: dict[str, Any]) -> dict[str, Any]:
     return {
+        "domain_id": state.get("domain_id"),
+        "model_release_id": state.get("model_release_id"),
         "task_id": state.get("task_id"),
         "turn_id": state.get("turn_id"),
         "turn_mode": state.get("turn_mode", "new_task"),
@@ -232,6 +238,8 @@ def task_response_fields(state: dict[str, Any]) -> dict[str, Any]:
 def task_history_metadata(state: dict[str, Any]) -> dict[str, Any]:
     """Return the compact task-resume summary stored with an assistant turn."""
     return {
+        "domain_id": state.get("domain_id"),
+        "model_release_id": state.get("model_release_id"),
         "reused_artifacts": list(state.get("reused_artifacts") or []),
         "invalidated_artifacts": list(state.get("invalidated_artifacts") or []),
         "context_invalidated": bool(state.get("context_invalidated", False)),
@@ -241,6 +249,64 @@ def task_history_metadata(state: dict[str, Any]) -> dict[str, Any]:
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+def optional_positive_int(value: Any, field_name: str) -> int | None:
+    """Normalize optional request identifiers without accepting booleans or zero."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise HTTPException(status_code=400, detail=f"{field_name} 必须是正整数")
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"{field_name} 必须是正整数") from exc
+    if normalized <= 0:
+        raise HTTPException(status_code=400, detail=f"{field_name} 必须是正整数")
+    return normalized
+
+
+async def resolve_chat_business_context(
+    request: dict[str, Any],
+    current_user: PublicUser,
+    *,
+    agent_id: int,
+    session_id: str,
+) -> tuple[int | None, int | None]:
+    """Resolve the enterprise-model context before running the validation Agent.
+
+    New clients select ``domain_id`` explicitly. Existing clients remain
+    compatible through the domain stored in their task checkpoint and finally
+    the Agent's default-domain fallback inside the checkpoint/runtime services.
+    """
+    domain_id = optional_positive_int(request.get("domain_id"), "domain_id")
+    model_release_id = optional_positive_int(
+        request.get("model_release_id"), "model_release_id"
+    )
+    if session_id:
+        checkpoint = await get_task_checkpoint_service().load(
+            current_user.id,
+            agent_id,
+            session_id,
+        )
+        if checkpoint:
+            checkpoint_domain_id = optional_positive_int(
+                checkpoint.get("domain_id"), "domain_id"
+            )
+            domain_id = domain_id or checkpoint_domain_id
+            if (
+                model_release_id is None
+                and checkpoint_domain_id is not None
+                and checkpoint_domain_id == domain_id
+            ):
+                model_release_id = optional_positive_int(
+                    checkpoint.get("model_release_id"), "model_release_id"
+                )
+    if model_release_id is not None and domain_id is None:
+        raise HTTPException(status_code=400, detail="指定 model_release_id 时必须同时指定业务领域")
+    if domain_id is not None:
+        await require_domain_access(domain_id, current_user)
+    return domain_id, model_release_id
 
 
 @app.post("/api/chat")
@@ -256,6 +322,12 @@ async def chat(request: dict, current_user: PublicUser = Depends(get_current_use
     started_at = time.monotonic()
 
     await require_agent_access(agent_id, current_user)
+    domain_id, model_release_id = await resolve_chat_business_context(
+        request,
+        current_user,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
 
     # 加载历史上下文
     history = await load_history(agent_id, session_id, limit=5, user=current_user)
@@ -264,12 +336,15 @@ async def chat(request: dict, current_user: PublicUser = Depends(get_current_use
         datasource_id,
         question,
         history,
+        domain_id=domain_id,
     )
 
     graph = get_graph()
     state = await prepare_chat_state(
         question=question,
         agent_id=agent_id,
+        domain_id=domain_id,
+        model_release_id=model_release_id,
         datasource_id=datasource_id,
         session_id=session_id,
         trace_id=trace_id,
@@ -281,9 +356,12 @@ async def chat(request: dict, current_user: PublicUser = Depends(get_current_use
     )
 
     logger.info(
-        "chat request started trace_id=%s session_id=%s agent_id=%s datasource_id=%s",
+        "chat request started trace_id=%s session_id=%s domain_id=%s "
+        "model_release_id=%s agent_id=%s datasource_id=%s",
         trace_id,
         session_id,
+        domain_id,
+        model_release_id,
         agent_id,
         datasource_id,
     )
@@ -360,6 +438,12 @@ async def chat_stream(request: dict, current_user: PublicUser = Depends(get_curr
     enable_low_confidence_clarification = bool(request.get("enable_low_confidence_clarification"))
 
     await require_agent_access(agent_id, current_user)
+    domain_id, model_release_id = await resolve_chat_business_context(
+        request,
+        current_user,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
 
     history = await load_history(agent_id, session_id, limit=5, user=current_user)
     datasource_id = await resolve_chat_datasource_access(
@@ -367,6 +451,7 @@ async def chat_stream(request: dict, current_user: PublicUser = Depends(get_curr
         datasource_id,
         question,
         history,
+        domain_id=domain_id,
     )
 
     async def event_generator():
@@ -375,6 +460,8 @@ async def chat_stream(request: dict, current_user: PublicUser = Depends(get_curr
         state = await prepare_chat_state(
             question=question,
             agent_id=agent_id,
+            domain_id=domain_id,
+            model_release_id=model_release_id,
             datasource_id=datasource_id,
             session_id=session_id,
             trace_id=trace_id,
@@ -402,9 +489,12 @@ async def chat_stream(request: dict, current_user: PublicUser = Depends(get_curr
 
         try:
             logger.info(
-                "chat stream started trace_id=%s session_id=%s agent_id=%s datasource_id=%s",
+                "chat stream started trace_id=%s session_id=%s domain_id=%s "
+                "model_release_id=%s agent_id=%s datasource_id=%s",
                 trace_id,
                 session_id,
+                domain_id,
+                model_release_id,
                 agent_id,
                 datasource_id,
             )
@@ -807,13 +897,31 @@ async def confirm_sql_execution(
         raise HTTPException(status_code=400, detail="缺少待确认任务的会话 ID")
 
     await require_agent_access(agent_id, current_user)
-    datasource_id = await resolve_datasource_access(agent_id, datasource_id)
+    domain_id, model_release_id = await resolve_chat_business_context(
+        request,
+        current_user,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
+    if domain_id is not None:
+        datasource_id = await resolve_chat_datasource_access(
+            agent_id,
+            datasource_id,
+            question,
+            domain_id=domain_id,
+        )
+        if datasource_id is None:
+            raise HTTPException(status_code=400, detail="当前业务领域未绑定可用数据源")
+    else:
+        datasource_id = await resolve_datasource_access(agent_id, datasource_id)
     checkpoint = await get_task_checkpoint_service().load(current_user.id, agent_id, session_id)
     sql = resolve_pending_confirmation_sql(checkpoint, request)
     history = await load_history(agent_id, session_id, limit=5, user=current_user)
     state = await prepare_chat_state(
         question=question,
         agent_id=agent_id,
+        domain_id=domain_id,
+        model_release_id=model_release_id,
         datasource_id=datasource_id,
         session_id=session_id,
         trace_id=trace_id,
@@ -1342,16 +1450,35 @@ async def resolve_chat_datasource_access(
     datasource_id: int | None,
     question: str,
     history: list[dict[str, Any]] | None = None,
+    *,
+    domain_id: int | None = None,
 ) -> int | None:
     """Resolve a chat datasource without blocking non-query conversation turns.
 
-    Explicit datasource ids are always validated.  When the request omits an id,
-    only an obvious data-query follow-up requires a bound datasource up front;
-    casual chat and metadata/model questions can reach the conversation branch
-    and return a useful answer even for an agent that has no datasource yet.
-    Data nodes still enforce datasource availability before executing SQL.
+    An explicitly selected domain owns the datasource boundary; the validation
+    Agent does not need a duplicate datasource binding.  Legacy requests without
+    a domain keep the historical Agent datasource fallback.  Casual chat can
+    still proceed without a datasource, while data queries fail clearly.
     """
     preliminary_intent = rule_based_intent_with_history(question, history or [])
+    if domain_id is not None:
+        from app.services.semantic_runtime import get_semantic_runtime_service
+
+        domain = await get_semantic_runtime_service().get_domain(domain_id)
+        if domain is None:
+            raise HTTPException(status_code=404, detail="企业业务领域不存在")
+        domain_datasource_id = int(domain.datasource_id or 0)
+        if datasource_id and (
+            not domain_datasource_id
+            or int(datasource_id) != domain_datasource_id
+        ):
+            raise HTTPException(status_code=400, detail="所选数据源与企业业务领域不一致")
+        if domain_datasource_id:
+            return domain_datasource_id
+        if preliminary_intent == "data_query":
+            raise HTTPException(status_code=400, detail="当前业务领域未绑定可用数据源")
+        return None
+
     allow_missing = preliminary_intent != "data_query"
     return await resolve_datasource_access(
         agent_id,
@@ -1719,6 +1846,8 @@ async def get_history(
         task_metadata = row.pop("task_metadata", None)
         if not isinstance(task_metadata, dict):
             task_metadata = {}
+        row["domain_id"] = task_metadata.get("domain_id")
+        row["model_release_id"] = task_metadata.get("model_release_id")
         row["reused_artifacts"] = list(task_metadata.get("reused_artifacts") or [])
         row["invalidated_artifacts"] = list(task_metadata.get("invalidated_artifacts") or [])
         row["context_invalidated"] = bool(task_metadata.get("context_invalidated", False))

@@ -26,11 +26,28 @@ from app.api.deps import (
 from app.models.knowledge import LogicForm, SemanticAssetPayload, SemanticDomain
 from app.models.user import PublicUser
 from app.services.embedding_service import get_embedding_service
+from app.services.model_release_service import get_model_release_service
+from app.services.ontology_semantic_bridge import validate_semantic_relation_bindings
+from app.services.ontology_service import get_ontology_service
 from app.services.semantic_runtime import get_semantic_runtime_service
 from app.services.vector_store import VectorRecord, get_vector_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+async def _relation_binding_errors(
+    domain_id: int,
+    relations: list[dict],
+    *,
+    require_active: bool = True,
+) -> list[dict]:
+    link_types = await get_ontology_service().list_link_types(domain_id)
+    return validate_semantic_relation_bindings(
+        link_types,
+        relations,
+        require_active=require_active,
+    )
 
 
 # ============================================================
@@ -133,9 +150,27 @@ async def validate_domain(domain_id: int, _: PublicUser = Depends(require_admin)
     """校验语义资产:物理表/字段是否已采集、引用是否完整。"""
     svc = get_semantic_runtime_service()
     try:
-        return await svc.validate_domain_assets(domain_id)
+        result = await svc.validate_domain_assets(domain_id)
+        assets = await svc.list_assets(domain_id, "relation")
+        binding_errors = await _relation_binding_errors(
+            domain_id, assets.get("relation") or []
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    errors = [
+        *list(result.get("errors") or []),
+        *[
+            str(item.get("message") or "")
+            for item in binding_errors
+            if item.get("message")
+        ],
+    ]
+    checks = dict(result.get("checks") or {})
+    checks["ontology_relation_bindings"] = {
+        "valid": not binding_errors,
+        "errors": binding_errors,
+    }
+    return {**result, "valid": not errors, "errors": errors, "checks": checks}
 
 
 # ============================================================
@@ -251,6 +286,14 @@ async def upsert_asset(
     if await svc.get_domain(domain_id) is None:
         raise HTTPException(status_code=404, detail="语义领域不存在")
     try:
+        if payload.asset_type == "relation":
+            binding_errors = await _relation_binding_errors(
+                domain_id,
+                [payload.data],
+                require_active=False,
+            )
+            if binding_errors:
+                raise ValueError(str(binding_errors[0]["message"]))
         asset_id = await svc.upsert_asset(domain_id, payload.asset_type, payload.data)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -366,13 +409,35 @@ async def sync_domain_to_vector(domain_id: int, _: PublicUser = Depends(require_
     if domain is None:
         raise HTTPException(status_code=404, detail="语义领域不存在")
     execution_agent_ids = await svc.get_domain_agent_ids(domain_id)
-
-    runtime = await svc.build_runtime(
-        agent_id=execution_agent_ids[0] if execution_agent_ids else None,
-        datasource_id=domain.datasource_id,
-        domain_key=domain.domain_key,
-        domain_id=domain.id,
-    )
+    model_release = await get_model_release_service().get_active_release(domain_id)
+    if model_release is not None:
+        model_release_id = int(model_release["id"])
+        semantic_snapshot_id = int(model_release["semantic_snapshot_id"])
+        runtime = await svc.build_runtime_from_snapshot(
+            domain_id,
+            semantic_snapshot_id,
+            agent_id=None,
+            expected_snapshot_hash=str(
+                model_release.get("semantic_snapshot_hash") or ""
+            ),
+        )
+    else:
+        snapshots = await svc.list_snapshots(domain_id)
+        if not snapshots:
+            return {
+                "synced": 0,
+                "asset_count": 0,
+                "agent_ids": execution_agent_ids,
+                "skipped": True,
+                "message": "当前领域没有企业模型版本或语义快照，未生成向量索引",
+            }
+        model_release_id = None
+        semantic_snapshot_id = int(snapshots[0]["id"])
+        runtime = await svc.build_runtime_from_snapshot(
+            domain_id,
+            semantic_snapshot_id,
+            agent_id=None,
+        )
 
     # 第2步:遍历各类资产,拼接可向量化的文本
     records = []
@@ -419,62 +484,109 @@ async def sync_domain_to_vector(domain_id: int, _: PublicUser = Depends(require_
             }
         )
 
-    # 第3步:每个消费 Agent 有独立向量模型和 collection，逐一同步
-    if not execution_agent_ids:
-        return {
-            "synced": 0,
-            "asset_count": len(records),
-            "agent_ids": [],
-            "skipped": True,
-            "message": "企业模型已读取；当前没有验证智能体，暂未生成验证检索索引",
-        }
+    # 第3步:Agent 只负责选择 embedding 配置；相同配置共享一个企业模型索引。
+    embedding_service = get_embedding_service()
+    embedding_profiles: dict[tuple[int | None, str], dict] = {}
+    for agent_id in execution_agent_ids or [None]:
+        identity = await embedding_service.get_index_identity(agent_id)
+        profile_key = (
+            int(identity["config_id"])
+            if identity.get("config_id") is not None
+            else None,
+            str(identity["version"]),
+        )
+        embedding_profiles.setdefault(
+            profile_key,
+            {"agent_id": agent_id, "identity": identity},
+        )
+
     vec_store = get_vector_store()
     if not records:
-        for agent_id in execution_agent_ids:
-            vec_store.delete_collection(agent_id)
-            vec_store.delete_collection(agent_id, domain_id)
+        for profile in embedding_profiles.values():
+            identity = profile["identity"]
+            vec_store.delete_collection(
+                None,
+                domain_id,
+                model_release_id=model_release_id,
+                semantic_snapshot_id=semantic_snapshot_id,
+                embedding_model_config_id=identity.get("config_id"),
+                embedding_model_version=str(identity["version"]),
+            )
         return {
             "synced": 0,
             "agent_ids": execution_agent_ids,
             "message": "无语义资产需要同步",
         }
 
-    # 第4步:按 Agent 的 embedding 配置分别向量化并写入其 collection
-    for agent_id in execution_agent_ids:
-        vectors = await get_embedding_service().embed_texts(
+    # 第4步:按唯一 embedding 配置向量化并写入版本化企业集合。
+    synced_indexes = []
+    for profile in embedding_profiles.values():
+        agent_id = profile["agent_id"]
+        identity = profile["identity"]
+        vectors = await embedding_service.embed_texts(
             [item["text"] for item in records],
             agent_id=agent_id,
         )
-        # Replace only this domain's collection so other bound domains remain
-        # intact. Remove the legacy namespace after the new index is ready.
-        vec_store.delete_collection(agent_id, domain_id)
+        vec_store.delete_collection(
+            None,
+            domain_id,
+            model_release_id=model_release_id,
+            semantic_snapshot_id=semantic_snapshot_id,
+            embedding_model_config_id=identity.get("config_id"),
+            embedding_model_version=str(identity["version"]),
+        )
         vec_store.insert(
-            agent_id,
+            None,
             [
                 VectorRecord(
                     content=item["text"],
                     vector=vectors[index],
                     source_type=item["source_type"],
                     source_id=item["source_id"],
-                    agent_id=agent_id,
-                    metadata=item["metadata"],
+                    agent_id=0,
+                    metadata={
+                        **item["metadata"],
+                        "domain_id": domain_id,
+                        "model_release_id": model_release_id,
+                        "semantic_snapshot_id": semantic_snapshot_id,
+                        "embedding_model_config_id": identity.get("config_id"),
+                        "embedding_model_version": identity["version"],
+                    },
                 )
                 for index, item in enumerate(records)
             ],
             domain_id=domain_id,
+            model_release_id=model_release_id,
+            semantic_snapshot_id=semantic_snapshot_id,
+            embedding_model_config_id=identity.get("config_id"),
+            embedding_model_version=str(identity["version"]),
+            embedding_dimension=int(identity["dimension"]),
         )
-        vec_store.delete_collection(agent_id)
+        synced_indexes.append(
+            {
+                "embedding_model_config_id": identity.get("config_id"),
+                "embedding_model_version": identity["version"],
+                "dimension": identity["dimension"],
+            }
+        )
     logger.info(
-        "sync_vector domain_id=%s agent_ids=%s synced_per_agent=%s",
+        "sync_vector domain_id=%s model_release_id=%s semantic_snapshot_id=%s "
+        "agent_ids=%s index_count=%s asset_count=%s",
         domain_id,
+        model_release_id,
+        semantic_snapshot_id,
         execution_agent_ids,
+        len(synced_indexes),
         len(records),
     )
     return {
         "synced": len(records),
         "agent_ids": execution_agent_ids,
+        "model_release_id": model_release_id,
+        "semantic_snapshot_id": semantic_snapshot_id,
+        "embedding_indexes": synced_indexes,
         "message": (
             f"同步完成，共 {len(records)} 条语义资产，"
-            f"已更新 {len(execution_agent_ids)} 个智能体"
+            f"已更新 {len(synced_indexes)} 个模型索引"
         ),
     }

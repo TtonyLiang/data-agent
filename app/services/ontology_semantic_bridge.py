@@ -95,6 +95,71 @@ def _metadata(item: Mapping[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
+def _semantic_relation_link_key(relation: Mapping[str, Any]) -> str:
+    """Return the explicitly declared Ontology link binding key."""
+    metadata_link_key = str(_metadata(relation).get("link_key") or "").strip()
+    return metadata_link_key or str(relation.get("relation_key") or "").strip()
+
+
+def validate_semantic_relation_bindings(
+    link_types: Any,
+    semantic_relations: Any,
+    *,
+    require_active: bool = True,
+) -> list[dict[str, Any]]:
+    """Validate semantic query paths against explicit Ontology link bindings.
+
+    A relation is never associated by physical tables or matching endpoints.
+    Its ``metadata.link_key`` (when present), otherwise ``relation_key``, must
+    name one active Ontology link and preserve that link's direction.
+    """
+    eligible_links = {
+        str(item.get("link_key") or "").strip(): item
+        for item in _records(link_types)
+        if str(item.get("link_key") or "").strip()
+        and (
+            str(item.get("status") or "active") == "active"
+            if require_active
+            else str(item.get("status") or "active") != "deprecated"
+        )
+    }
+    errors: list[dict[str, Any]] = []
+    for relation in _records(semantic_relations):
+        relation_key = str(relation.get("relation_key") or "").strip()
+        link_key = _semantic_relation_link_key(relation)
+        link = eligible_links.get(link_key)
+        if link is None:
+            errors.append(
+                _warning(
+                    "semantic_relation_link_missing",
+                    f"语义关系 {relation_key or '<empty>'} 未显式绑定已生效的本体关系",
+                    relation_key=relation_key,
+                    link_key=link_key,
+                    severity="error",
+                )
+            )
+            continue
+        source = str(relation.get("source_concept") or "").strip()
+        target = str(relation.get("target_concept") or "").strip()
+        expected_source = str(link.get("source_object_key") or "").strip()
+        expected_target = str(link.get("target_object_key") or "").strip()
+        if source != expected_source or target != expected_target:
+            errors.append(
+                _warning(
+                    "semantic_relation_direction_mismatch",
+                    f"语义关系 {relation_key} 与本体关系 {link_key} 的起点或终点方向不一致",
+                    relation_key=relation_key,
+                    link_key=link_key,
+                    source_concept=source,
+                    target_concept=target,
+                    expected_source_object_key=expected_source,
+                    expected_target_object_key=expected_target,
+                    severity="error",
+                )
+            )
+    return errors
+
+
 def _explicit_metric_objects(metric: Mapping[str, Any]) -> list[str]:
     metadata = _metadata(metric)
     values: list[str] = []
@@ -122,7 +187,7 @@ class OntologySemanticBridge:
     """Immutable-in-use lookup facade over Ontology and semantic assets.
 
     Public result keys are ``objects``, ``metrics``, ``relations``,
-    ``actions``, ``aliases`` and ``warnings``.  Metric ownership and mapping
+    ``actions``, ``aliases``, ``errors`` and ``warnings``.  Metric ownership and mapping
     targets are populated only when the input declares them explicitly:
     metric metadata may use ``object_key``/``object_keys`` (or the equivalent
     ``concept_key`` forms), and a mapping may use ``object_key`` plus
@@ -207,10 +272,16 @@ def _build_payload(
         for item in mappings
         if str(item.get("asset_key") or "").strip()
     }
-    relation_by_key = {
-        str(item["relation_key"]): item
+    relation_errors = validate_semantic_relation_bindings(link_types, relations)
+    invalid_relation_keys = {
+        str(item.get("details", {}).get("relation_key") or "")
+        for item in relation_errors
+    }
+    relation_by_link_key = {
+        _semantic_relation_link_key(item): item
         for item in relations
-        if str(item.get("relation_key") or "").strip()
+        if _semantic_relation_link_key(item)
+        and str(item.get("relation_key") or "") not in invalid_relation_keys
     }
 
     object_payload: dict[str, dict[str, Any]] = {}
@@ -360,21 +431,11 @@ def _build_payload(
             object_payload[object_key]["metrics"].append(metric_key)
 
     relation_payload: dict[str, dict[str, Any]] = {}
-    matched_relation_keys: set[str] = set()
     for link in link_types:
         link_key = str(link.get("link_key") or "")
         if not link_key:
             continue
-        relation = relation_by_key.get(link_key)
-        if relation is None:
-            relation = next(
-                (
-                    item
-                    for item in relations
-                    if str(_metadata(item).get("link_key") or "") == link_key
-                ),
-                None,
-            )
+        relation = relation_by_link_key.get(link_key)
         if relation is None:
             warnings.append(
                 _warning(
@@ -383,9 +444,6 @@ def _build_payload(
                     link_key=link_key,
                 )
             )
-        else:
-            relation_key = str(relation.get("relation_key") or link_key)
-            matched_relation_keys.add(relation_key)
         relation_payload[link_key] = {
             "link_key": link_key,
             "link": copy.deepcopy(link),
@@ -395,24 +453,12 @@ def _build_payload(
             "join_path": copy.deepcopy(relation.get("join_path") or []) if relation else [],
         }
 
-    for relation in relations:
-        relation_key = str(relation.get("relation_key") or "")
-        if relation_key and relation_key not in matched_relation_keys and relation_key not in {
-            str(item.get("link_key") or "") for item in link_types
-        }:
-            warnings.append(
-                _warning(
-                    "semantic_relation_link_missing",
-                    f"语义关系 {relation_key} 未找到对应的本体 link_key",
-                    relation_key=relation_key,
-                )
-            )
-
     return {
         "objects": object_payload,
         "metrics": metric_payload,
         "relations": relation_payload,
         "actions": action_by_key,
         "aliases": aliases,
+        "errors": relation_errors,
         "warnings": warnings,
     }

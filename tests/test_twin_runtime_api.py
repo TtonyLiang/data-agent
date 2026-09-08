@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -22,6 +23,11 @@ async def test_create_sync_run_uses_resolved_permission_agent(monkeypatch):
     monkeypatch.setattr(
         twin_api,
         "require_domain_access",
+        AsyncMock(return_value=7),
+    )
+    monkeypatch.setattr(
+        twin_api,
+        "_resolve_access_agent",
         AsyncMock(return_value=7),
     )
 
@@ -52,16 +58,33 @@ async def test_create_sync_run_uses_resolved_permission_agent(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admin_sync_resolves_domain_agent(monkeypatch):
+async def test_admin_sync_without_domain_rules_does_not_require_agent(monkeypatch):
     class SemanticService:
-        resolve_domain_agent = AsyncMock(return_value=9)
+        get_domain = AsyncMock(
+            return_value=SimpleNamespace(id=4, datasource_id=8)
+        )
+
+    class PermissionService:
+        resolve_domain_permission_context = AsyncMock(
+            return_value=SimpleNamespace(source="unconfigured")
+        )
 
     semantic_service = SemanticService()
     monkeypatch.setattr(
         twin_api, "get_semantic_runtime_service", lambda: semantic_service
     )
+    permission_service = PermissionService()
+    monkeypatch.setattr(
+        twin_api, "get_permission_service", lambda: permission_service
+    )
 
-    assert await twin_api._resolve_access_agent(4, None) == 9
+    assert await twin_api._resolve_access_agent(4, None) is None
+    permission_service.resolve_domain_permission_context.assert_awaited_once_with(
+        4,
+        8,
+        compatibility_agent_id=None,
+        allow_agent_fallback=False,
+    )
 
 
 @pytest.mark.asyncio

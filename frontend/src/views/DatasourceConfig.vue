@@ -238,29 +238,30 @@
             <strong>{{ permissionDatasource.name }} / {{ permissionDatasource.database_name }}</strong>
           </div>
           <div class="permission-adapter-field">
-            <span>验证权限适配（过渡）</span>
+            <span>权限归属业务领域</span>
             <el-select
-              v-model="permissionAgentId"
+              v-model="permissionDomainId"
               clearable
-              placeholder="选择已绑定当前数据源的验证智能体"
-              :disabled="permissionEligibleAgents.length === 0"
-              @change="loadDatasourcePermissions"
+              placeholder="选择绑定当前数据源的业务领域"
+              :disabled="permissionEligibleDomains.length === 0"
+              aria-label="选择权限归属业务领域"
+              @change="loadDomainPermissions"
             >
               <el-option
-                v-for="agent in permissionEligibleAgents"
-                :key="agent.id"
-                :label="agent.name"
-                :value="agent.id"
+                v-for="domain in permissionEligibleDomains"
+                :key="domain.id"
+                :label="domain.name"
+                :value="domain.id"
               />
             </el-select>
-            <small>仅复用现有表列权限；数据源绑定仍在“调试与验证智能体”中维护。</small>
+            <small>这是企业模型和外部能力的正式数据权限边界；不再按某个 Agent 分别维护。</small>
           </div>
-          <el-tag type="warning" effect="plain">表白名单强制生效</el-tag>
+          <el-tag type="success" effect="plain">领域白名单强制生效</el-tag>
         </div>
 
         <el-alert
-          v-if="permissionEligibleAgents.length === 0"
-          title="当前没有已绑定该数据源的验证权限适配。请先到“平台管理 > 调试与验证智能体”完成绑定。"
+          v-if="permissionEligibleDomains.length === 0"
+          title="当前没有绑定该数据源的业务领域。请先在“企业模型中心”给业务领域绑定默认数据源。"
           type="warning"
           :closable="false"
           show-icon
@@ -268,20 +269,53 @@
         />
         <el-alert
           v-else
-          title="只有下方明确允许的表可被该智能体访问；未勾选和后续新接入的表默认不可访问。"
+          title="只有下方明确允许的表可被该业务领域访问；未勾选和后续新接入的表默认不可访问。旧领域若尚未配置领域规则，运行时才会显式兼容 Agent 白名单。"
           type="warning"
           :closable="false"
           show-icon
           class="permission-alert"
         />
 
+        <el-collapse class="permission-compatibility">
+          <el-collapse-item name="legacy-agent">
+            <template #title>
+              <span>旧领域兼容入口（仅迁移）</span>
+            </template>
+            <div class="permission-compatibility__body">
+              <span>验证权限适配（过渡）</span>
+              <el-select
+                v-model="permissionAgentId"
+                clearable
+                placeholder="选择已绑定当前数据源的验证智能体"
+                :disabled="permissionEligibleAgents.length === 0"
+                @change="loadDatasourcePermissions"
+              >
+                <el-option
+                  v-for="agent in permissionEligibleAgents"
+                  :key="agent.id"
+                  :label="agent.name"
+                  :value="agent.id"
+                />
+              </el-select>
+              <el-button
+                size="small"
+                :disabled="!permissionAgentId"
+                @click="saveDatasourcePermissions"
+              >
+                保存旧权限
+              </el-button>
+              <small>仅用于尚未迁移领域规则的历史数据；新配置请使用上方业务领域权限。</small>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+
         <el-empty
-          v-if="permissionEligibleAgents.length > 0 && !permissionAgentId"
-          description="请选择验证权限适配，再配置表和字段权限"
+          v-if="permissionEligibleDomains.length > 0 && !permissionDomainId"
+          description="请选择业务领域，再配置表和字段权限"
           :image-size="72"
         />
         <el-empty
-          v-else-if="permissionAgentId && permissionTables.length === 0"
+          v-else-if="permissionDomainId && permissionTables.length === 0"
           description="请先采集表结构，再配置访问权限"
           :image-size="72"
         />
@@ -357,8 +391,8 @@
         <el-button
           type="primary"
           :loading="permissionSaving"
-          :disabled="permissionLoading || !permissionDatasource || !permissionAgentId"
-          @click="saveDatasourcePermissions"
+          :disabled="permissionLoading || !permissionDatasource || !permissionDomainId"
+          @click="saveDomainDatasourcePermissions"
         >
           保存权限
         </el-button>
@@ -458,6 +492,7 @@ import { computed, ref, onMounted } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  fetchAllSemanticDomains,
   fetchAgents,
   fetchAgentDatasourceIds,
   fetchAllDatasources,
@@ -471,11 +506,16 @@ import {
   fetchDatasourceRemoteTables,
   fetchDatasourceSchemaStats,
   fetchDatasourceTableDetail,
+  fetchDomainDatasourcePermissions,
+  updateDomainDatasourcePermissions,
   fetchDatasourcePermissions,
   updateDatasourcePermissions,
-  type AgentItem,
   type DatasourceMaskingPolicy,
   type DatasourcePermissionConfig,
+  type DatasourcePermissionReplace,
+  type DomainDatasourcePermissionConfig,
+  type AgentItem,
+  type SemanticDomain,
   type DatasourceItem,
   type DatasourceRemoteTable,
   type DatasourceSchemaStats,
@@ -497,6 +537,8 @@ interface PermissionTableDraft {
   columns: PermissionColumnDraft[]
 }
 
+const permissionDomainId = ref<number | null>(null)
+const semanticDomains = ref<SemanticDomain[]>([])
 const permissionAgentId = ref<number | null>(null)
 const agents = ref<AgentItem[]>([])
 const agentDatasourceIds = ref<Record<number, number[]>>({})
@@ -541,6 +583,15 @@ const selectedDatasourceName = computed(() => {
   return datasource ? `${datasource.name} / ${datasource.database_name}` : '数据源'
 })
 
+const permissionEligibleDomains = computed(() => {
+  const datasourceId = permissionDatasource.value?.id
+  if (!datasourceId) return []
+  return semanticDomains.value.filter(domain => (
+    Number(domain.datasource_id || 0) === datasourceId
+    && domain.status !== 'disabled'
+  ))
+})
+
 const permissionEligibleAgents = computed(() => {
   const datasourceId = permissionDatasource.value?.id
   if (!datasourceId) return []
@@ -560,6 +611,7 @@ const filteredSelectedColumns = computed(() => {
 })
 
 onMounted(async () => {
+  await loadSemanticDomains()
   await loadAgents()
   await loadDatasources()
 })
@@ -613,7 +665,7 @@ async function openDatasourceDetail(ds: DatasourceItem) {
 
 function buildPermissionDraft(
   schema: DatasourceTableMeta[],
-  permissions: DatasourcePermissionConfig,
+  permissions: DatasourcePermissionReplace,
 ): PermissionTableDraft[] {
   const tableRules = new Map(
     permissions.table_permissions.map(rule => [rule.table_name.toLowerCase(), rule]),
@@ -684,13 +736,31 @@ function buildPermissionDraft(
 
 async function openPermissionDrawer(ds: DatasourceItem) {
   permissionDatasource.value = ds
-  permissionAgentId.value = null
   permissionTables.value = []
+  permissionDomainId.value = permissionEligibleDomains.value[0]?.id || null
+  permissionAgentId.value = null
   showPermissionDrawer.value = true
+  if (permissionDomainId.value) void loadDomainPermissions()
 }
 
 async function loadDatasourcePermissions() {
-  if (!permissionDatasource.value || !permissionAgentId.value) {
+  if (!permissionDatasource.value || !permissionAgentId.value) return
+  permissionLoading.value = true
+  try {
+    const [schema, permissions] = await Promise.all([
+      fetchDatasourceSchema(permissionDatasource.value.id),
+      fetchDatasourcePermissions(permissionDatasource.value.id, permissionAgentId.value),
+    ])
+    permissionTables.value = buildPermissionDraft(schema, permissions)
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '旧权限加载失败'))
+  } finally {
+    permissionLoading.value = false
+  }
+}
+
+async function loadDomainPermissions() {
+  if (!permissionDatasource.value || !permissionDomainId.value) {
     permissionTables.value = []
     return
   }
@@ -698,7 +768,7 @@ async function loadDatasourcePermissions() {
   try {
     const [schema, permissions] = await Promise.all([
       fetchDatasourceSchema(permissionDatasource.value.id),
-      fetchDatasourcePermissions(permissionDatasource.value.id, permissionAgentId.value),
+      fetchDomainDatasourcePermissions(permissionDatasource.value.id, permissionDomainId.value),
     ])
     permissionTables.value = buildPermissionDraft(schema, permissions)
   } catch (error) {
@@ -709,8 +779,8 @@ async function loadDatasourcePermissions() {
   }
 }
 
-async function saveDatasourcePermissions() {
-  if (!permissionDatasource.value || !permissionAgentId.value) return
+async function saveDomainDatasourcePermissions() {
+  if (!permissionDatasource.value || !permissionDomainId.value) return
   if (permissionTables.value.length === 0) {
     ElMessage.warning('请先采集表结构，再配置表白名单')
     return
@@ -733,7 +803,7 @@ async function saveDatasourcePermissions() {
 
   permissionSaving.value = true
   try {
-    await updateDatasourcePermissions(permissionDatasource.value.id, permissionAgentId.value, {
+    await updateDomainDatasourcePermissions(permissionDatasource.value.id, permissionDomainId.value, {
       table_permissions: tablePermissions,
       column_permissions: columnPermissions,
     })
@@ -746,6 +816,49 @@ async function saveDatasourcePermissions() {
   }
 }
 
+async function saveDatasourcePermissions() {
+  if (!permissionDatasource.value || !permissionAgentId.value) return
+  if (permissionTables.value.length === 0) {
+    ElMessage.warning('请先采集表结构，再配置表白名单')
+    return
+  }
+  const tablePermissions = permissionTables.value.map(table => ({
+    table_name: table.table_name,
+    allowed: table.allowed,
+  }))
+  const columnPermissions = permissionTables.value.flatMap(table => (
+    table.columns
+      .filter(column => !column.allowed || column.masking_policy !== 'none')
+      .map(column => ({
+        table_name: table.table_name,
+        column_name: column.column_name,
+        allowed: column.allowed,
+        masking_policy: column.allowed ? column.masking_policy : 'none' as DatasourceMaskingPolicy,
+      }))
+  ))
+  permissionSaving.value = true
+  try {
+    await updateDatasourcePermissions(permissionDatasource.value.id, permissionAgentId.value, {
+      table_permissions: tablePermissions,
+      column_permissions: columnPermissions,
+    })
+    ElMessage.success('旧领域兼容权限已保存')
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '旧权限保存失败'))
+  } finally {
+    permissionSaving.value = false
+  }
+}
+
+async function loadSemanticDomains() {
+  try {
+    semanticDomains.value = await fetchAllSemanticDomains()
+  } catch {
+    ElMessage.error('业务领域加载失败，请确认后端服务已启动')
+    semanticDomains.value = []
+  }
+}
+
 async function loadAgents() {
   try {
     agents.value = await fetchAgents()
@@ -754,7 +867,6 @@ async function loadAgents() {
     )))
     agentDatasourceIds.value = Object.fromEntries(bindings)
   } catch {
-    ElMessage.error('智能体配置加载失败，请确认后端服务已启动')
     agents.value = []
     agentDatasourceIds.value = {}
   }
@@ -1208,6 +1320,24 @@ code {
 
 .permission-editor {
   padding: 2px 2px 20px;
+}
+
+.permission-compatibility {
+  margin: 12px 0 16px;
+}
+
+.permission-compatibility__body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 4px 12px 12px;
+  color: var(--wq-muted);
+  font-size: 12px;
+}
+
+.permission-compatibility__body small {
+  flex-basis: 100%;
 }
 
 .permission-context {

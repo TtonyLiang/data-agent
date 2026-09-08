@@ -12,6 +12,7 @@ from app.services.decision_audit_service import canonical_sha256
 from app.services.model_release_service import (
     ModelReleaseConflict,
     ModelReleaseService,
+    _validate_component_payloads,
 )
 
 
@@ -73,6 +74,50 @@ def _ontology_definition(object_key: str) -> dict:
         "link_types": [],
         "action_types": [],
     }
+
+
+def _relation_components(
+    *,
+    relation_key: str | None = "customer_submits_application",
+    source: str = "Customer",
+    target: str = "LoanApplication",
+) -> tuple[dict, dict]:
+    snapshot = _semantic_snapshot(
+        "application_count", "LoanApplication", "loan_application"
+    )
+    if relation_key is not None:
+        snapshot["assets"]["relation"] = [
+            {
+                "domain_id": 9,
+                "relation_key": relation_key,
+                "relation_type": "join_path",
+                "source_concept": source,
+                "target_concept": target,
+                "name": "客户提交申请查询路径",
+                "join_path": [
+                    {
+                        "left": "customer.customer_id",
+                        "right": "loan_application.customer_id",
+                    }
+                ],
+            }
+        ]
+    definition = _ontology_definition("Customer")
+    definition["object_types"].append(
+        _ontology_definition("LoanApplication")["object_types"][0]
+    )
+    definition["link_types"] = [
+        {
+            "link_key": "customer_submits_application",
+            "name": "客户提交申请",
+            "source_object_key": "Customer",
+            "target_object_key": "LoanApplication",
+            "source_property": "record_id",
+            "target_property": "record_id",
+            "status": "active",
+        }
+    ]
+    return snapshot, definition
 
 
 class FakeResult:
@@ -482,6 +527,116 @@ async def test_server_validation_blocks_broken_snapshot_bridge_without_client_er
     assert validated["validation"]["valid"] is False
     assert any(
         "MissingObject" in error for error in validated["validation"]["errors"]
+    )
+
+
+def test_unified_model_allows_ontology_link_without_query_path():
+    snapshot, definition = _relation_components(relation_key=None)
+
+    validation = _validate_component_payloads(9, snapshot, definition)
+
+    assert validation["valid"] is True
+    assert validation["checks"]["ontology_semantic_bridge"]["valid"] is True
+    assert any("未找到同 key 的语义关系" in item for item in validation["warnings"])
+
+
+def test_unified_model_validates_every_compound_relation_property():
+    snapshot, definition = _relation_components()
+    for object_type in definition["object_types"]:
+        object_type["properties"].append(
+            {
+                "property_key": "tenant_id",
+                "name": "租户标识",
+                "data_type": "string",
+                "required": True,
+                "unique": False,
+                "sort_order": 1,
+            }
+        )
+    definition["link_types"][0].update(
+        {
+            "source_property_keys": ["tenant_id", "record_id"],
+            "target_property_keys": ["tenant_id", "record_id"],
+            "source_property": "tenant_id",
+            "target_property": "tenant_id",
+        }
+    )
+
+    validation = _validate_component_payloads(9, snapshot, definition)
+
+    assert validation["valid"] is True
+
+
+@pytest.mark.parametrize(
+    ("relation_key", "source", "target", "message"),
+    [
+        (
+            "unbound_customer_application_path",
+            "Customer",
+            "LoanApplication",
+            "未显式绑定已生效的本体关系",
+        ),
+        (
+            "customer_submits_application",
+            "LoanApplication",
+            "Customer",
+            "起点或终点方向不一致",
+        ),
+    ],
+)
+def test_unified_model_blocks_invalid_semantic_relation_binding(
+    relation_key,
+    source,
+    target,
+    message,
+):
+    snapshot, definition = _relation_components(
+        relation_key=relation_key,
+        source=source,
+        target=target,
+    )
+
+    validation = _validate_component_payloads(9, snapshot, definition)
+
+    assert validation["valid"] is False
+    assert validation["checks"]["ontology_semantic_bridge"]["valid"] is False
+    assert any(message in item for item in validation["errors"])
+
+
+@pytest.mark.asyncio
+async def test_release_validation_keeps_reversed_semantic_relation_in_draft(
+    monkeypatch,
+):
+    db = ModelReleaseDB()
+    snapshot, definition = _relation_components(
+        source="LoanApplication",
+        target="Customer",
+    )
+    db.snapshots[10]["snapshot_json"] = snapshot
+    db.ontology_releases[20]["definition_json"] = definition
+    db.ontology_releases[20]["definition_hash"] = canonical_sha256(definition)
+    monkeypatch.setattr(model_release_service, "get_management_db", lambda: db)
+    service = ModelReleaseService()
+    release = await service.create_draft(
+        9,
+        EnterpriseModelReleaseCreatePayload(
+            semantic_snapshot_id=10,
+            ontology_release_id=20,
+        ),
+        created_by=1,
+    )
+
+    validated = await service.validate_release(
+        9,
+        release["id"],
+        EnterpriseModelValidationPayload(),
+        validated_by=1,
+    )
+
+    assert validated["status"] == "draft"
+    assert validated["validation"]["valid"] is False
+    assert any(
+        "方向不一致" in item for item in validated["validation"]["errors"]
     )
 
 

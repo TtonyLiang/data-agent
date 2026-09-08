@@ -260,3 +260,127 @@ async def test_uncollect_schema_removes_selected_table_metadata(monkeypatch):
         sql == "DELETE FROM meta_table WHERE datasource_id = :did AND id = :tid"
         for sql, _ in management_db.queries
     )
+
+
+@pytest.mark.asyncio
+async def test_authorized_schema_prefers_explicit_domain_permissions(monkeypatch):
+    class Policy:
+        def __init__(self, *, allowed=True, masking_policy="none"):
+            self.allowed = allowed
+            self.masking_policy = masking_policy
+
+    class Context:
+        source = "domain"
+        table_permissions = {"orders": True, "customers": False}
+        column_permissions = {
+            ("orders", "secret"): Policy(allowed=False),
+            ("orders", "amount"): Policy(masking_policy="partial"),
+        }
+
+    class DomainPermissionService:
+        def __init__(self):
+            self.calls = []
+
+        async def resolve_domain_permission_context(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return Context()
+
+        async def filter_schema(self, *_args, **_kwargs):
+            raise AssertionError("domain-scoped recall must not reload Agent rules")
+
+        @staticmethod
+        def table_allowed(table_name, table_permissions):
+            return bool(table_permissions.get(table_name.lower(), False))
+
+    service = MetadataService()
+    schema = [
+        {
+            "table_name": "orders",
+            "columns": [
+                {"column_name": "amount"},
+                {"column_name": "secret"},
+            ],
+        },
+        {"table_name": "customers", "columns": [{"column_name": "name"}]},
+    ]
+
+    async def get_schema(datasource_id):
+        assert datasource_id == 42
+        return schema
+
+    permission_service = DomainPermissionService()
+    monkeypatch.setattr(service, "get_schema", get_schema)
+    monkeypatch.setattr(
+        metadata_service, "get_permission_service", lambda: permission_service
+    )
+
+    result = await service.get_authorized_schema(
+        42,
+        11,
+        domain_id=7,
+        allow_agent_fallback=True,
+    )
+
+    assert result == [
+        {
+            "table_name": "orders",
+            "columns": [
+                {"column_name": "amount", "masking_policy": "partial"}
+            ],
+        }
+    ]
+    assert permission_service.calls == [
+        (
+            (7, 42),
+            {"compatibility_agent_id": 11, "allow_agent_fallback": True},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_authorized_schema_agent_fallback_must_be_explicit(monkeypatch):
+    class Context:
+        def __init__(self, allow_agent_fallback):
+            self.source = (
+                "agent_compatibility" if allow_agent_fallback else "unconfigured"
+            )
+            self.table_permissions = (
+                {"orders": True} if allow_agent_fallback else {}
+            )
+            self.column_permissions = {}
+
+    class DomainPermissionService:
+        async def resolve_domain_permission_context(
+            self,
+            _domain_id,
+            _datasource_id,
+            *,
+            compatibility_agent_id,
+            allow_agent_fallback,
+        ):
+            assert compatibility_agent_id == 11
+            return Context(allow_agent_fallback)
+
+        @staticmethod
+        def table_allowed(table_name, table_permissions):
+            return bool(table_permissions.get(table_name.lower(), False))
+
+    service = MetadataService()
+
+    async def get_schema(_datasource_id):
+        return [{"table_name": "orders", "columns": []}]
+
+    monkeypatch.setattr(service, "get_schema", get_schema)
+    monkeypatch.setattr(
+        metadata_service,
+        "get_permission_service",
+        lambda: DomainPermissionService(),
+    )
+
+    assert await service.get_authorized_schema(42, 11, domain_id=7) == []
+    assert await service.get_authorized_schema(
+        42,
+        11,
+        domain_id=7,
+        allow_agent_fallback=True,
+    ) == [{"table_name": "orders", "columns": []}]

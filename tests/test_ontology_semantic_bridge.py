@@ -5,6 +5,7 @@ from app.services.ontology_semantic_bridge import (
     OntologySemanticBridge,
     build_ontology_semantic_bridge,
     normalize_term,
+    validate_semantic_relation_bindings,
 )
 
 
@@ -143,6 +144,53 @@ def test_link_key_bridges_to_semantic_relation_without_guessing_join_path():
     assert relation["linked"] is True
     assert relation["relation_key"] == "customer_submits_application"
     assert relation["join_path"] == [{"left": "customer.id", "right": "application.customer_id"}]
+    assert bridge.as_dict()["errors"] == []
+
+
+def test_ontology_link_may_exist_without_semantic_query_path():
+    runtime = _runtime_dict()
+    runtime["relations"] = []
+
+    result = build_ontology_semantic_bridge(_context(), runtime)
+
+    assert result["errors"] == []
+    assert result["relations"]["customer_submits_application"]["linked"] is False
+    assert result["relations"]["customer_submits_application"]["join_path"] == []
+    assert "link_semantic_relation_missing" in {
+        item["code"] for item in result["warnings"]
+    }
+
+
+def test_orphan_relation_is_rejected_without_guessing_from_endpoints_or_tables():
+    relation = {
+        **_runtime_dict()["relations"][0],
+        "relation_key": "unbound_customer_application_path",
+    }
+
+    errors = validate_semantic_relation_bindings(
+        _context()["link_types"], [relation]
+    )
+
+    assert [item["code"] for item in errors] == ["semantic_relation_link_missing"]
+    assert errors[0]["details"]["link_key"] == "unbound_customer_application_path"
+
+
+def test_relation_direction_must_match_bound_ontology_link():
+    relation = {
+        **_runtime_dict()["relations"][0],
+        "source_concept": "LoanApplication",
+        "target_concept": "Customer",
+    }
+
+    result = build_ontology_semantic_bridge(
+        _context(), {**_runtime_dict(), "relations": [relation]}
+    )
+
+    assert [item["code"] for item in result["errors"]] == [
+        "semantic_relation_direction_mismatch"
+    ]
+    assert result["relations"]["customer_submits_application"]["linked"] is False
+    assert result["relations"]["customer_submits_application"]["join_path"] == []
 
 
 def test_missing_associations_are_explainable_warnings():

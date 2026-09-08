@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from app.models.ontology import (
     OntologyActionExecutePayload,
+    OntologyLinkTypePayload,
     OntologyObjectPayload,
     OntologyObjectTypePayload,
 )
@@ -20,7 +21,7 @@ from app.services.ontology_service import (
     validate_action_parameters,
     validate_property_values,
 )
-from app.services.permission_service import ColumnPolicy
+from app.services.permission_service import ColumnPolicy, PermissionRuntimeContext
 
 PROPERTY_DEFINITIONS = [
     {
@@ -127,6 +128,98 @@ def test_object_type_key_rejects_database_style_names():
         )
 
 
+@pytest.mark.parametrize(
+    "property_keys",
+    [[], [""], ["tenant_id", "tenant_id"], ["租户"]],
+)
+def test_link_type_rejects_empty_duplicate_or_non_ascii_compound_keys(property_keys):
+    with pytest.raises(ValidationError):
+        OntologyLinkTypePayload.model_validate(
+            {
+                "domain_id": 1,
+                "link_key": "customer_has_application",
+                "name": "客户申请贷款",
+                "source_object_key": "Customer",
+                "target_object_key": "LoanApplication",
+                "source_property_keys": property_keys,
+                "target_property_keys": ["tenant_id"],
+            }
+        )
+
+
+def test_link_type_rejects_conflicting_single_and_compound_aliases():
+    with pytest.raises(ValidationError, match="单属性键必须与复合属性键首项一致"):
+        OntologyLinkTypePayload.model_validate(
+            {
+                "domain_id": 1,
+                "link_key": "customer_has_application",
+                "name": "客户申请贷款",
+                "source_object_key": "Customer",
+                "target_object_key": "LoanApplication",
+                "source_property": "customer_id",
+                "source_property_keys": ["tenant_id", "customer_id"],
+                "target_property_keys": ["tenant_id", "customer_id"],
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_link_type_persists_and_reads_compound_property_keys(monkeypatch):
+    class CompositeLinkDB(RecordingDB):
+        def __init__(self):
+            super().__init__()
+            self.link_row = None
+
+        async def execute_query(self, sql: str, params: dict | None = None):
+            self.queries.append((sql, params or {}))
+            if sql.startswith("SELECT * FROM ontology_link_type"):
+                return [copy.deepcopy(self.link_row)] if self.link_row else []
+            return []
+
+        async def execute_insert(self, sql: str, params: dict | None = None):
+            self.inserts.append((sql, params or {}))
+            self.link_row = {"id": 77, **(params or {})}
+            return 77
+
+    db = CompositeLinkDB()
+    service = OntologyService()
+    monkeypatch.setattr(ontology_service, "get_management_db", lambda: db)
+    monkeypatch.setattr(service, "_require_domain", _active_domain)
+
+    async def fake_object_type(_domain_id, *, object_key=None, **_kwargs):
+        return {
+            "object_key": object_key,
+            "primary_property": "customer_id" if object_key == "Customer" else "application_id",
+            "properties": [
+                {"property_key": "tenant_id"},
+                {"property_key": "customer_id"},
+                {"property_key": "application_id"},
+            ],
+        }
+
+    monkeypatch.setattr(service, "get_object_type", fake_object_type)
+    link_id = await service.upsert_link_type(
+        OntologyLinkTypePayload(
+            domain_id=4,
+            link_key="customer_has_application",
+            name="客户申请贷款",
+            source_object_key="Customer",
+            target_object_key="LoanApplication",
+            source_property_keys=["tenant_id", "customer_id"],
+            target_property_keys=["tenant_id", "customer_id"],
+        )
+    )
+
+    assert link_id == 77
+    assert db.inserts[0][1]["source_property"] == "tenant_id,customer_id"
+    assert db.inserts[0][1]["target_property"] == "tenant_id,customer_id"
+    links = await service.list_link_types(4)
+    assert links[0]["source_property"] == "tenant_id"
+    assert links[0]["target_property"] == "tenant_id"
+    assert links[0]["source_property_keys"] == ["tenant_id", "customer_id"]
+    assert links[0]["target_property_keys"] == ["tenant_id", "customer_id"]
+
+
 def test_normalize_row_preserves_nullable_json_values():
     assert _normalize_row({"default_value": None, "properties": None}) == {
         "default_value": None,
@@ -180,9 +273,7 @@ def test_release_definition_ignores_storage_and_sync_runtime_fields():
     second = _stable_release_definition(other)
 
     assert first == second
-    assert first["object_types"][0]["properties"][0]["default_value"]["id"] == (
-        "business-id"
-    )
+    assert first["object_types"][0]["properties"][0]["default_value"]["id"] == ("business-id")
     assert _content_hash(first) == _content_hash(second)
 
 
@@ -287,9 +378,7 @@ async def test_execute_action_updates_object_and_records_decision_lineage(monkey
                     "options": ["reserved", "reallocated"],
                 },
             ],
-            "preconditions": [
-                {"property": "available_qty", "operator": "gte", "value": 0}
-            ],
+            "preconditions": [{"property": "available_qty", "operator": "gte", "value": 0}],
             "effects": [
                 {"property": "available_qty", "value": "$param.new_quantity"},
                 {"property": "allocation_status", "value": "$param.new_status"},
@@ -336,6 +425,11 @@ async def test_execute_action_updates_object_and_records_decision_lineage(monkey
 
     assert result["status"] == "succeeded"
     assert result["audit_event_id"] == 88
+    assert result["state_commit"] == {
+        "mode": "platform_object",
+        "business_source_written": False,
+        "message": "动作已更新平台本地对象；当前没有外部业务系统写回",
+    }
     assert result["after_state"]["properties"]["available_qty"] == 1200
     run_params = db.inserts[0][1]
     assert run_params["ontology_release_id"] == 3
@@ -444,9 +538,7 @@ async def test_build_agent_context_uses_active_model_release_definition(monkeypa
     monkeypatch.setattr(
         ontology_service, "get_model_release_service", lambda: ActiveReleaseService()
     )
-    monkeypatch.setattr(
-        ontology_service, "get_management_db", lambda: ReleasedDefinitionDB()
-    )
+    monkeypatch.setattr(ontology_service, "get_management_db", lambda: ReleasedDefinitionDB())
     monkeypatch.setattr(service, "_require_domain", fake_require)
     monkeypatch.setattr(service, "list_object_types", must_not_load_live)
     monkeypatch.setattr(service, "list_link_types", must_not_load_live)
@@ -509,9 +601,7 @@ async def test_build_agent_context_rejects_tampered_active_release_definition(mo
     monkeypatch.setattr(
         ontology_service, "get_model_release_service", lambda: ActiveReleaseService()
     )
-    monkeypatch.setattr(
-        ontology_service, "get_management_db", lambda: TamperedDefinitionDB()
-    )
+    monkeypatch.setattr(ontology_service, "get_management_db", lambda: TamperedDefinitionDB())
 
     with pytest.raises(ValueError, match="完整性校验失败"):
         await service._load_runtime_definition(4)
@@ -568,9 +658,7 @@ async def test_execute_action_uses_definition_bound_to_active_model_release(monk
                         "requires_approval": False,
                         "parameters": [],
                         "preconditions": [],
-                        "effects": [
-                            {"property": "allocation_status", "value": "released_value"}
-                        ],
+                        "effects": [{"property": "allocation_status", "value": "released_value"}],
                     }
                 ],
             },
@@ -960,6 +1048,82 @@ async def test_object_query_and_list_apply_column_visibility_and_masking(monkeyp
         assert not any(key.startswith("_permission_") for key in item)
 
 
+@pytest.mark.asyncio
+async def test_unconfigured_domain_permissions_show_manual_objects_only(monkeypatch):
+    manual_row = {
+        "id": 201,
+        "domain_id": 4,
+        "object_type_id": 11,
+        "object_type_key": "Student",
+        "object_type_name": "学生",
+        "primary_value": "S-001",
+        "display_name": "学生一",
+        "properties": {"student_id": "S-001", "name": "学生一"},
+        "source_properties": {},
+        "overlay_properties": {},
+        "source_kind": "manual",
+        "source_datasource_id": None,
+        "status": "active",
+        "_permission_source_query": "",
+        "_permission_primary_property": "student_id",
+        "_permission_display_property": "name",
+    }
+
+    class ManualOnlyDB:
+        async def execute_query(self, sql, params=None):
+            if sql.startswith("SELECT id, source_query, primary_property"):
+                return [
+                    {
+                        "id": 12,
+                        "source_query": (
+                            "SELECT application_id FROM loan_application "
+                            "ORDER BY application_id"
+                        ),
+                        "primary_property": "application_id",
+                    }
+                ]
+            if sql.startswith("SELECT COUNT(*) AS count"):
+                assert "o.source_kind <> 'database'" in sql
+                return [{"count": 1}]
+            if sql.startswith("SELECT o.*"):
+                assert "o.source_kind <> 'database'" in sql
+                return [copy.deepcopy(manual_row)]
+            raise AssertionError(sql)
+
+    class UnconfiguredPermissionService:
+        async def resolve_domain_permission_context(self, domain_id, datasource_id, **_kwargs):
+            return PermissionRuntimeContext(
+                domain_id=domain_id,
+                datasource_id=datasource_id,
+                source="unconfigured",
+                table_permissions={},
+                column_permissions={},
+            )
+
+        @staticmethod
+        def table_allowed(_table_name, _table_permissions):
+            return False
+
+    service = OntologyService()
+
+    async def require_domain(_domain_id):
+        return {"id": 4, "datasource_id": 42}
+
+    monkeypatch.setattr(service, "_require_domain", require_domain)
+    monkeypatch.setattr(ontology_service, "get_management_db", lambda: ManualOnlyDB())
+    monkeypatch.setattr(
+        ontology_service,
+        "get_permission_service",
+        lambda: UnconfiguredPermissionService(),
+    )
+
+    result = await service.query_objects(4)
+
+    assert result["total"] == 1
+    assert result["objects"][0]["display_name"] == "学生一"
+    assert result["permission"]["source"] == "unconfigured"
+
+
 def test_object_protection_masks_aliased_source_property():
     rows = [
         {
@@ -1002,8 +1166,7 @@ def test_object_protection_masks_aliased_source_property():
 @pytest.mark.asyncio
 async def test_object_query_excludes_masked_primary_type_from_rows_and_total(monkeypatch):
     source_query = (
-        "SELECT application_id, mobile "
-        "FROM loan_application_indicator ORDER BY application_id"
+        "SELECT application_id, mobile FROM loan_application_indicator ORDER BY application_id"
     )
 
     class HiddenPrimaryDB:
@@ -1049,9 +1212,7 @@ async def test_object_query_excludes_masked_primary_type_from_rows_and_total(mon
         return {"id": 4, "datasource_id": 42}
 
     monkeypatch.setattr(service, "_require_domain", require_domain)
-    monkeypatch.setattr(
-        ontology_service, "get_management_db", lambda: HiddenPrimaryDB()
-    )
+    monkeypatch.setattr(ontology_service, "get_management_db", lambda: HiddenPrimaryDB())
     monkeypatch.setattr(
         ontology_service,
         "get_permission_service",
@@ -1081,9 +1242,7 @@ async def test_list_links_masks_visible_endpoint_names_and_hides_forbidden_endpo
         "SELECT application_id, application_no "
         "FROM loan_application_indicator ORDER BY application_id"
     )
-    forbidden_source = (
-        "SELECT secret_id, secret_name FROM secret_customer ORDER BY secret_id"
-    )
+    forbidden_source = "SELECT secret_id, secret_name FROM secret_customer ORDER BY secret_id"
     base_row = {
         "id": 70,
         "domain_id": 4,
@@ -1158,12 +1317,8 @@ async def test_list_links_masks_visible_endpoint_names_and_hides_forbidden_endpo
 
     monkeypatch.setattr(service, "_require_domain", require_domain)
     monkeypatch.setattr(ontology_service, "get_management_db", lambda: LinkDB())
-    monkeypatch.setattr(
-        ontology_service, "get_permission_service", lambda: LinkPermissionService()
-    )
-    monkeypatch.setattr(
-        ontology_service, "get_datasource_service", lambda: LinkDatasourceService()
-    )
+    monkeypatch.setattr(ontology_service, "get_permission_service", lambda: LinkPermissionService())
+    monkeypatch.setattr(ontology_service, "get_datasource_service", lambda: LinkDatasourceService())
 
     links = await service.list_links(4, access_agent_id=7)
 
@@ -1340,9 +1495,7 @@ async def test_action_runs_mask_target_and_state_with_explicit_permission_subjec
 
     monkeypatch.setattr(service, "_require_domain", require_domain)
     monkeypatch.setattr(ontology_service, "get_management_db", lambda: ActionRunDB())
-    monkeypatch.setattr(
-        ontology_service, "get_permission_service", lambda: ActionRunPermission()
-    )
+    monkeypatch.setattr(ontology_service, "get_permission_service", lambda: ActionRunPermission())
     monkeypatch.setattr(
         ontology_service,
         "get_datasource_service",

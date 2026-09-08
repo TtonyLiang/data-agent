@@ -191,27 +191,83 @@ async def test_vector_sync_without_agent_keeps_model_build_available(monkeypatch
         async def get_domain_agent_ids(self, _domain_id):
             return []
 
-        async def build_runtime(self, **kwargs):
-            assert kwargs["agent_id"] is None
+        async def build_runtime_from_snapshot(
+            self,
+            domain_id,
+            snapshot_id,
+            *,
+            agent_id,
+            expected_snapshot_hash,
+        ):
+            assert (domain_id, snapshot_id, agent_id) == (7, 31, None)
+            assert expected_snapshot_hash == "a" * 64
             return runtime
+
+    class ModelReleaseService:
+        async def get_active_release(self, _domain_id):
+            return {
+                "id": 21,
+                "semantic_snapshot_id": 31,
+                "semantic_snapshot_hash": "a" * 64,
+            }
+
+    class EmbeddingService:
+        async def get_index_identity(self, agent_id=None):
+            assert agent_id is None
+            return {
+                "config_id": None,
+                "version": "default-v1",
+                "dimension": 2,
+            }
+
+        async def embed_texts(self, texts, agent_id=None):
+            assert agent_id is None
+            return [[0.1, 0.2] for _ in texts]
+
+    class VectorStore:
+        def __init__(self):
+            self.deleted = []
+            self.inserted = []
+
+        def delete_collection(self, agent_id, domain_id=None, **kwargs):
+            self.deleted.append((agent_id, domain_id, kwargs))
+
+        def insert(self, agent_id, records, domain_id=None, **kwargs):
+            self.inserted.append((agent_id, domain_id, records, kwargs))
+
+    vector_store = VectorStore()
 
     monkeypatch.setattr(
         semantic_api,
         "get_semantic_runtime_service",
         lambda: SemanticService(),
     )
+    monkeypatch.setattr(
+        semantic_api,
+        "get_model_release_service",
+        lambda: ModelReleaseService(),
+    )
+    monkeypatch.setattr(
+        semantic_api,
+        "get_embedding_service",
+        lambda: EmbeddingService(),
+    )
+    monkeypatch.setattr(semantic_api, "get_vector_store", lambda: vector_store)
     admin = PublicUser(id=1, username="admin", role="admin", status="active")
 
     response = await semantic_api.sync_domain_to_vector(7, admin)
 
-    assert response["skipped"] is True
-    assert response["asset_count"] == 1
+    assert response["synced"] == 1
     assert response["agent_ids"] == []
-    assert "没有验证智能体" in response["message"]
+    assert response["model_release_id"] == 21
+    assert response["semantic_snapshot_id"] == 31
+    assert len(vector_store.inserted) == 1
+    assert vector_store.inserted[0][0] is None
+    assert vector_store.inserted[0][2][0].agent_id == 0
 
 
 @pytest.mark.asyncio
-async def test_vector_sync_updates_every_agent_bound_to_shared_domain(monkeypatch):
+async def test_vector_sync_deduplicates_agents_sharing_embedding_configuration(monkeypatch):
     domain = SemanticDomain(
         id=7,
         workspace_id=1,
@@ -240,13 +296,32 @@ async def test_vector_sync_updates_every_agent_bound_to_shared_domain(monkeypatc
         async def get_domain_agent_ids(self, domain_id):
             return [3, 4]
 
-        async def build_runtime(self, **kwargs):
-            assert kwargs["agent_id"] == 3
+        async def build_runtime_from_snapshot(
+            self,
+            domain_id,
+            snapshot_id,
+            *,
+            agent_id,
+            expected_snapshot_hash,
+        ):
+            assert (domain_id, snapshot_id, agent_id) == (7, 31, None)
+            assert expected_snapshot_hash == "a" * 64
             return runtime
+
+    class ModelReleaseService:
+        async def get_active_release(self, _domain_id):
+            return {
+                "id": 21,
+                "semantic_snapshot_id": 31,
+                "semantic_snapshot_hash": "a" * 64,
+            }
 
     class EmbeddingService:
         def __init__(self):
             self.agent_ids = []
+
+        async def get_index_identity(self, agent_id=None):
+            return {"config_id": 5, "version": "shared-v1", "dimension": 2}
 
         async def embed_texts(self, texts, agent_id=None):
             self.agent_ids.append(agent_id)
@@ -257,11 +332,11 @@ async def test_vector_sync_updates_every_agent_bound_to_shared_domain(monkeypatc
             self.deleted = []
             self.inserted = []
 
-        def delete_collection(self, agent_id, domain_id=None):
-            self.deleted.append((agent_id, domain_id))
+        def delete_collection(self, agent_id, domain_id=None, **kwargs):
+            self.deleted.append((agent_id, domain_id, kwargs))
 
-        def insert(self, agent_id, records, domain_id=None):
-            self.inserted.append((agent_id, domain_id, records))
+        def insert(self, agent_id, records, domain_id=None, **kwargs):
+            self.inserted.append((agent_id, domain_id, records, kwargs))
 
     embedding_service = EmbeddingService()
     vector_store = VectorStore()
@@ -270,6 +345,11 @@ async def test_vector_sync_updates_every_agent_bound_to_shared_domain(monkeypatc
         "get_semantic_runtime_service",
         lambda: SemanticService(),
     )
+    monkeypatch.setattr(
+        semantic_api,
+        "get_model_release_service",
+        lambda: ModelReleaseService(),
+    )
     monkeypatch.setattr(semantic_api, "get_embedding_service", lambda: embedding_service)
     monkeypatch.setattr(semantic_api, "get_vector_store", lambda: vector_store)
     admin = PublicUser(id=1, username="admin", role="admin", status="active")
@@ -277,14 +357,14 @@ async def test_vector_sync_updates_every_agent_bound_to_shared_domain(monkeypatc
     response = await semantic_api.sync_domain_to_vector(7, admin)
 
     assert response["agent_ids"] == [3, 4]
-    assert embedding_service.agent_ids == [3, 4]
-    assert vector_store.deleted == [(3, 7), (3, None), (4, 7), (4, None)]
-    assert [(agent_id, domain_id) for agent_id, domain_id, _ in vector_store.inserted] == [
-        (3, 7),
-        (4, 7),
-    ]
-    assert vector_store.inserted[0][2][0].agent_id == 3
-    assert vector_store.inserted[1][2][0].agent_id == 4
+    assert embedding_service.agent_ids == [3]
+    assert len(vector_store.deleted) == 1
+    assert len(vector_store.inserted) == 1
+    assert vector_store.inserted[0][0] is None
+    assert vector_store.inserted[0][1] == 7
+    assert vector_store.inserted[0][2][0].agent_id == 0
+    assert vector_store.inserted[0][3]["model_release_id"] == 21
+    assert vector_store.inserted[0][3]["embedding_model_config_id"] == 5
 
 
 class AtomicDomainDB:

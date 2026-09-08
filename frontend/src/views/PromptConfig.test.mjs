@@ -49,3 +49,13 @@ assert.ok(
     !source.includes('语义层：'),
   'visible Prompt terminology should align semantic assets with business domains and treat Agent scope as compatibility only',
 )
+
+assert.ok(
+  source.includes('agentScopedInteractionOutputPromptKeys') &&
+    source.includes('businessSemanticPromptKeys') &&
+    source.includes(':disabled="!selectedPromptAllowsAgentScope"') &&
+    source.includes('业务语义关键节点不可按智能体覆盖') &&
+    source.includes('只允许按业务领域、模型或全局配置') &&
+    source.includes('历史智能体覆盖：运行时忽略'),
+  'business-semantic prompts should disable Agent overrides and explain how legacy rows are handled',
+)

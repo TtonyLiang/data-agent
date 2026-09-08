@@ -8,6 +8,8 @@ EmbeddingService 负责:
 无绑定时回退到环境默认配置(embedding_base_url/embedding_model)。
 """
 
+import hashlib
+import json
 import logging
 import time
 
@@ -35,6 +37,52 @@ class EmbeddingService:
             vec = await self.embed_query(text, agent_id=agent_id)
             results.append(vec)
         return results
+
+    async def get_index_identity(self, agent_id: int | None = None) -> dict[str, object]:
+        """Return the non-secret embedding identity used to version an index.
+
+        Agent bindings are only a way to select an embedding configuration.
+        The returned identity contains no Agent id, so Agents sharing the same
+        configuration also share one enterprise semantic index.
+        """
+        provider = "openai-compatible"
+        base_url = self._base_url
+        model_name = self._model
+        dimension = self._dimension
+        config_id: int | None = None
+        updated_at = None
+        if agent_id:
+            config = await get_model_config_service().get_agent_embedding_config(agent_id)
+            if config is not None:
+                config_id = int(config.id) if config.id is not None else None
+                provider = config.provider
+                base_url = config.base_url.rstrip("/")
+                model_name = config.model_name
+                dimension = int(config.embedding_dimension or self._dimension)
+                updated_at = config.updated_at
+        version_source = {
+            "config_id": config_id,
+            "provider": provider,
+            "base_url": base_url,
+            "model_name": model_name,
+            "dimension": dimension,
+            "updated_at": str(updated_at or ""),
+        }
+        version = hashlib.sha256(
+            json.dumps(
+                version_source,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()[:16]
+        return {
+            "config_id": config_id,
+            "version": version,
+            "provider": provider,
+            "model_name": model_name,
+            "dimension": dimension,
+        }
 
     async def embed_query(self, text: str, agent_id: int | None = None) -> list[float]:
         """单条文本向量化。

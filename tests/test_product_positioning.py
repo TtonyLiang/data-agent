@@ -5,11 +5,18 @@ ROOT = Path(__file__).parents[1]
 
 def test_primary_product_position_is_enterprise_ontology_digital_twin():
     chinese_readme = (ROOT / "README_CN.md").read_text(encoding="utf-8")
+    english_readme = (ROOT / "README.md").read_text(encoding="utf-8")
     app_shell = (ROOT / "frontend/src/App.vue").read_text(encoding="utf-8")
     project_design = (ROOT / "docs/project-design.md").read_text(encoding="utf-8")
+    roadmap = (ROOT / "docs/ontology-product-roadmap.md").read_text(encoding="utf-8")
 
     expected = "Ontology 驱动的企业运营数字孪生与智能决策平台"
+    first_principle = "让业务语义成为企业资产，让数据库成为数据来源，让 Agent 成为能力消费者"
     assert expected in chinese_readme
+    assert first_principle in chinese_readme
+    assert first_principle in project_design
+    assert first_principle in roadmap
+    assert "business semantics are enterprise assets" in english_readme
     assert "企业本体数字孪生与智能决策平台" in app_shell
     assert "公司的智能中枢和决策引擎" in project_design
     assert "内置 Agent 只是调试、回归和验收客户端" in project_design

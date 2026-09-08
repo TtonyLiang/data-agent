@@ -8,6 +8,8 @@
 
 平台是公司的智能中枢和决策引擎。财税报告交付、贷款风控和智能问数是其上的垂直验证场景；本项目内置 Agent 只是调试、回归和验收客户端，第三方 Agent 通过能力接口调用，不拥有企业本体本身。
 
+本文所有技术设计服从同一第一性目标：**让业务语义成为企业资产，让数据库成为数据来源，让 Agent 成为能力消费者。** 业务模型以领域和发布版本为管理边界；表、字段和 SQL 只承担来源、映射和执行；Agent 只承担交互与调用上下文。
+
 平台主链为：
 
 ```text
@@ -111,7 +113,7 @@ flowchart LR
 - `ModelConfig`：模型配置，区分大语言模型和向量模型。
 - `PromptConfig`：Prompt 模板配置，按节点、业务领域、模型和验证智能体兼容作用域覆盖系统提示词。
 - `SystemParameterConfig`：系统参数配置，当前用于调整数据定位召回阈值和最多候选表数。
-- `DatasourceConfig`：数据源管理，读取表清单、选择采集表、查看字段详情，并在需要时选择验证权限适配维护表列边界；创建数据源不依赖 Agent。
+- `DatasourceConfig`：数据源管理，读取表清单、选择采集表、查看字段详情，并按业务领域维护表列边界；旧 Agent 权限收进迁移兼容入口，创建数据源不依赖 Agent。
 - `KnowledgeConfig`：企业模型“语义与数据”子区，维护指标、映射、规则、关系和模板。
 
 #### 后端
@@ -158,7 +160,7 @@ capability key + 业务参数
 第一版执行边界和结果契约如下：
 
 - 独立 `ontology_query_capability` 按简化流程直接执行只读 SQL，不经过现有 Chat 图的 SQL 确认 checkpoint；仍复用现有 SQL 安全校验、数据源/表列权限和结果脱敏，不新增独立数据库执行器。
-- 当前独立 Query Capability 仍要求语义域的 `datasource_id` 非空，并通过内部验证 Agent 做数据源兼容校验；这只是过渡实现。正式第三方调用应由 `domain_id + release_id + caller context` 完成授权，不要求调用方创建内部 Agent。
+- 当前独立 Query Capability 要求业务领域的 `datasource_id` 非空，并优先使用领域级表列权限；只有旧领域没有领域规则时才显式回退内部验证 Agent 的权限。第三方调用由 `domain_id + release_id + caller context` 授权，不要求调用方创建内部 Agent。
 - `execution.status` 取 `validation_blocked`、`security_blocked`、`permission_blocked`、`database_error` 或 `succeeded`。校验阻断时 `attempted=false`；进入 SQL 执行节点后 `attempted=true`；只有 `succeeded` 才标识 `executed=true`。
 - 结果返回 `executed_sql`（SQL 执行节点规范化后的实际语句；未实际执行或失败时可能为空）和 `execution_trace`，其中保留服务端 `trace_id`、`domain_id`、`datasource_id`、Query Capability 以及 Ontology `release` 信息。
 - Query Capability 严格只读，不调用 `execute_action()`，不创建或修改 Ontology 对象，也不产生外部写入副作用。现有 Chat 图的 SQL 确认开关和 HITL 门禁继续保留；完整的 capability 级人工确认、影子运行、灰度发布和治理审计留到后续阶段。
@@ -186,9 +188,9 @@ erDiagram
 
 P0 实现对应：`semantic_domain` 保存公司内部业务领域，`agent_semantic_domain` 保存内置验证 Agent 的消费绑定；`enterprise_workspace`、`semantic_domain.workspace_id`、`semantic_domain.agent_id` 和 `agent.semantic_domain_id` 仅作为历史兼容字段保留。`/api/workspaces` 只提供内部兼容读取，不是业务产品入口。
 
-企业模型查询运行时可以直接按 `domain_id` 构建，不要求先绑定 Agent。语义向量仍按内置验证 Agent 的模型配置生成隔离集合；没有验证 Agent 时只跳过验证检索索引，不阻断企业模型建设。后续能力出口继续以 `domain_id + release_id + caller context` 解析调用方。
+企业模型查询运行时可以直接按 `domain_id` 构建，不要求先绑定 Agent。语义向量索引以 `domain_id + model_release_id/semantic_snapshot_id + embedding 配置版本` 为主键；Agent 只用于选择 Embedding 配置，相同配置共享同一企业索引，没有验证 Agent 时使用环境默认配置。后续能力出口继续以 `domain_id + release_id + caller context` 解析调用方。
 
-当前 Chat 页面是内置验证客户端，不代表第三方 Agent 的调用方式；它仍按默认 `semantic_domain_id` 和数据源运行。首个真实试点应固定一个默认领域和一个业务数据源，外部调用则以能力合同和调用方上下文为准。
+当前 Chat 页面是内置验证客户端，不代表第三方 Agent 的调用方式；它已支持显式选择业务领域，未选择时才回退默认 `semantic_domain_id`。首个真实试点应固定一个业务领域和一个业务数据源，外部调用则以能力合同和调用方上下文为准。
 
 ### 3.1 业务领域的必要性
 
@@ -554,13 +556,15 @@ checkpoint 以 `(user_id, agent_id, session_id)` 为主键，`revision` 每次�
 
 ### 权限与脱敏
 
-权限分三层：
+正式运行权限以业务领域为主体：
 
-- 数据源授权：智能体只能访问绑定的数据源。
-- 表级权限：`agent_table_permission` 支持表级允许/拒绝。
-- 列级权限：`agent_column_permission` 支持列级允许/拒绝，以及 `redact`、`partial`、`hash` 脱敏策略。
+- 数据源边界：业务领域绑定默认数据源。
+- 表级权限：`domain_table_permission` 支持领域级允许/拒绝，默认拒绝未授权表。
+- 列级权限：`domain_column_permission` 支持列级允许/拒绝，以及 `redact`、`partial`、`hash` 脱敏策略。
 
-权限同时作用于数据定位、NL2SQL 兜底上下文和 SQL 执行结果，避免模型看到或返回不该暴露的表字段。
+`agent_datasource`、`agent_table_permission`、`agent_column_permission` 仅供内置验证客户端和旧领域迁移兼容。权限同时作用于数据定位、确定性 SQL 执行、对象/同步和结果脱敏，避免模型看到或返回不该暴露的表字段。
+
+对象实例读取进一步按 `source_kind` 区分：`manual/bundle` 对象属于平台本地运行资产，不要求业务数据源权限；`database` 对象及其关系、动作前后状态继续继承来源表列权限。领域权限未配置时，读取接口只返回平台对象，数据库对象默认隐藏；同步和 SQL 执行仍严格阻断并返回 `domain_permission_not_configured`，不得回退要求创建验证 Agent。
 
 ### API Key 与模型连通性
 

@@ -1,10 +1,10 @@
 """Prompt 模板管理 API —— 节点提示词的配置化管理。"""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.agent.prompts import default_prompt_templates
 from app.api.deps import require_admin
-from app.models.prompt import PromptTemplateCreate
+from app.models.prompt import PromptTemplateCreate, prompt_allows_agent_scope
 from app.services.prompt_service import get_prompt_service
 
 router = APIRouter(dependencies=[Depends(require_admin)])
@@ -19,13 +19,29 @@ async def list_prompt_templates(prompt_key: str | None = None):
 @router.get("/catalog")
 async def list_prompt_catalog():
     """列出代码内置默认 Prompt 清单,供管理台展示节点选项。"""
-    return {"prompts": default_prompt_templates()}
+    return {
+        "prompts": [
+            {
+                **item,
+                "agent_scope_allowed": prompt_allows_agent_scope(item["prompt_key"]),
+                "scope_policy": (
+                    "interaction_or_output"
+                    if prompt_allows_agent_scope(item["prompt_key"])
+                    else "business_semantics"
+                ),
+            }
+            for item in default_prompt_templates()
+        ]
+    }
 
 
 @router.post("/templates")
 async def upsert_prompt_template(template: PromptTemplateCreate):
     """创建或更新 Prompt 模板。"""
-    template_id = await get_prompt_service().upsert(template)
+    try:
+        template_id = await get_prompt_service().upsert(template)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"id": template_id, "message": "Prompt 模板已保存"}
 
 

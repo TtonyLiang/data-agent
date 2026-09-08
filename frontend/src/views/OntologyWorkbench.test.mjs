@@ -24,6 +24,12 @@ function sourceSection(start, end) {
 
 const refreshAllSource = sourceSection('async function refreshAll()', 'async function handleTabChange')
 const domainWatchSource = sourceSection('watch(domainId, () => {', 'onMounted(async () => {')
+const objectDialogSource = sourceSection('<el-dialog v-model="objectTypeDialog"', '<el-dialog v-model="linkTypeDialog"')
+const linkDialogSource = sourceSection('<el-dialog v-model="linkTypeDialog"', '<el-dialog v-model="actionTypeDialog"')
+const actionDialogSource = sourceSection('<el-dialog v-model="actionTypeDialog"', '<el-drawer v-model="validationDrawer"')
+const linkSaveSource = sourceSection('async function saveLinkType()', 'async function removeLinkType')
+const actionOpenSource = sourceSection('function openActionTypeDialog', 'function addActionParameter')
+const actionSaveSource = sourceSection('async function saveActionType()', 'async function removeActionType')
 
 assert.ok(
   source.includes('defineProps') &&
@@ -103,6 +109,25 @@ for (const workflow of [
 ]) {
   assert.ok(source.includes(workflow), `Ontology workbench should expose ${workflow}`)
 }
+
+assert.ok(
+  source.includes('function actionParameterHasInput') &&
+    actionSaveSource.includes('if (!actionParameterHasInput(parameter)) continue') &&
+    actionSaveSource.includes('请填写第 ${index + 1} 个动作参数的业务名称，或删除该行') &&
+    actionSaveSource.includes("cleanText(parameter.parameter_key) || generatedKey('parameter'") &&
+    actionSaveSource.includes('动作参数标识不能重复') &&
+    actionSaveSource.includes('const parameters: any[] = []'),
+  'action saving should ignore untouched blank rows, generate technical parameter keys, and validate configured parameters',
+)
+
+assert.ok(
+  source.includes('function validationIssueMessage') &&
+    source.includes('function validationFieldLabel') &&
+    source.includes('Array.isArray(detail)') &&
+    source.includes("item.type === 'string_pattern_mismatch'") &&
+    source.includes("messages.slice(0, 3).join('；')"),
+  'ontology API validation arrays should be rendered as readable field-level messages instead of object strings',
+)
 
 assert.ok(
   source.includes('校验模型') &&
@@ -212,9 +237,9 @@ assert.ok(
 )
 
 assert.ok(
-  source.includes('label="业务库同步"') &&
-    source.includes('label="默认分页大小"') &&
-    source.includes('label="只读同步 SELECT"') &&
+  source.includes('label="从业务库同步"') &&
+    source.includes('label="单次读取上限"') &&
+    source.includes('label="只读同步 SELECT（技术配置）"') &&
     source.includes('syncStatusLabel(row)') &&
     source.includes('row.last_sync_total || row.last_sync_count') &&
     source.includes('counts.source_objects || summary.value?.counts.objects'),
@@ -257,6 +282,80 @@ assert.ok(
     source.includes('动作建议使用动词描述') &&
     source.includes('const graphTooltip ='),
   'ontology modeling forms and graph tooltips should guide business-friendly modeling semantics',
+)
+
+assert.ok(
+  objectDialogSource.includes('建议按顺序配置') &&
+    objectDialogSource.includes('先确认业务含义，再完成技术映射') &&
+    objectDialogSource.includes('业务人员确认') &&
+    objectDialogSource.includes('管理员或数据工程师配置') &&
+    objectDialogSource.indexOf('id="object-business-title"') < objectDialogSource.indexOf('id="object-property-title"') &&
+    objectDialogSource.indexOf('id="object-property-title"') < objectDialogSource.indexOf('id="object-mapping-title"'),
+  'object creation should separate business definition, object identity, and technical mapping in that order',
+)
+
+assert.ok(
+  objectDialogSource.indexOf('对象属性') < objectDialogSource.indexOf('对象唯一标识属性（主属性）') &&
+    objectDialogSource.includes(':disabled="objectPropertyOptions.length === 0"') &&
+    objectDialogSource.includes('请先填写上方的属性标识') &&
+    source.includes('const objectPropertyOptions = computed<OntologyProperty[]>') &&
+    source.includes('function propertyOptionLabel') &&
+    source.includes("if (removed?.property_key === objectTypeForm.primary_property) objectTypeForm.primary_property = ''"),
+  'object properties should be defined before choosing stable identity and display fields',
+)
+
+assert.ok(
+  objectDialogSource.includes('当前版本采用只读 SQL 映射') &&
+    objectDialogSource.includes('AS 属性标识') &&
+    objectDialogSource.includes('保存时只校验和记录配置，不执行同步') &&
+    objectDialogSource.includes('再到“孪生运行”先预览、后执行') &&
+    objectDialogSource.includes('保存只记录对象模型，不会直接读取或写入业务数据库'),
+  'technical mapping should explain ownership and keep model saving separate from runtime synchronization',
+)
+
+assert.ok(
+  linkDialogSource.includes('先定义业务关系，再处理技术关联') &&
+    linkDialogSource.indexOf('关系名称') < linkDialogSource.indexOf('高级技术配置（通常无需修改）') &&
+    linkDialogSource.includes('默认技术关联') &&
+    linkDialogSource.includes('relationMappingSummary') &&
+    linkDialogSource.includes('默认使用两端对象的唯一标识属性') &&
+    linkDialogSource.includes('供 API、版本和能力引用，通常不需要业务人员填写'),
+  'relationship creation should lead with business meaning and explain the automatically inferred primary-property mapping',
+)
+
+assert.ok(
+  linkSaveSource.includes('source_property_keys: sourcePropertyKeys.length ? sourcePropertyKeys : null') &&
+    linkSaveSource.includes('target_property_keys: targetPropertyKeys.length ? targetPropertyKeys : null') &&
+    linkSaveSource.includes('复合关系两端的关联属性数量必须一致') &&
+    linkDialogSource.includes('顺序必须与终点一致') &&
+    linkSaveSource.includes("generatedKey('relation'") &&
+    linkSaveSource.includes('关系标识需以英文字母开头') &&
+    source.includes('const relationMappingSummary = computed'),
+  'relationship saving should preserve compound keys, validate both sides, and auto-generate a stable technical key',
+)
+
+assert.ok(
+  actionDialogSource.includes('先表达业务意图和状态变化') &&
+    actionDialogSource.indexOf('动作名称') < actionDialogSource.indexOf('高级执行与治理配置') &&
+    actionDialogSource.includes('业务状态变化（可选）') &&
+    actionDialogSource.includes('保存时自动转换为动作的状态前置条件和状态效果') &&
+    actionDialogSource.includes('只有 Agent 或业务应用需要提供的输入才添加') &&
+    actionDialogSource.includes('技术标识（留空自动生成）') &&
+    actionDialogSource.includes('供平台管理员配置权限、复杂条件和执行效果'),
+  'action creation should expose intent, state transition, and business inputs before folded governance and execution DSL settings',
+)
+
+assert.ok(
+  actionOpenSource.includes('preconditions.splice(statusConditionIndex, 1)') &&
+    actionOpenSource.includes('effects.splice(statusEffectIndex, 1)') &&
+    source.includes('function resetActionPropertyBindings') &&
+    actionSaveSource.includes("generatedKey('action'") &&
+    actionSaveSource.includes("if (!statusProperty && (fromStatus || toStatus))") &&
+    actionSaveSource.includes('preconditions.unshift') &&
+    actionSaveSource.includes('effects.unshift') &&
+    actionSaveSource.includes('id: actionTypeForm.id') &&
+    !actionSaveSource.includes('...actionTypeForm'),
+  'action editing and saving should round-trip the simplified state transition into the existing backend payload without UI-only fields',
 )
 
 assert.ok(

@@ -5,19 +5,37 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.api.deps import get_current_user, require_domain_access
 from app.models.twin_runtime import TwinSyncRequest
 from app.models.user import PublicUser
+from app.services.permission_service import (
+    domain_permission_not_configured_detail,
+    get_permission_service,
+)
 from app.services.semantic_runtime import get_semantic_runtime_service
 from app.services.twin_runtime_service import get_twin_runtime_service
 
 router = APIRouter()
 
 
-async def _resolve_access_agent(domain_id: int, access_agent_id: int | None) -> int:
-    if isinstance(access_agent_id, int) and access_agent_id > 0:
+async def _resolve_access_agent(domain_id: int, access_agent_id: int | None) -> int | None:
+    semantic_service = get_semantic_runtime_service()
+    domain = await semantic_service.get_domain(domain_id)
+    if domain is None:
+        raise HTTPException(status_code=404, detail="企业业务领域不存在")
+    if domain.datasource_id is None:
         return access_agent_id
-    resolved = await get_semantic_runtime_service().resolve_domain_agent(domain_id)
-    if resolved is None:
-        raise HTTPException(status_code=403, detail="领域没有可用于数据权限校验的验证智能体")
-    return resolved
+    datasource_id = int(domain.datasource_id)
+    permission_context = (
+        await get_permission_service().resolve_domain_permission_context(
+            domain_id,
+            datasource_id,
+            compatibility_agent_id=access_agent_id,
+            allow_agent_fallback=bool(access_agent_id),
+        )
+    )
+    if permission_context.source == "domain":
+        return None
+    if permission_context.source == "agent_compatibility":
+        return access_agent_id
+    return None
 
 
 @router.post("/domains/{domain_id}/sync-runs")
@@ -43,6 +61,15 @@ async def create_sync_run(
             trace_id=payload.trace_id,
         )
     except PermissionError as exc:
+        if "未配置数据权限" in str(exc):
+            domain = await get_semantic_runtime_service().get_domain(domain_id)
+            datasource_id = int(domain.datasource_id or 0) if domain is not None else 0
+            raise HTTPException(
+                status_code=409,
+                detail=domain_permission_not_configured_detail(
+                    domain_id, datasource_id
+                ),
+            ) from exc
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
