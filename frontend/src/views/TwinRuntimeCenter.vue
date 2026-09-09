@@ -24,6 +24,8 @@
     <el-empty v-if="!loading && domains.length === 0" description="暂无可用业务领域" />
 
     <template v-else-if="currentDomain">
+      <details class="runtime-flow-disclosure">
+        <summary>孪生数据处理流程</summary>
       <section class="runtime-flow" aria-label="孪生数据处理流程">
         <div :class="{ ready: Boolean(currentDomain.datasource_id) }">
           <span>1</span>
@@ -49,6 +51,7 @@
           <small>{{ sourceObjectCount }} 个对象实例</small>
         </div>
       </section>
+      </details>
 
       <section class="runtime-summary">
         <div>
@@ -463,12 +466,27 @@
           </el-select>
         </el-form-item>
         <div class="form-grid">
-          <el-form-item v-for="property in selectedObjectType?.properties || []" :key="property.property_key" :label="property.name" :required="property.required">
-            <el-switch v-if="property.data_type === 'boolean'" v-model="objectForm.properties[property.property_key]" />
-            <el-input-number v-else-if="property.data_type === 'integer' || property.data_type === 'number'" v-model="objectForm.properties[property.property_key]" :precision="property.data_type === 'integer' ? 0 : undefined" controls-position="right" />
-            <el-date-picker v-else-if="property.data_type === 'date'" v-model="objectForm.properties[property.property_key]" type="date" value-format="YYYY-MM-DD" />
-            <el-date-picker v-else-if="property.data_type === 'datetime'" v-model="objectForm.properties[property.property_key]" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" />
-            <el-input v-else v-model="objectForm.properties[property.property_key]" :type="property.data_type === 'text' || property.data_type === 'json' ? 'textarea' : 'text'" :rows="2" />
+          <el-form-item v-for="property in selectedObjectType?.properties || []" :key="property.property_key" :label="property.name" :required="property.required && !isEditingObjectIdentity(property)">
+            <template #label>
+              <span class="property-label">
+                <span>{{ property.name }}</span>
+                <el-tag v-if="isEditingObjectIdentity(property)" size="small" type="info" effect="plain">对象身份 · 只读</el-tag>
+              </span>
+            </template>
+            <div v-if="isEditingObjectIdentity(property)" class="immutable-property-field" role="note" :aria-label="`${property.name}：${formatStateValue(objectPropertyValue(property.property_key), property.property_key)}，对象身份，只读`">
+              <div class="immutable-property-value">
+                <code>{{ formatStateValue(objectPropertyValue(property.property_key), property.property_key) }}</code>
+                <span>对象主标识</span>
+              </div>
+              <small>用于同步、去重和关系定位；编辑时不可修改。</small>
+            </div>
+            <template v-else>
+              <el-switch v-if="property.data_type === 'boolean'" v-model="objectForm.properties[property.property_key]" />
+              <el-input-number v-else-if="property.data_type === 'integer' || property.data_type === 'number'" v-model="objectForm.properties[property.property_key]" :precision="property.data_type === 'integer' ? 0 : undefined" controls-position="right" />
+              <el-date-picker v-else-if="property.data_type === 'date'" v-model="objectForm.properties[property.property_key]" type="date" value-format="YYYY-MM-DD" />
+              <el-date-picker v-else-if="property.data_type === 'datetime'" v-model="objectForm.properties[property.property_key]" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" />
+              <el-input v-else v-model="objectForm.properties[property.property_key]" :type="property.data_type === 'text' || property.data_type === 'json' ? 'textarea' : 'text'" :rows="2" />
+            </template>
           </el-form-item>
         </div>
       </el-form>
@@ -531,12 +549,13 @@ import {
   type OntologyLink,
   type OntologyLinkType,
   type OntologyObject,
+  type OntologyProperty,
   type OntologyObjectType,
   type OntologySummary,
   type SemanticDomain,
   type TwinSyncRun,
 } from '../api'
-import { authState, isAdmin } from '../stores/auth'
+import { authState, isTechnicalUser } from '../stores/auth'
 import { formatDateTime, isDateTimeField, isDateTimeValue } from '../utils/datetime'
 import { Connection, Delete, Edit, Plus, Refresh, VideoPlay } from '@element-plus/icons-vue'
 
@@ -583,7 +602,7 @@ const PROPERTY_PREVIEW_LIMIT = 4
 
 const currentDomain = computed(() => domains.value.find((item) => item.id === domainId.value) || null)
 const activeModelRelease = computed(() => context.value?.model_release || null)
-const canManage = computed(() => isAdmin())
+const canManage = computed(() => isTechnicalUser())
 const currentRole = computed(() => authState.currentUser?.role || 'user')
 const selectedObjectType = computed(() => objectTypes.value.find((item) => item.id === objectForm.object_type_id))
 const selectedLinkType = computed(() => linkTypes.value.find((item) => item.id === linkForm.link_type_id))
@@ -749,6 +768,7 @@ async function handleInstancePageSizeChange(pageSize: number) {
 function openObjectDialog(row?: OntologyObject) {
   objectForm.id = row?.id || null
   objectForm.object_type_id = row?.object_type_id || instanceTypeId.value || objectTypes.value[0]?.id || null
+  objectForm.primary_value = row?.primary_value ?? null
   objectForm.properties = row ? JSON.parse(JSON.stringify(row.properties || {})) : {}
   if (row) {
     for (const property of selectedObjectType.value?.properties || []) {
@@ -764,6 +784,7 @@ function openObjectDialog(row?: OntologyObject) {
 }
 
 function resetObjectProperties() {
+  objectForm.primary_value = null
   objectForm.properties = {}
   for (const property of selectedObjectType.value?.properties || []) {
     if (property.default_value !== null && property.default_value !== undefined) {
@@ -772,6 +793,14 @@ function resetObjectProperties() {
         : property.default_value
     }
   }
+}
+
+function isEditingObjectIdentity(property: OntologyProperty) {
+  return Boolean(objectForm.id) && property.property_key === selectedObjectType.value?.primary_property
+}
+
+function objectPropertyValue(propertyKey: string) {
+  return objectForm.properties?.[propertyKey] ?? objectForm.primary_value
 }
 
 async function saveObject() {
@@ -1099,7 +1128,7 @@ function runStat(run: TwinSyncRun, key: string) {
 function syncActionHint(row: OntologyObjectType, dryRun: boolean) {
   if (!row.sync_enabled) return '请先在企业模型中配置只读同步查询'
   if (!activeModelRelease.value) return '请先创建、校验并激活统一企业模型版本'
-  if (!dryRun && !canManage.value) return '只有管理员可以执行写入型同步'
+  if (!dryRun && !canManage.value) return '只有技术工程师可以执行写入型同步'
   return ''
 }
 
@@ -1245,14 +1274,14 @@ function errorMessage(error: unknown) {
 .runtime-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin-bottom: 16px;
+  margin-bottom: 10px;
   overflow: hidden;
   border: 1px solid var(--wq-border);
 }
 
 .runtime-summary > div {
   min-width: 0;
-  padding: 15px 18px;
+  padding: 10px 13px;
   display: grid;
   gap: 4px;
   border-right: 1px solid var(--wq-border);
@@ -1270,9 +1299,14 @@ function errorMessage(error: unknown) {
 
 .runtime-summary strong {
   color: var(--wq-text);
-  font-size: 22px;
+  font-size: 19px;
   line-height: 1.25;
 }
+
+.runtime-flow-disclosure { margin: 6px 0 10px; border: 1px solid var(--wq-border); border-radius: 7px; background: var(--wq-surface); }
+.runtime-flow-disclosure > summary { padding: 7px 11px; color: var(--wq-muted); font-size: 12px; font-weight: 650; cursor: pointer; }
+.runtime-flow-disclosure[open] > summary { border-bottom: 1px solid var(--wq-border); color: var(--wq-primary-strong); }
+.runtime-flow-disclosure .runtime-flow { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
 
 .runtime-summary .summary-time {
   font-size: 15px;
@@ -1642,6 +1676,75 @@ function errorMessage(error: unknown) {
 .form-grid :deep(.el-input-number),
 .form-grid :deep(.el-date-editor) {
   width: 100%;
+}
+
+.property-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.property-label > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.property-label :deep(.el-tag) {
+  flex: 0 0 auto;
+  height: 20px;
+  padding-inline: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.immutable-property-field {
+  display: grid;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 11px 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #f8fafc;
+}
+
+.immutable-property-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.immutable-property-value code {
+  min-width: 0;
+  overflow: hidden;
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.immutable-property-value span,
+.immutable-property-field small {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.immutable-property-value span {
+  flex: 0 0 auto;
+  letter-spacing: .02em;
+}
+
+.immutable-property-field small {
+  display: block;
 }
 
 .panel-heading {

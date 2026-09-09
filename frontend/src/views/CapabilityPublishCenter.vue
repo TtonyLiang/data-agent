@@ -39,6 +39,8 @@
     />
 
     <template v-else-if="currentDomain">
+      <details class="publish-chain-disclosure">
+        <summary>能力发布链路</summary>
       <section class="publish-chain" aria-label="能力发布链路">
         <div>
           <span>企业模型</span>
@@ -55,6 +57,7 @@
           <strong>外部 Agent 与业务应用</strong>
         </div>
       </section>
+      </details>
 
       <section class="capability-summary">
         <div>
@@ -498,7 +501,7 @@ import {
   type OntologyQueryCapability,
   type SemanticDomain,
 } from '../api'
-import { isAdmin } from '../stores/auth'
+import { isTechnicalUser } from '../stores/auth'
 import { formatDateTime } from '../utils/datetime'
 
 interface ContractView {
@@ -548,7 +551,7 @@ const grantForm = reactive({
 const currentDomain = computed(() => domains.value.find((item) => item.id === domainId.value) || null)
 const actions = computed(() => context.value?.actions || [])
 const tools = computed(() => context.value?.tools || [])
-const canManage = computed(() => isAdmin())
+const canManage = computed(() => isTechnicalUser())
 const activeModelRelease = computed(() => context.value?.model_release || null)
 const selectedGrants = computed(() => (
   selectedClient.value ? grantsByClient.value[selectedClient.value.id] || [] : []
@@ -913,6 +916,11 @@ function errorMessage(error: unknown) {
   box-shadow: var(--wq-shadow-sm);
 }
 
+.publish-chain-disclosure { margin-bottom: 10px; border: 1px solid var(--wq-border); border-radius: 7px; background: var(--wq-surface); }
+.publish-chain-disclosure > summary { padding: 7px 11px; color: var(--wq-muted); font-size: 12px; font-weight: 650; cursor: pointer; }
+.publish-chain-disclosure[open] > summary { border-bottom: 1px solid var(--wq-border); color: var(--wq-primary-strong); }
+.publish-chain-disclosure .publish-chain { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+
 .publish-chain > div {
   display: grid;
   gap: 3px;
@@ -948,7 +956,7 @@ function errorMessage(error: unknown) {
 
 .capability-summary > div {
   min-width: 0;
-  padding: 15px 18px;
+  padding: 10px 13px;
   display: grid;
   gap: 4px;
   border-right: 1px solid var(--wq-border);
@@ -969,7 +977,7 @@ function errorMessage(error: unknown) {
 
 .capability-summary strong {
   color: var(--wq-text);
-  font-size: 22px;
+  font-size: 19px;
   line-height: 1.25;
 }
 

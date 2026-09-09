@@ -176,29 +176,37 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="name" label="名称" min-width="150" />
+        <el-table-column label="数据源" min-width="210">
+          <template #default="{ row }">
+            <div class="table-name-cell"><strong>{{ row.name }}</strong><code>#{{ row.id }} · {{ row.database_name }}</code></div>
+          </template>
+        </el-table-column>
         <el-table-column prop="db_type" label="类型" width="100" />
-        <el-table-column prop="host" label="主机" min-width="180" />
-        <el-table-column prop="port" label="端口" width="90" />
-        <el-table-column prop="database_name" label="数据库" min-width="160" />
+        <el-table-column label="连接地址" min-width="210" show-overflow-tooltip>
+          <template #default="{ row }"><code>{{ row.host }}:{{ row.port }}</code></template>
+        </el-table-column>
         <el-table-column prop="status" label="状态" width="110">
           <template #default="{ row }">
             <el-tag :type="row.status === 'active' ? 'success' : 'danger'" size="small" round>
-              {{ row.status }}
+              {{ row.status === 'active' ? '已启用' : row.status === 'disabled' ? '已停用' : row.status || '未设置' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="470" fixed="right">
+        <el-table-column label="操作" width="230" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" @click="openDatasourceDetail(row)">详情</el-button>
-            <el-button size="small" @click="openEdit(row)">编辑</el-button>
-            <el-button size="small" @click="handleTest(row.id)">测试连接</el-button>
-            <el-button size="small" type="primary" plain @click="openSchemaPanel(row)">表结构</el-button>
-            <el-button size="small" type="warning" plain @click="openPermissionDrawer(row)">
-              访问权限
-            </el-button>
-            <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
+            <div class="datasource-row-actions">
+              <el-button size="small" link type="primary" @click="openSchemaPanel(row)">表结构</el-button>
+              <el-button size="small" link @click="openPermissionDrawer(row)">访问权限</el-button>
+              <el-dropdown trigger="click">
+                <el-button size="small" text :icon="MoreFilled" :aria-label="`更多数据源操作：${row.name}`" title="更多操作" />
+                <template #dropdown><el-dropdown-menu>
+                  <el-dropdown-item :icon="View" @click="openDatasourceDetail(row)">详情</el-dropdown-item>
+                  <el-dropdown-item :icon="Edit" @click="openEdit(row)">编辑</el-dropdown-item>
+                  <el-dropdown-item :icon="Connection" @click="handleTest(row.id)">测试连接</el-dropdown-item>
+                  <el-dropdown-item divided :icon="Delete" class="datasource-delete" @click="handleDelete(row)">删除</el-dropdown-item>
+                </el-dropdown-menu></template>
+              </el-dropdown>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -489,7 +497,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, MoreFilled, View, Edit, Connection, Delete } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   fetchAllSemanticDomains,
@@ -1097,7 +1105,7 @@ async function handleDelete(ds: DatasourceItem) {
   height: 100%;
   min-height: 0;
   overflow: auto;
-  padding: 28px;
+  padding: 18px var(--wq-page-gutter) 24px !important;
   background: var(--wq-bg);
 }
 
@@ -1106,19 +1114,19 @@ async function handleDelete(ds: DatasourceItem) {
   justify-content: space-between;
   align-items: flex-end;
   gap: 20px;
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 
 .page-header h2 {
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1.25;
   color: var(--wq-text);
 }
 
 .page-header p {
-  margin-top: 8px;
+  margin-top: 4px;
   color: var(--wq-muted);
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .header-actions {
@@ -1241,6 +1249,11 @@ async function handleDelete(ds: DatasourceItem) {
   gap: 10px;
   white-space: nowrap;
 }
+
+.datasource-row-actions { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
+.datasource-row-actions :deep(.el-button) { margin-left: 0; }
+.datasource-row-actions :deep(.el-dropdown .el-button) { width: 30px; padding: 0; }
+:global(.datasource-delete) { color: var(--wq-danger); }
 
 :global(.table-detail-drawer .el-drawer__header) {
   margin-bottom: 0;

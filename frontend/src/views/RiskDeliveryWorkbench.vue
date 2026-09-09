@@ -47,7 +47,7 @@
 
     <el-empty
       v-if="!domainLoading && domains.length === 0"
-      :description="isAdmin() ? '暂无可用领域，请先在企业模型中完成领域配置' : '暂无可访问业务领域，请联系管理员分配验证客户端权限'"
+      :description="isTechnicalUser() ? '暂无可用领域，请先在企业模型中完成领域配置' : '暂无可访问业务领域，请联系技术工程师完成领域配置'"
     >
       <el-button type="primary" :icon="Refresh" @click="loadDomains">重新加载</el-button>
     </el-empty>
@@ -941,7 +941,7 @@ import {
   Refresh,
   View,
 } from '@element-plus/icons-vue'
-import { authState, isAdmin } from '../stores/auth'
+import { authState, isTechnicalUser } from '../stores/auth'
 import { formatDateTime, isDateTimeValue } from '../utils/datetime'
 
 type DomainOption = { id: number; name: string; domain_key?: string }
@@ -1029,7 +1029,7 @@ const reviewActionOptions = computed(() => availableReviewActions(textField(sele
 function focusControl(control: FocusableControl | undefined) {
   requestAnimationFrame(() => control?.focus())
 }
-const canFinalize = computed(() => isAdmin())
+const canFinalize = computed(() => isTechnicalUser())
 const reportVersionViews = computed(() => reportVersions.value.map((version) => {
   const issues = reportVersionIssues(version)
   return {
@@ -1262,7 +1262,7 @@ function availableReviewActions(status: string) {
 }
 
 function canReviewIssue(row: RiskIssue) {
-  if (isAdmin()) return true
+  if (isTechnicalUser()) return true
   const user = authState.currentUser
   if (!user || numberField(row, 'created_by') === user.id) return false
   const assignee = textField(row, 'assignee').trim()
@@ -2322,18 +2322,18 @@ onMounted(loadDomains)
 }
 
 .page-toolbar {
-  min-height: 66px;
+  min-height: 56px;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 20px;
-  padding-bottom: 14px;
+  padding-bottom: 10px;
   border-bottom: 1px solid var(--wq-border);
 }
 
 .title-group { min-width: 0; }
-.title-group h2 { color: var(--wq-text); font-size: 23px; line-height: 1.25; letter-spacing: 0; }
-.title-group p { margin-top: 8px; color: var(--wq-muted); font-size: 14px; }
+.title-group h2 { color: var(--wq-text); font-size: 20px; line-height: 1.25; letter-spacing: 0; }
+.title-group p { margin-top: 4px; color: var(--wq-muted); font-size: 12px; }
 .toolbar-actions, .section-toolbar, .section-actions, .detail-heading, .record-line, .version-heading { display: flex; align-items: center; }
 .toolbar-actions { justify-content: flex-end; gap: 8px; }
 .domain-select { width: 230px; }
@@ -2345,16 +2345,16 @@ onMounted(loadDomains)
   display: grid;
   grid-template-columns: repeat(5, minmax(120px, 1fr));
   gap: 1px;
-  margin: 14px 0 8px;
+  margin: 8px 0 4px;
   background: var(--wq-border);
   border: 1px solid var(--wq-border);
   border-radius: 7px;
   overflow: hidden;
 }
 
-.metric-item { position: relative; min-height: 76px; padding: 13px 16px; background: var(--wq-surface); border-top: 3px solid transparent; transition: background-color 160ms ease; }
+.metric-item { position: relative; min-height: 62px; padding: 10px 14px; background: var(--wq-surface); border-top: 3px solid transparent; transition: background-color 160ms ease; }
 .metric-item span { display: block; color: var(--wq-muted); font-size: 12px; }
-.metric-item strong { display: block; margin-top: 3px; color: var(--risk-ink); font-size: 25px; font-weight: 720; line-height: 1.1; }
+.metric-item strong { display: block; margin-top: 2px; color: var(--risk-ink); font-size: 21px; font-weight: 720; line-height: 1.1; }
 .metric-item .el-icon { position: absolute; right: 14px; top: 22px; color: var(--wq-subtle); font-size: 24px; }
 .metric-item.has-value { background: #fcfdff; }
 .metric-item.is-empty strong, .metric-item.is-empty .el-icon { color: var(--wq-subtle); }
@@ -2368,9 +2368,9 @@ onMounted(loadDomains)
 .metric-item.tone-success strong, .metric-item.tone-success .el-icon { color: #067647; }
 .metric-item.tone-neutral { border-top-color: var(--wq-border-strong); }
 
-.workspace-tabs { min-width: 0; min-height: 0; flex: 1; }
-.workspace-tabs :deep(.el-tabs__header) { margin: 0; }
-.workspace-tabs :deep(.el-tabs__content) { min-width: 0; height: calc(100% - 40px); }
+.workspace-tabs { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.workspace-tabs :deep(.el-tabs__header) { margin: 0; flex: 0 0 auto; }
+.workspace-tabs :deep(.el-tabs__content) { min-width: 0; min-height: 0; flex: 1; }
 .workspace-tabs :deep(.el-tab-pane) { min-width: 0; height: 100%; }
 .workspace-tabs :deep(.el-tabs__item) { height: 42px; color: #475467; font-weight: 600; }
 .workspace-tabs :deep(.el-tabs__item.is-active) { color: var(--risk-accent); }
@@ -2388,14 +2388,15 @@ onMounted(loadDomains)
 .table-section:not(:has(.section-error)):not(:has(.audit-result)) { grid-template-rows: auto minmax(0, 1fr); }
 .audit-section:has(.audit-result):not(:has(.section-error)) { grid-template-rows: auto auto minmax(0, 1fr); }
 .audit-section:has(.audit-result):has(.section-error) { grid-template-rows: auto auto auto minmax(0, 1fr); }
-.section-toolbar { min-height: 66px; justify-content: space-between; gap: 18px; padding: 0 2px; border-bottom: 1px solid var(--wq-border); }
+.section-toolbar { min-height: 54px; justify-content: space-between; gap: 14px; padding: 0 2px; border-bottom: 1px solid var(--wq-border); }
 .section-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .section-heading-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .section-heading strong { color: var(--risk-ink); font-size: 15px; }
 .section-heading span { color: var(--wq-muted); font-size: 11px; line-height: 1.45; }
 .section-heading em { display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px; color: #475467; background: var(--risk-soft); border: 1px solid #d0d5dd; border-radius: 5px; font-size: 11px; font-style: normal; white-space: nowrap; }
 .section-actions { justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
-.filter-group { padding: 5px; background: var(--risk-soft); border: 1px solid var(--risk-line); border-radius: 7px; }
+.filter-group { padding: 0; background: transparent; border: 0; }
+.filter-group .filter-select { width: 126px; }
 .filter-select { width: 138px; }
 .section-error, .audit-result { margin: 10px 0; }
 .workbench-table { width: 100%; min-height: 0; height: 100%; }
