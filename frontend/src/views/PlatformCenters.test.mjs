@@ -40,14 +40,25 @@ assert.ok(
 
 assert.ok(
   modelSource.includes('企业模型') &&
-    modelSource.includes('先确定业务领域，再维护模型、数据口径和运行版本') &&
+    modelSource.includes('围绕业务对象完成建模、数据绑定和版本发布') &&
     modelSource.includes('v-model="domainId"') &&
     modelSource.includes('新建领域') &&
     modelSource.includes('领域管理') &&
     modelSource.includes('upsertSemanticDomain') &&
-    modelSource.includes('业务本体') &&
-    modelSource.includes('语义与数据') &&
-    modelSource.includes('版本发布') &&
+    modelSource.includes('业务模型') &&
+    modelSource.includes('数据绑定') &&
+    modelSource.includes('校验发布') &&
+    modelSource.includes('业务对象与动作') &&
+    modelSource.includes('指标与业务规则') &&
+    modelSource.includes('class="business-model-switch-heading"') &&
+    modelSource.includes('当前工作区') &&
+    modelSource.includes('class="business-model-switch-options"') &&
+    modelSource.includes('business-model-tab-index') &&
+    modelSource.includes('business-model-tab-indicator') &&
+    modelSource.includes('定义对象、关系、状态与动作') &&
+    modelSource.includes('维护指标口径、阈值与业务判断') &&
+    modelSource.includes('mode="business"') &&
+    modelSource.includes('mode="binding"') &&
     modelSource.includes('ModelReleaseCenter') &&
     modelSource.includes('复制企业模型') &&
     modelSource.includes('导入企业模型包') &&
@@ -81,10 +92,16 @@ assert.ok(
 )
 
 assert.ok(
-  releaseSource.includes('企业模型版本') &&
+  releaseSource.includes('校验发布与企业模型版本') &&
     releaseSource.includes('defineProps') &&
     !releaseSource.includes('fetchAllSemanticDomains') &&
     releaseSource.includes('创建统一版本') &&
+    releaseSource.includes('业务语义校验') &&
+    releaseSource.includes('查询运行时检查') &&
+    releaseSource.includes('创建语义快照') &&
+    releaseSource.includes('更新验证检索索引') &&
+    releaseSource.includes('buildSemanticRuntime') &&
+    releaseSource.includes('syncSemanticVector') &&
     releaseSource.includes('validateEnterpriseModelRelease') &&
     releaseSource.includes('activateEnterpriseModelRelease') &&
     releaseSource.includes('rollbackEnterpriseModelRelease') &&
@@ -104,7 +121,7 @@ assert.ok(
     twinSource.includes('预览不会写入对象') &&
     twinSource.includes(':scrollbar-tabindex="-1"') &&
     twinSource.includes('activeModelRelease') &&
-    twinSource.includes('只有管理员可以执行写入型同步') &&
+    twinSource.includes('只有技术工程师可以执行写入型同步') &&
     twinSource.includes('当前领域没有激活的统一企业模型版本') &&
     twinSource.includes('当前页面是手动运行入口，不表示已经接入 CDC 或自动调度') &&
     twinSource.includes('对象身份合并与状态历史'),
@@ -145,6 +162,13 @@ assert.ok(
 
 assert.ok(
   twinSource.includes('const PROPERTY_PREVIEW_LIMIT = 4') &&
+    twinSource.includes('class="immutable-property-field"') &&
+    twinSource.includes('对象身份 · 只读') &&
+    twinSource.includes('用于同步、去重和关系定位；编辑时不可修改。') &&
+    twinSource.includes('对象主标识') &&
+    twinSource.includes('role="note"') &&
+    twinSource.includes('function objectPropertyValue') &&
+    twinSource.includes('function isEditingObjectIdentity') &&
     twinSource.includes('objectPropertyPreview(row.properties)') &&
     twinSource.includes('popper-class="object-property-tooltip"') &&
     twinSource.includes('role="note"') &&

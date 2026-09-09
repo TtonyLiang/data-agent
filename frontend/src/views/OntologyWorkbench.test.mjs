@@ -83,18 +83,18 @@ assert.ok(
 
 assert.ok(
   appSource.includes('问渠 WenQu') &&
-    appSource.includes('企业本体数字孪生与智能决策平台') &&
+  appSource.includes('企业本体数字孪生与智能决策平台') &&
     appSource.includes('企业模型') &&
     appSource.includes('风险交付') &&
-    source.includes('<h2>业务本体与动作</h2>'),
+    source.includes('<h2>对象、关系与动作</h2>'),
   'product branding should present enterprise modeling as the platform foundation and retain risk delivery',
 )
 
 assert.ok(
   !source.includes('title-icon') &&
-    source.includes('.title-group h2 { color: var(--wq-text); font-size: 22px;') &&
-    source.includes('.title-group p { margin-top: 8px;') &&
-    source.includes('font-size: 14px;'),
+    source.includes('.title-group h2 { color: var(--wq-text); font-size: 18px;') &&
+    source.includes('.title-group p { margin-top: 2px;') &&
+    source.includes('font-size: 11px;'),
   'ontology page heading should match the plain typography used by other management pages',
 )
 
@@ -265,16 +265,20 @@ assert.ok(
 )
 
 assert.ok(
-  source.includes('这里只画对象类型和业务动作，不是审批流程图') &&
-    source.includes('实体或业务记录，如客户、贷款申请单') &&
-    source.includes('贷款申请单 = 对象') &&
-    source.includes('审批状态 = 状态') &&
-    source.includes('审批贷款申请 = 动作') &&
-    source.includes('对象类型（实体/业务记录）') &&
-    source.includes('业务动作（处理行为）') &&
-    source.includes('事件/状态') &&
-    source.includes('记录发生过什么、现在到哪一步'),
-  'ontology graph should explain the boundary between object types, states, actions, and business process',
+  source.includes('class="graph-guide-intro"') &&
+    source.includes('class="graph-guide-kicker">图谱阅读') &&
+    source.includes('这里只展示业务结构，不代表审批流程顺序') &&
+    source.includes('class="graph-guide-items"') &&
+    source.includes('class="graph-guide-item guide-object"') &&
+    source.includes('class="graph-guide-item guide-relation"') &&
+    source.includes('class="graph-guide-item guide-action"') &&
+    source.includes('class="graph-guide-item guide-state"') &&
+    source.includes('实体或业务记录') &&
+    source.includes('对象之间的业务连接') &&
+    source.includes('对对象执行的处理') &&
+    source.includes('记录发生过什么或当前阶段') &&
+    source.includes('class="graph-guide-example-label">示例'),
+  'ontology graph should present the boundary between object types, relations, actions, and states with structured contrast',
 )
 
 assert.ok(
@@ -288,7 +292,7 @@ assert.ok(
   objectDialogSource.includes('建议按顺序配置') &&
     objectDialogSource.includes('先确认业务含义，再完成技术映射') &&
     objectDialogSource.includes('业务人员确认') &&
-    objectDialogSource.includes('管理员或数据工程师配置') &&
+    objectDialogSource.includes('技术工程师配置') &&
     objectDialogSource.indexOf('id="object-business-title"') < objectDialogSource.indexOf('id="object-property-title"') &&
     objectDialogSource.indexOf('id="object-property-title"') < objectDialogSource.indexOf('id="object-mapping-title"'),
   'object creation should separate business definition, object identity, and technical mapping in that order',
@@ -341,7 +345,7 @@ assert.ok(
     actionDialogSource.includes('保存时自动转换为动作的状态前置条件和状态效果') &&
     actionDialogSource.includes('只有 Agent 或业务应用需要提供的输入才添加') &&
     actionDialogSource.includes('技术标识（留空自动生成）') &&
-    actionDialogSource.includes('供平台管理员配置权限、复杂条件和执行效果'),
+    actionDialogSource.includes('供技术工程师配置权限、复杂条件和执行效果'),
   'action creation should expose intent, state transition, and business inputs before folded governance and execution DSL settings',
 )
 

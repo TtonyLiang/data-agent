@@ -2,7 +2,7 @@
   <div class="ontology-page" v-loading="loading" :aria-busy="loading">
     <header class="page-toolbar">
       <div class="title-group">
-        <h2>业务本体与动作</h2>
+        <h2>对象、关系与动作</h2>
         <p v-if="currentDomain">{{ currentDomain.name }} · 定义业务对象、关系、状态和可执行动作</p>
       </div>
       <div class="toolbar-actions">
@@ -27,10 +27,10 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <el-button v-if="canManage" type="primary" :icon="Upload" :disabled="!domainId" @click="handlePublish">
+        <el-button v-if="canPublish" type="primary" :icon="Upload" :disabled="!domainId" @click="handlePublish">
           发布本体版本
         </el-button>
-        <el-tag v-else type="info" effect="plain">业务视图 · 只读建模</el-tag>
+        <el-tag v-if="!canPublish" type="info" effect="plain">业务建模 · 待技术发布</el-tag>
       </div>
     </header>
 
@@ -56,20 +56,38 @@
         <el-tab-pane label="本体图谱" name="graph">
           <section class="graph-panel">
             <div class="graph-guide" role="note" aria-label="本体图谱阅读提示">
-              <div class="graph-guide-heading">
-                <strong>怎么看这张图</strong>
-                <span>这里只画对象类型和业务动作，不是审批流程图</span>
+              <div class="graph-guide-intro">
+                <span class="graph-guide-kicker">图谱阅读</span>
+                <div class="graph-guide-heading">
+                  <strong>怎么看这张图</strong>
+                  <span>这里只展示业务结构，不代表审批流程顺序</span>
+                </div>
               </div>
-              <div class="graph-guide-items">
-                <span><b>对象</b>实体或业务记录，如客户、贷款申请单</span>
-                <span><b>关系</b>对象之间怎么连接</span>
-                <span><b>动作</b>对对象执行的处理，如审批、催收</span>
-                <span><b>事件/状态</b>记录发生过什么、现在到哪一步</span>
-              </div>
-              <div class="graph-guide-example">
-                <span class="guide-object">贷款申请单 = 对象</span>
-                <span class="guide-state">审批状态 = 状态</span>
-                <span class="guide-action">审批贷款申请 = 动作</span>
+              <div class="graph-guide-body">
+                <div class="graph-guide-items" aria-label="图谱元素说明">
+                  <div class="graph-guide-item guide-object">
+                    <span class="graph-guide-dot" aria-hidden="true"></span>
+                    <span><b>对象</b><small>实体或业务记录</small></span>
+                  </div>
+                  <div class="graph-guide-item guide-relation">
+                    <span class="graph-guide-dot" aria-hidden="true"></span>
+                    <span><b>关系</b><small>对象之间的业务连接</small></span>
+                  </div>
+                  <div class="graph-guide-item guide-action">
+                    <span class="graph-guide-dot" aria-hidden="true"></span>
+                    <span><b>动作</b><small>对对象执行的处理</small></span>
+                  </div>
+                  <div class="graph-guide-item guide-state">
+                    <span class="graph-guide-dot" aria-hidden="true"></span>
+                    <span><b>事件 / 状态</b><small>记录发生过什么或当前阶段</small></span>
+                  </div>
+                </div>
+                <div class="graph-guide-example">
+                  <span class="graph-guide-example-label">示例</span>
+                  <span class="guide-object"><b>贷款申请单</b><small>对象</small></span>
+                  <span class="guide-state"><b>审批状态</b><small>状态</small></span>
+                  <span class="guide-action"><b>审批贷款申请</b><small>动作</small></span>
+                </div>
               </div>
             </div>
             <div ref="graphElement" class="ontology-graph" role="img" :aria-label="graphAriaLabel" />
@@ -307,7 +325,7 @@
           <ol class="object-form-steps">
             <li><b>1</b><span><strong>定义业务对象</strong><small>业务人员确认</small></span></li>
             <li><b>2</b><span><strong>定义属性与身份</strong><small>业务与技术共同确认</small></span></li>
-            <li><b>3</b><span><strong>映射业务数据</strong><small>管理员或数据工程师配置</small></span></li>
+            <li><b>3</b><span><strong>映射业务数据</strong><small>技术工程师配置</small></span></li>
           </ol>
         </div>
 
@@ -381,22 +399,34 @@
           </header>
           <div class="technical-guidance" role="note">
             <strong>当前版本采用只读 SQL 映射</strong>
-            <span>由平台管理员或数据工程师配置。数据库列通过 <code>AS 属性标识</code> 对应对象属性，保存时只校验和记录配置，不执行同步。</span>
+            <span>由技术工程师配置。数据库列通过 <code>AS 属性标识</code> 对应对象属性，保存时只校验和记录配置，不执行同步。</span>
           </div>
           <div class="form-grid two sync-config-grid">
-            <el-form-item label="从业务库同步"><el-switch v-model="objectTypeForm.sync_enabled" active-text="启用" inactive-text="不启用" /></el-form-item>
-            <el-form-item label="单次读取上限"><el-input-number v-model="objectTypeForm.sync_limit" :min="1" :max="1000" controls-position="right" /></el-form-item>
+            <el-form-item label="从业务库同步"><el-switch v-model="objectTypeForm.sync_enabled" :disabled="!canManageData" active-text="启用" inactive-text="不启用" /></el-form-item>
+            <el-form-item label="单次读取上限"><el-input-number v-model="objectTypeForm.sync_limit" :disabled="!canManageData" :min="1" :max="1000" controls-position="right" /></el-form-item>
           </div>
           <el-form-item v-if="objectTypeForm.sync_enabled" label="只读同步 SELECT（技术配置）" required>
             <el-input
               v-model="objectTypeForm.source_query"
               class="source-query-input"
+              :disabled="!canManageData"
               type="textarea"
               :rows="7"
               spellcheck="false"
               placeholder="SELECT physical_column AS property_key FROM business_table ORDER BY primary_key DESC"
             />
             <span class="form-help">仅支持安全的只读 SELECT，并且必须包含稳定的 ORDER BY。保存后完成模型校验与激活，再到“孪生运行”先预览、后执行。</span>
+            <div class="mapping-preview-bar" role="note">
+              <span>发布前先测试：检查权限、返回列、主属性唯一性和样例数据。</span>
+              <el-button
+                type="primary"
+                plain
+                size="small"
+                :loading="mappingPreviewLoading"
+                :disabled="!canManageData || !canPreviewMapping"
+                @click="previewObjectMapping"
+              >测试映射</el-button>
+            </div>
           </el-form-item>
           <p v-else class="sync-disabled-note">不启用时仍可保存对象定义，后续可以通过页面、接口或导入本体包创建对象实例。</p>
         </section>
@@ -407,6 +437,55 @@
           <div><el-button @click="objectTypeDialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveObjectType">保存对象类型</el-button></div>
         </div>
       </template>
+    </el-dialog>
+
+    <el-dialog v-model="mappingPreviewDialog" class="mapping-preview-dialog" title="对象映射测试" width="920px">
+      <template v-if="mappingPreview">
+        <el-alert
+          :type="mappingPreview.valid ? 'success' : 'error'"
+          :closable="false"
+          :title="mappingPreview.valid ? '映射检查通过，可以进入模型校验与发布。' : '映射检查未通过，请先处理下面的错误。'"
+        />
+        <div class="mapping-preview-summary">
+          <div><span>源表</span><strong>{{ mappingPreview.query.tables.join('、') || '未识别' }}</strong></div>
+          <div><span>源记录</span><strong>{{ mappingPreview.statistics.available ? mappingPreview.statistics.total_rows : '未知' }}</strong></div>
+          <div><span>列覆盖</span><strong>{{ mappingPreview.mapping.mapped.length }} / {{ objectTypeForm.properties.length }}</strong></div>
+          <div><span>主属性重复</span><strong>{{ mappingPreview.statistics.duplicate_primary_rows ?? '未知' }}</strong></div>
+        </div>
+        <section class="mapping-preview-section">
+          <h4>字段映射</h4>
+          <div v-if="mappingPreview.mapping.missing.length" class="mapping-preview-list is-error">
+            <span v-for="item in mappingPreview.mapping.missing" :key="item.property_key">缺少 {{ item.name }}（{{ item.property_key }}）</span>
+          </div>
+          <p v-else class="mapping-preview-ok">已找到全部对象属性列。</p>
+          <p v-if="mappingPreview.mapping.unmapped_columns.length" class="mapping-preview-warning">
+            未使用的查询列：{{ mappingPreview.mapping.unmapped_columns.join('、') }}
+          </p>
+        </section>
+        <section v-if="mappingPreview.errors.length" class="mapping-preview-section">
+          <h4>错误</h4>
+          <div class="mapping-preview-list is-error">
+            <span v-for="(item, index) in mappingPreview.errors" :key="index">{{ previewIssueText(item) }}</span>
+          </div>
+        </section>
+        <section v-if="mappingPreview.warnings.length" class="mapping-preview-section">
+          <h4>提醒</h4>
+          <div class="mapping-preview-list is-warning">
+            <span v-for="(item, index) in mappingPreview.warnings" :key="index">{{ previewIssueText(item) }}</span>
+          </div>
+        </section>
+        <section class="mapping-preview-section">
+          <h4>样例数据（{{ mappingPreview.statistics.sample_rows }} 行）</h4>
+          <el-table v-if="mappingPreview.sample_rows.length" :data="mappingPreview.sample_rows" border size="small" max-height="260">
+            <el-table-column v-for="property in objectTypeForm.properties" :key="property.property_key" :label="property.name || property.property_key" :prop="property.property_key" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">{{ previewValue(row[property.property_key]) }}</template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-else description="暂无样例数据" :image-size="64" />
+        </section>
+      </template>
+      <el-empty v-else description="尚未执行映射测试" />
+      <template #footer><el-button @click="mappingPreviewDialog = false">关闭</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="linkTypeDialog" class="model-type-dialog" :title="linkTypeForm.id ? '编辑业务关系' : '新建业务关系'" width="720px" @opened="focusControl(linkKeyInput)">
@@ -453,8 +532,8 @@
         <div class="builder-list"><div v-for="(parameter, index) in actionTypeForm.parameters" :key="index" class="builder-row parameter-builder"><el-input v-model="parameter.name" placeholder="业务名称，如 审批金额" /><el-select v-model="parameter.data_type"><el-option v-for="item in propertyTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select><el-checkbox v-model="parameter.required">必填</el-checkbox><el-input v-model="parameter.parameter_key" placeholder="技术标识（留空自动生成）" /><el-input v-model="parameter.options_text" placeholder="可选值，逗号分隔" /><el-button text type="danger" :icon="Delete" :aria-label="`移除动作参数 ${parameter.name || parameter.parameter_key || index + 1}`" @click="actionTypeForm.parameters.splice(index, 1)" /></div></div>
         <details class="advanced-model-settings">
           <summary>高级执行与治理配置</summary>
-          <div class="advanced-section-note">供平台管理员配置权限、复杂条件和执行效果；基础业务动作通常保持默认即可。</div>
-          <div class="form-grid three advanced-model-grid"><el-form-item label="授权角色"><el-select v-model="actionTypeForm.allowed_roles" multiple><el-option label="管理员" value="admin" /><el-option label="业务用户" value="user" /></el-select></el-form-item><el-form-item label="模型状态"><el-select v-model="actionTypeForm.status"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item><el-form-item label="审批单号要求"><el-switch v-model="actionTypeForm.requires_approval" active-text="需要审批单号" inactive-text="不要求审批单号" /></el-form-item></div>
+          <div class="advanced-section-note">供技术工程师配置权限、复杂条件和执行效果；基础业务动作通常保持默认即可。</div>
+          <div class="form-grid three advanced-model-grid"><el-form-item label="授权角色"><el-select v-model="actionTypeForm.allowed_roles" multiple><el-option label="技术工程师" value="admin" /><el-option label="业务人员" value="user" /></el-select></el-form-item><el-form-item label="模型状态"><el-select v-model="actionTypeForm.status"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item><el-form-item label="审批单号要求"><el-switch v-model="actionTypeForm.requires_approval" active-text="需要审批单号" inactive-text="不要求审批单号" /></el-form-item></div>
           <div class="subsection-title"><strong>前置条件</strong><el-button text type="primary" :icon="Plus" @click="addPrecondition">添加条件</el-button></div>
           <div class="builder-list"><div v-for="(condition, index) in actionTypeForm.preconditions" :key="index" class="builder-row condition-builder"><el-select v-model="condition.property" placeholder="对象属性"><el-option v-for="p in targetProperties" :key="p.property_key" :label="p.name" :value="p.property_key" /></el-select><el-select v-model="condition.operator"><el-option v-for="item in operators" :key="item.value" :label="item.label" :value="item.value" /></el-select><el-input v-model="condition.value_text" placeholder="期望值或 $param.x" /><el-input v-model="condition.message" placeholder="不满足时提示" /><el-button text type="danger" :icon="Delete" :aria-label="`移除前置条件 ${index + 1}`" @click="actionTypeForm.preconditions.splice(index, 1)" /></div></div>
           <div class="subsection-title"><strong>状态效果</strong><el-button text type="primary" :icon="Plus" @click="addEffect">添加效果</el-button></div>
@@ -492,6 +571,7 @@ import {
   fetchOntologySummary,
   importOntologyBundle,
   publishOntology,
+  previewOntologyObjectMapping,
   saveOntologyActionType,
   saveOntologyLinkType,
   saveOntologyObjectType,
@@ -499,12 +579,13 @@ import {
   type OntologyActionType,
   type OntologyLinkType,
   type OntologyObjectType,
+  type OntologyMappingPreviewResult,
   type OntologyProperty,
   type OntologyPropertyType,
   type OntologySummary,
   type SemanticDomain,
 } from '../api'
-import { isAdmin } from '../stores/auth'
+import { canEditModel, canPublishModel, isTechnicalUser } from '../stores/auth'
 import { formatDateTime } from '../utils/datetime'
 import { ArrowRight, CircleCheck, Delete, Download, Edit, FolderOpened, MoreFilled, Plus, Upload } from '@element-plus/icons-vue'
 
@@ -534,7 +615,9 @@ let observedGraphElement: HTMLElement | null = null
 let graphSize = { width: 0, height: 0 }
 let resizeFrame: number | null = null
 
-const canManage = computed(() => isAdmin())
+const canManage = computed(() => canEditModel())
+const canPublish = computed(() => canPublishModel())
+const canManageData = computed(() => isTechnicalUser())
 const metrics = computed(() => [
   { label: '对象类型', value: summary.value?.counts.object_types || 0, icon: 'Box', target: 'objects' },
   { label: '关系类型', value: summary.value?.counts.link_types || 0, icon: 'Connection', target: 'relations' },
@@ -567,6 +650,9 @@ const operators = [
 
 const objectTypeDialog = ref(false)
 const objectTypeForm = reactive<any>(emptyObjectType())
+const mappingPreviewDialog = ref(false)
+const mappingPreviewLoading = ref(false)
+const mappingPreview = ref<OntologyMappingPreviewResult | null>(null)
 const linkTypeDialog = ref(false)
 const linkTypeForm = reactive<any>(emptyLinkType())
 const actionTypeDialog = ref(false)
@@ -601,6 +687,14 @@ const targetStatusProperties = computed<OntologyProperty[]>(() => {
 })
 const objectPropertyOptions = computed<OntologyProperty[]>(() => (objectTypeForm.properties || []).filter(
   (property: OntologyProperty) => Boolean(String(property.property_key || '').trim()),
+))
+const canPreviewMapping = computed(() => Boolean(
+  canManage.value &&
+  objectTypeForm.sync_enabled &&
+  cleanText(objectTypeForm.source_query) &&
+  cleanText(objectTypeForm.object_key) &&
+  cleanText(objectTypeForm.primary_property) &&
+  objectTypeForm.properties?.length,
 ))
 
 function emptyObjectType() { return { id: null, object_key: '', name: '', description: '', primary_property: '', display_property: '', sync_enabled: false, source_query: '', sync_limit: 200, status: 'draft', properties: [] as any[] } }
@@ -815,6 +909,33 @@ async function saveObjectType() {
   for (const key of ['last_sync_status', 'last_sync_count', 'last_sync_total', 'last_sync_error', 'last_synced_at']) delete payload[key]
   saving.value = true; try { await saveOntologyObjectType(domainId.value, payload); ElMessage.success('对象类型已保存'); objectTypeDialog.value = false; await refreshAll() } catch (error) { ElMessage.error(String(errorMessage(error))) } finally { saving.value = false }
 }
+async function previewObjectMapping() {
+  if (!domainId.value || !canPreviewMapping.value) return
+  const payload: Record<string, unknown> = {
+    ...objectTypeForm,
+    domain_id: domainId.value,
+    source_query: cleanText(objectTypeForm.source_query),
+    sync_limit: Number(objectTypeForm.sync_limit || 200),
+    properties: JSON.parse(JSON.stringify(objectTypeForm.properties || [])),
+  }
+  for (const key of ['last_sync_status', 'last_sync_count', 'last_sync_total', 'last_sync_error', 'last_synced_at']) delete payload[key]
+  mappingPreviewLoading.value = true
+  try {
+    mappingPreview.value = await previewOntologyObjectMapping(domainId.value, payload)
+    mappingPreviewDialog.value = true
+  } catch (error) {
+    ElMessage.error(String(errorMessage(error)))
+  } finally {
+    mappingPreviewLoading.value = false
+  }
+}
+function previewValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return '—'
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
+function previewIssueText(item: Record<string, unknown>) {
+  return cleanText(item.message) || cleanText(item.code) || '检查未通过'
+}
 async function removeObjectType(row: OntologyObjectType) { await ElMessageBox.confirm(`删除对象类型“${row.name}”将同时删除相关关系、动作和实例。`, '删除对象类型', { type: 'warning' }); await deleteOntologyObjectType(row.domain_id, row.id); ElMessage.success('已删除'); await refreshAll() }
 
 function openLinkTypeDialog(row?: OntologyLinkType) { replaceReactive(linkTypeForm, row ? { ...emptyLinkType(), ...JSON.parse(JSON.stringify(row)) } : { ...emptyLinkType(), source_object_key: objectTypes.value[0]?.object_key || '', target_object_key: objectTypes.value[1]?.object_key || objectTypes.value[0]?.object_key || '' }); linkTypeDialog.value = true }
@@ -995,25 +1116,44 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ontology-page { width: 100%; max-width: var(--wq-page-max-width); height: 100%; min-height: 0; min-width: 0; margin: 0 auto; padding-inline: var(--wq-page-gutter); padding-bottom: var(--wq-page-bottom-gap); display: flex; flex-direction: column; overflow: hidden; color: var(--wq-text); }
-.page-toolbar { min-height: 66px; display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--wq-border); }
+.page-toolbar { min-height: 48px; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding-bottom: 7px; border-bottom: 1px solid var(--wq-border); }
 .toolbar-actions, .section-toolbar, .subsection-title { display: flex; align-items: center; }
 .file-input { display: none; }
-.title-group { min-width: 0; }.title-group h2 { color: var(--wq-text); font-size: 22px; line-height: 1.25; }.title-group p { margin-top: 8px; color: var(--wq-muted); font-size: 14px; }.toolbar-actions { justify-content: flex-end; gap: 8px; flex-wrap: nowrap; min-width: 0; }.toolbar-actions :deep(.el-button) { margin-left: 0; white-space: nowrap; }.toolbar-actions :deep(.el-dropdown) { flex: 0 0 auto; }.model-version-status { display: inline-flex; flex: 0 0 auto; align-items: center; min-height: 32px; padding-right: 4px; }.model-more-button { min-width: 76px; }
-.metric-strip { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 1px; margin: 14px 0 8px; background: var(--wq-border); border: 1px solid var(--wq-border); border-radius: 7px; overflow: hidden; }.metric-item { position: relative; min-height: 72px; padding: 13px 16px; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; appearance: none; background: var(--wq-surface); transition: background-color 140ms ease; }.metric-item:hover { background: var(--wq-primary-soft); }.metric-item:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--wq-primary); outline-offset: -2px; }.metric-item span { display: block; color: var(--wq-muted); font-size: 12px; }.metric-item strong { display: block; margin-top: 3px; font-size: 23px; font-weight: 680; }.metric-item .el-icon { position: absolute; right: 14px; top: 22px; color: var(--wq-subtle); font-size: 24px; }
-.workspace-tabs { min-width: 0; min-height: 0; flex: 1; }.workspace-tabs :deep(.el-tabs__header) { margin: 0; }.workspace-tabs :deep(.el-tabs__content) { min-width: 0; height: calc(100% - 40px); }.workspace-tabs :deep(.el-tab-pane) { min-width: 0; height: 100%; }.graph-panel { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; height: 100%; min-height: 0; overflow: hidden; background: #fff; border-bottom: 1px solid var(--wq-border); }.ontology-graph { width: 100%; height: 100%; min-height: 0; }.graph-empty { position: absolute; inset: 0; background: #fff; }
-.graph-guide { display: grid; gap: 8px; padding: 12px 16px 11px; border-bottom: 1px solid #dbe4ef; background: linear-gradient(90deg, #f5f9ff 0%, #fbfdff 100%); color: var(--wq-muted); font-size: 12px; line-height: 1.45; }
-.graph-guide-heading { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.graph-guide-heading strong { color: var(--wq-text); font-size: 13px; font-weight: 700; }
-.graph-guide-heading span { color: var(--wq-muted); }
-.graph-guide-items, .graph-guide-example { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
-.graph-guide-items > span { white-space: nowrap; }
-.graph-guide-items b { color: var(--wq-text); font-weight: 700; }
-.graph-guide-example > span { display: inline-flex; align-items: center; min-height: 23px; padding: 0 7px; border: 1px solid #d0d5dd; border-radius: 5px; background: #fff; color: var(--wq-text); font-size: 11px; white-space: nowrap; }
-.graph-guide-example .guide-object { border-color: #a6e4c9; color: #067647; background: #effaf4; }
-.graph-guide-example .guide-state { border-color: #b2ddff; color: #175cd3; background: #eff8ff; }
-.graph-guide-example .guide-action { border-color: #f7c58b; color: #b54708; background: #fff7ed; }
+.title-group { min-width: 0; }.title-group h2 { color: var(--wq-text); font-size: 18px; line-height: 1.2; }.title-group p { margin-top: 2px; color: var(--wq-muted); font-size: 11px; line-height: 1.25; }.toolbar-actions { justify-content: flex-end; gap: 6px; flex-wrap: nowrap; min-width: 0; }.toolbar-actions :deep(.el-button) { margin-left: 0; white-space: nowrap; }.toolbar-actions :deep(.el-dropdown) { flex: 0 0 auto; }.model-version-status { display: inline-flex; flex: 0 0 auto; align-items: center; min-height: 28px; padding-right: 2px; }.model-more-button { min-width: 68px; }
+.metric-strip { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 1px; margin: 5px 0 3px; background: var(--wq-border); border: 1px solid var(--wq-border); border-radius: 7px; overflow: hidden; }.metric-item { position: relative; min-height: 54px; padding: 8px 12px; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; appearance: none; background: var(--wq-surface); transition: background-color 140ms ease; }.metric-item:hover { background: var(--wq-primary-soft); }.metric-item:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--wq-primary); outline-offset: -2px; }.metric-item span { display: block; color: var(--wq-muted); font-size: 10px; }.metric-item strong { display: block; margin-top: 1px; font-size: 18px; font-weight: 680; }.metric-item .el-icon { position: absolute; right: 10px; top: 14px; color: var(--wq-subtle); font-size: 24px; }
+.workspace-tabs { min-width: 0; min-height: 0; flex: 1; }.workspace-tabs :deep(.el-tabs__header) { height: 32px; margin: 0; }.workspace-tabs :deep(.el-tabs__item) { height: 32px; line-height: 32px; font-size: 13px; }.workspace-tabs :deep(.el-tabs__content) { min-width: 0; height: calc(100% - 32px); }.workspace-tabs :deep(.el-tab-pane) { min-width: 0; height: 100%; }.graph-panel { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; height: 100%; min-height: 0; overflow: hidden; background: #fff; border-bottom: 1px solid var(--wq-border); }.ontology-graph { width: 100%; height: 100%; min-height: 0; }.graph-empty { position: absolute; inset: 0; background: #fff; }
+.graph-guide { display: grid; grid-template-columns: minmax(170px, .55fr) minmax(0, 2.45fr); gap: 8px 16px; padding: 7px 12px 6px; border-bottom: 1px solid #cfd8e3; background: #f7f9fc; color: var(--wq-muted); font-size: 11px; line-height: 1.3; }
+.graph-guide-intro { display: grid; align-content: center; gap: 4px; min-width: 0; padding-right: 16px; border-right: 1px solid #dbe4ef; }
+.graph-guide-kicker { color: var(--wq-primary-strong); font-size: 11px; font-weight: 700; line-height: 1.3; }
+.graph-guide-heading { display: grid; gap: 3px; }
+.graph-guide-heading strong { color: var(--wq-text); font-size: 14px; font-weight: 700; line-height: 1.35; }
+.graph-guide-heading span { color: #475467; font-size: 11px; line-height: 1.45; }
+.graph-guide-body { display: grid; gap: 6px; min-width: 0; }
+.graph-guide-items { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; min-width: 0; }
+.graph-guide-item { display: grid; grid-template-columns: 6px minmax(0, 1fr); align-items: start; gap: 8px; min-width: 0; min-height: 41px; padding: 6px 8px; background: #fff; border: 1px solid #dbe4ef; border-radius: 6px; }
+.graph-guide-item > span:last-child { display: grid; gap: 2px; min-width: 0; }
+.graph-guide-item b { color: var(--wq-text); font-size: 12px; font-weight: 700; line-height: 1.2; }.graph-guide-item small { overflow: hidden; color: #667085; font-size: 10px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.graph-guide-dot { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: #98a2b3; }
+.graph-guide-item.guide-object { border-color: #a6e4c9; background: #f4fbf7; }
+.graph-guide-item.guide-object .graph-guide-dot { background: #067647; }
+.graph-guide-item.guide-relation { border-color: #b2ddff; background: #f4f9ff; }
+.graph-guide-item.guide-relation .graph-guide-dot { background: #175cd3; }
+.graph-guide-item.guide-action { border-color: #f7c58b; background: #fffaf5; }
+.graph-guide-item.guide-action .graph-guide-dot { background: #b54708; }
+.graph-guide-item.guide-state { border-color: #d0d5dd; background: #fafbfc; }
+.graph-guide-item.guide-state .graph-guide-dot { background: #475467; }
+.graph-guide-example { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.graph-guide-example-label { color: #475467; font-size: 11px; font-weight: 700; }
+.graph-guide-example > span:not(.graph-guide-example-label) { display: inline-flex; align-items: center; gap: 6px; min-height: 23px; padding: 2px 8px; background: #fff; border: 1px solid #d0d5dd; border-radius: 6px; white-space: nowrap; }
+.graph-guide-example b { color: var(--wq-text); font-size: 11px; font-weight: 650; }
+.graph-guide-example small { color: #667085; font-size: 10px; }
+.graph-guide-example .guide-object { border-color: #a6e4c9; background: #effaf4; }
+.graph-guide-example .guide-state { border-color: #b2ddff; background: #eff8ff; }
+.graph-guide-example .guide-action { border-color: #f7c58b; background: #fff7ed; }
 .table-section { height: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: var(--wq-surface); }.section-toolbar { height: auto; min-height: 54px; justify-content: space-between; border-bottom: 1px solid var(--wq-border); }.section-toolbar > div { display: flex; align-items: baseline; gap: 8px; }.section-toolbar span { color: var(--wq-muted); font-size: 12px; }.ontology-table { width: 100%; min-height: 0; height: 100%; }
 .sync-status-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }.sync-status-cell small { color: var(--wq-muted); font-size: 11px; white-space: nowrap; }.muted { color: var(--wq-muted); }.source-query-input :deep(textarea) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; }
+.mapping-preview-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; padding: 9px 11px; border: 1px solid #b2ddff; border-radius: 6px; background: #f5f9ff; color: var(--wq-muted); font-size: 12px; line-height: 1.45; }.mapping-preview-bar .el-button { flex: 0 0 auto; margin-left: 0; }
+.mapping-preview-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 14px 0; }.mapping-preview-summary > div { min-width: 0; padding: 10px 12px; border: 1px solid var(--wq-border); border-radius: 6px; background: #f8fafc; }.mapping-preview-summary span { display: block; color: var(--wq-muted); font-size: 11px; }.mapping-preview-summary strong { display: block; margin-top: 4px; overflow: hidden; color: var(--wq-text); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }.mapping-preview-section { margin-top: 16px; }.mapping-preview-section h4 { margin: 0 0 8px; color: var(--wq-text); font-size: 13px; }.mapping-preview-section p { margin: 0; color: var(--wq-muted); font-size: 12px; line-height: 1.5; }.mapping-preview-list { display: grid; gap: 5px; padding: 8px 10px; border-radius: 5px; font-size: 12px; line-height: 1.5; }.mapping-preview-list.is-error { color: #b42318; background: #fef3f2; }.mapping-preview-list.is-warning { color: #b54708; background: #fffaeb; }.mapping-preview-ok { color: #067647 !important; }.mapping-preview-warning { margin-top: 8px !important; color: #b54708 !important; }
 .table-actions { display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 0; flex-wrap: nowrap; white-space: nowrap; }
 .table-actions :deep(.el-tooltip__trigger) { display: inline-flex; }
 .table-action-btn { flex: 0 0 30px; width: 30px; height: 30px; min-height: 30px; padding: 0; margin: 0 !important; border-radius: 6px; color: var(--wq-muted); }
@@ -1100,6 +1240,11 @@ onBeforeUnmount(() => {
   .relation-flow { min-width: 280px; }
 }
 
+@media (max-width: 1050px) {
+  .graph-guide { grid-template-columns: 1fr; gap: 10px; }
+  .graph-guide-intro { padding-right: 0; padding-bottom: 9px; border-right: 0; border-bottom: 1px solid #dbe4ef; }
+}
+
 @media (max-width: 760px) {
   .workspace-tabs :deep(.el-tabs__nav-wrap) { overflow-x: auto; }
   .workspace-tabs :deep(.el-tabs__nav) { min-width: max-content; }
@@ -1113,6 +1258,14 @@ onBeforeUnmount(() => {
   .relation-flow { min-width: 250px; }
   .action-counts { gap: 5px; }
   .action-counts > span { min-width: 36px; padding-inline: 4px; }
+  .graph-guide { padding: 12px; }
+  .graph-guide-items { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .graph-guide-example { align-items: flex-start; }
+}
+
+@media (max-width: 480px) {
+  .graph-guide-items { grid-template-columns: 1fr; }
+  .graph-guide-example > span:not(.graph-guide-example-label) { flex: 1 1 100%; justify-content: space-between; }
 }
 
 @media (prefers-reduced-motion: reduce) {

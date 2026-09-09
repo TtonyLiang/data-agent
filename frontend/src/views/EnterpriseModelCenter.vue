@@ -4,7 +4,7 @@
       <div class="model-center-bar">
         <div class="model-center-title">
           <strong>企业模型</strong>
-          <span>先确定业务领域，再维护模型、数据口径和运行版本</span>
+          <span>围绕业务对象完成建模、数据绑定和版本发布</span>
         </div>
 
         <section class="domain-context" aria-label="当前业务领域">
@@ -67,7 +67,7 @@
           :aria-current="activeSection === 'ontology' ? 'step' : undefined"
           @click="selectSection('ontology')"
         >
-          <span><b>业务本体</b><small>对象、关系、状态与动作</small></span>
+          <span><b>业务模型</b><small>对象、关系、指标、规则与动作</small></span>
         </button>
         <button
           v-if="canManage"
@@ -77,7 +77,7 @@
           :aria-current="activeSection === 'semantic' ? 'step' : undefined"
           @click="selectSection('semantic')"
         >
-          <span><b>语义与数据</b><small>指标、规则、映射与查询口径</small></span>
+          <span><b>数据绑定</b><small>对象来源、字段、JOIN 与计算</small></span>
         </button>
         <button
           v-if="canManage"
@@ -87,7 +87,7 @@
           :aria-current="activeSection === 'release' ? 'step' : undefined"
           @click="selectSection('release')"
         >
-          <span><b>版本发布</b><small>绑定、校验、激活与回滚</small></span>
+          <span><b>校验发布</b><small>预览、校验、激活与回滚</small></span>
         </button>
       </nav>
     </header>
@@ -97,13 +97,62 @@
         v-if="!domainId"
         :description="canManage ? '请先新建或选择一个业务领域' : '暂无可访问业务领域，请联系管理员分配验证客户端权限'"
       />
-      <OntologyWorkbench
-        v-else-if="activeSection === 'ontology'"
-        :domain-id="domainId"
-        :current-domain="currentDomain"
-      />
+      <div v-else-if="activeSection === 'ontology'" class="business-model-workspace">
+        <div class="business-model-switch" role="tablist" aria-label="业务模型工作区">
+          <div class="business-model-switch-heading">
+            <span>当前工作区</span>
+            <strong>业务模型</strong>
+            <small>选择要维护的模型内容</small>
+          </div>
+          <div class="business-model-switch-options">
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="businessView === 'ontology'"
+              :class="{ active: businessView === 'ontology' }"
+              @click="businessView = 'ontology'"
+            >
+              <span class="business-model-tab-index" aria-hidden="true">01</span>
+              <span class="business-model-tab-copy">
+                <b>业务对象与动作</b>
+                <small>定义对象、关系、状态与动作</small>
+              </span>
+              <span class="business-model-tab-indicator" aria-hidden="true"></span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="businessView === 'metrics'"
+              :class="{ active: businessView === 'metrics' }"
+              @click="businessView = 'metrics'"
+            >
+              <span class="business-model-tab-index" aria-hidden="true">02</span>
+              <span class="business-model-tab-copy">
+                <b>指标与业务规则</b>
+                <small>维护指标口径、阈值与业务判断</small>
+              </span>
+              <span class="business-model-tab-indicator" aria-hidden="true"></span>
+            </button>
+          </div>
+        </div>
+        <div class="business-model-content">
+          <OntologyWorkbench
+            v-if="businessView === 'ontology'"
+            :domain-id="domainId"
+            :current-domain="currentDomain"
+          />
+          <KnowledgeConfig
+            v-else
+            mode="business"
+            :domain-id="domainId"
+            :current-domain="currentDomain"
+            @domain-updated="loadDomains(domainId)"
+          />
+        </div>
+      </div>
       <KnowledgeConfig
         v-else-if="activeSection === 'semantic'"
+        mode="binding"
         :domain-id="domainId"
         :current-domain="currentDomain"
         @domain-updated="loadDomains(domainId)"
@@ -188,7 +237,7 @@ import {
   type SemanticDomain,
   type SemanticDomainRequest,
 } from '../api'
-import { isAdmin } from '../stores/auth'
+import { canEditModel } from '../stores/auth'
 
 const OntologyWorkbench = defineAsyncComponent(() => import('./OntologyWorkbench.vue'))
 const KnowledgeConfig = defineAsyncComponent(() => import('./KnowledgeConfig.vue'))
@@ -208,7 +257,8 @@ const domainDialogMode = ref<'create' | 'edit'>('create')
 const domainImportInput = ref<HTMLInputElement>()
 const domainNameInput = ref<{ focus: () => void }>()
 const domainForm = ref<SemanticDomainRequest>(emptyDomain())
-const canManage = computed(() => isAdmin())
+const businessView = ref<'ontology' | 'metrics'>('ontology')
+const canManage = computed(() => canEditModel())
 const currentDomain = computed<SemanticDomain | null>(() => (
   domains.value.find((domain) => domain.id === domainId.value) || null
 ))
@@ -326,6 +376,7 @@ async function saveDomain() {
     const selectedId = Number(result.id || payload.id || 0) || null
     showDomainDialog.value = false
     await loadDomains(selectedId)
+    businessView.value = 'ontology'
     await router.replace({ path: '/enterprise-model', query: { section: 'ontology' } })
     ElMessage.success(result.message || '业务领域已保存')
   } catch (error) {
@@ -438,7 +489,7 @@ async function handleDomainImport(event: Event) {
       await importOntologyBundle(importedDomainId, bundle.ontology, true)
     }
     await loadDomains(importedDomainId)
-    ElMessage.success(enterpriseBundle ? '企业模型已导入，请校验后发布' : '旧版语义包已导入；业务本体仍需补充')
+    ElMessage.success(enterpriseBundle ? '企业模型已导入，请校验后发布' : '旧版语义包已导入；业务对象与动作仍需补充')
   } catch (error) {
     if (importedDomainId) {
       try { await deleteSemanticDomain(importedDomainId) } catch { /* 保留原始错误提示 */ }
@@ -466,10 +517,10 @@ function errorMessage(error: unknown, fallback: string) {
 <style scoped>
 .enterprise-model-center { width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--wq-bg); }
 .model-center-header { flex: 0 0 auto; background: var(--wq-surface); border-bottom: 1px solid var(--wq-border); }
-.model-center-bar { width: 100%; max-width: var(--wq-page-max-width); min-height: 72px; margin: 0 auto; padding: 10px var(--wq-page-gutter); display: grid; grid-template-columns: minmax(190px, .55fr) minmax(0, 2.45fr); align-items: center; gap: 24px; border-bottom: 1px solid var(--wq-border); }
+.model-center-bar { width: 100%; max-width: var(--wq-page-max-width); min-height: 54px; margin: 0 auto; padding: 5px var(--wq-page-gutter); display: grid; grid-template-columns: minmax(170px, .48fr) minmax(0, 2.52fr); align-items: center; gap: 16px; border-bottom: 1px solid var(--wq-border); }
 .model-center-title { min-width: 0; display: grid; gap: 3px; }
-.model-center-title strong { color: var(--wq-text); font-size: 18px; line-height: 1.3; }
-.model-center-title span, .domain-meta > span, .domain-field-label { color: var(--wq-muted); font-size: 12px; }
+.model-center-title strong { color: var(--wq-text); font-size: 16px; line-height: 1.3; }
+.model-center-title span, .domain-meta > span, .domain-field-label { color: var(--wq-muted); font-size: 10px; }
 .domain-context { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 .domain-field { min-width: 0; display: flex; align-items: center; gap: 9px; }
 .domain-field-label { flex: 0 0 auto; font-weight: 650; }
@@ -477,25 +528,55 @@ function errorMessage(error: unknown, fallback: string) {
 .domain-meta, .domain-actions { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
 .domain-meta > span { max-width: 210px; overflow: hidden; text-overflow: ellipsis; }
 .domain-actions { flex: 0 0 auto; }
-.model-sections { width: 100%; max-width: var(--wq-page-max-width); min-width: 0; min-height: 52px; margin: 0 auto; padding: 0 var(--wq-page-gutter); display: flex; align-items: stretch; gap: 30px; }
+.model-sections { width: 100%; max-width: var(--wq-page-max-width); min-width: 0; min-height: 38px; margin: 0 auto; padding: 0 var(--wq-page-gutter); display: flex; align-items: stretch; gap: 24px; }
 .model-sections.single { max-width: 420px; }
-.model-sections button { position: relative; min-width: 150px; min-height: 52px; padding: 8px 2px 9px; display: flex; align-items: center; color: var(--wq-muted); text-align: left; background: transparent; border: 0; border-bottom: 3px solid transparent; border-radius: 0; cursor: pointer; }
+.model-sections button { position: relative; min-width: 145px; min-height: 38px; padding: 3px 2px 4px; display: flex; align-items: center; color: var(--wq-muted); text-align: left; background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; cursor: pointer; }
 .model-sections button:hover:not(:disabled) { color: var(--wq-text); }
 .model-sections button:focus-visible { outline: 2px solid var(--wq-primary); outline-offset: -4px; }
 .model-sections button.active { color: var(--wq-primary-strong); border-bottom-color: var(--wq-primary); }
 .model-sections button:disabled { cursor: not-allowed; opacity: .55; }
 .model-sections button > span:last-child { min-width: 0; display: grid; gap: 1px; }
 .model-sections b, .model-sections small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.model-sections b { font-size: 14px; }
-.model-sections small { color: var(--wq-subtle); font-size: 12px; }
+.model-sections b { font-size: 12px; line-height: 1.15; }.model-sections small { color: var(--wq-subtle); font-size: 10px; line-height: 1.15; }
 .model-sections button.active small { color: var(--wq-primary-strong); }
 .model-center-workspace { min-height: 0; flex: 1; overflow: hidden; }
+.model-center-workspace > .page-shell,
+.model-center-workspace > .model-release-center { min-height: 0; }
 .model-center-workspace > .el-empty { height: 100%; }
+.business-model-workspace { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.business-model-switch { flex: 0 0 auto; width: 100%; max-width: var(--wq-page-max-width); margin: 0 auto; padding: 7px var(--wq-page-gutter) 6px; display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 0; background: var(--wq-bg); border-bottom: 1px solid var(--wq-border); }
+.business-model-switch-heading { display: none; }
+.business-model-switch-heading > span { color: var(--wq-primary-strong); font-size: 11px; font-weight: 700; line-height: 1.3; }
+.business-model-switch-heading strong { color: var(--wq-text); font-size: 15px; line-height: 1.35; }
+.business-model-switch-heading small { color: var(--wq-muted); font-size: 11px; line-height: 1.4; }
+.business-model-switch-options { display: grid; grid-template-columns: repeat(2, minmax(0, 290px)); justify-content: start; gap: 8px; width: 100%; }
+.business-model-switch button { position: relative; min-width: 0; min-height: 46px; padding: 6px 10px; display: grid; grid-template-columns: 26px minmax(0, 1fr) 8px; align-items: center; gap: 8px; color: var(--wq-text); text-align: left; background: var(--wq-surface); border: 1px solid var(--wq-border-strong); border-radius: 7px; cursor: pointer; transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 100ms ease; }
+.business-model-switch button:hover { border-color: #93b4fb; background: #fbfdff; }
+.business-model-switch button:active { transform: scale(.99); }
+.business-model-switch button:focus-visible { outline: 2px solid var(--wq-primary); outline-offset: 2px; }
+.business-model-switch button.active { color: var(--wq-primary-strong); background: #eaf2ff; border-color: var(--wq-primary); box-shadow: inset 3px 0 0 var(--wq-primary), 0 2px 6px rgba(37, 99, 235, .08); }
+.business-model-tab-index { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; color: var(--wq-muted); background: #f2f4f7; border: 1px solid #d0d5dd; border-radius: 5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; }
+.business-model-switch button.active .business-model-tab-index { color: #fff; background: var(--wq-primary); border-color: var(--wq-primary); }
+.business-model-tab-copy { display: grid; gap: 3px; min-width: 0; }
+.business-model-tab-copy b, .business-model-tab-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.business-model-tab-copy b { font-size: 12px; line-height: 1.2; }.business-model-tab-copy small { color: var(--wq-muted); font-size: 10px; line-height: 1.2; }
+.business-model-switch button.active .business-model-tab-copy small { color: #175cd3; }
+.business-model-tab-indicator { width: 8px; height: 8px; justify-self: end; border-radius: 50%; background: #cbd5e1; }
+.business-model-switch button.active .business-model-tab-indicator { background: var(--wq-primary); box-shadow: 0 0 0 4px rgba(37, 99, 235, .14); }
+.business-model-content { flex: 1; min-height: 0; overflow: hidden; }
 .file-input { display: none; }
 @media (max-width: 1120px) {
   .model-center-bar { grid-template-columns: 170px minmax(0, 1fr); gap: 16px; }
   .domain-context { flex-wrap: wrap; }
   .domain-meta > span { display: none; }
+}
+@media (min-width: 1121px) and (max-height: 820px) {
+  .model-center-title span { display: none; }
+  .model-center-bar { min-height: 56px; padding-block: 5px; }
+  .model-sections { min-height: 40px; }
+  .model-sections button { min-height: 40px; padding-block: 3px; }
+  .business-model-switch { padding-block: 7px; }
+  .business-model-switch button { min-height: 48px; padding-block: 6px; }
 }
 @media (max-width: 760px) {
   .model-center-bar { min-height: 0; padding: 12px 16px; grid-template-columns: 1fr; gap: 10px; }
@@ -506,9 +587,12 @@ function errorMessage(error: unknown, fallback: string) {
   .domain-meta > span { display: block; max-width: 100%; }
   .domain-actions { justify-self: end; }
   .model-sections { padding: 0 16px; flex-wrap: wrap; gap: 0 20px; }
-  .model-sections button { flex: 1 1 calc(50% - 10px); min-width: 140px; }
+  .model-sections button { flex: 1 1 calc(50% - 10px); min-width: 140px; min-height: 50px; padding: 7px 2px 8px; }
   .model-sections button > span:last-child { width: 100%; }
   .model-sections b, .model-sections small { white-space: normal; }
+  .model-sections small { line-height: 1.35; }
+  .business-model-switch { grid-template-columns: 1fr; gap: 10px; padding: 12px 16px; }
+  .business-model-switch-options { max-width: none; }
 }
 @media (max-width: 460px) {
   .domain-context { grid-template-columns: 1fr; }
@@ -517,5 +601,6 @@ function errorMessage(error: unknown, fallback: string) {
   .domain-actions :deep(.el-dropdown .el-button) { width: 100%; }
   .model-sections { display: grid; grid-template-columns: 1fr; gap: 0; }
   .model-sections button { min-width: 0; width: 100%; }
+  .business-model-switch-options { grid-template-columns: 1fr; }
 }
 </style>
