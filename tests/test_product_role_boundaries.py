@@ -115,9 +115,9 @@ async def test_product_roles_split_model_editing_from_data_and_publish():
     assert await deps.require_data_engineer(TECHNICAL) is TECHNICAL
     assert await deps.require_model_publisher(TECHNICAL) is TECHNICAL
 
-    with pytest.raises(HTTPException, match="技术工程师"):
+    with pytest.raises(HTTPException, match="技术人员"):
         await deps.require_data_engineer(BUSINESS)
-    with pytest.raises(HTTPException, match="技术工程师"):
+    with pytest.raises(HTTPException, match="技术人员"):
         await deps.require_model_publisher(BUSINESS)
 
 

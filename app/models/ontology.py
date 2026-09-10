@@ -61,8 +61,9 @@ class OntologyLinkTypePayload(BaseModel):
     target_object_key: Key = Field(pattern=KEY_PATTERN, max_length=128)
     source_property: Key | None = Field(default=None, pattern=KEY_PATTERN, max_length=128)
     target_property: Key | None = Field(default=None, pattern=KEY_PATTERN, max_length=128)
-    source_property_keys: list[Key] | None = Field(default=None, min_length=1)
-    target_property_keys: list[Key] | None = Field(default=None, min_length=1)
+    # Empty multi-select values mean “use the two object primary properties”.
+    source_property_keys: list[Key] | None = None
+    target_property_keys: list[Key] | None = None
     cardinality: Literal["one_to_one", "one_to_many", "many_to_one", "many_to_many"] = (
         "many_to_many"
     )
@@ -73,6 +74,8 @@ class OntologyLinkTypePayload(BaseModel):
     @classmethod
     def validate_property_keys(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
+            return None
+        if not value:
             return None
         if any(
             not isinstance(key, str)

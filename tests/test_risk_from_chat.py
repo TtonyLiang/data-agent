@@ -12,6 +12,26 @@ from app.services.risk_workflow_service import (
     RiskWorkflowService,
 )
 
+SEMANTIC_SNAPSHOT = {
+    "domain": {"id": 4, "domain_key": "loan_risk", "name": "贷款风控"},
+    "assets": {},
+}
+ONTOLOGY_DEFINITION = {
+    "domain": {"id": 4, "domain_key": "loan_risk", "name": "贷款风控"},
+    "object_types": [],
+    "link_types": [],
+    "action_types": [],
+}
+SEMANTIC_HASH = canonical_sha256(SEMANTIC_SNAPSHOT)
+ONTOLOGY_HASH = canonical_sha256(ONTOLOGY_DEFINITION)
+MODEL_HASH = canonical_sha256(
+    {
+        "format": "wenqu-enterprise-model-release/v1",
+        "semantic_snapshot_hash": SEMANTIC_HASH,
+        "ontology_definition_hash": ONTOLOGY_HASH,
+    }
+)
+
 
 class FakeResult:
     def __init__(self, rows=None, *, lastrowid=0, rowcount=0):
@@ -74,12 +94,30 @@ class ChatWorkflowSession:
                         "id": 33,
                         "version": 4,
                         "name": "贷款风控 V4",
-                        "definition_hash": "a" * 64,
+                        "definition_hash": ONTOLOGY_HASH,
                         "model_release_id": 43,
                         "model_release_version": 5,
-                        "model_hash": "c" * 64,
+                        "model_hash": MODEL_HASH,
                         "semantic_snapshot_id": 53,
-                        "semantic_snapshot_hash": "b" * 64,
+                        "semantic_snapshot_hash": SEMANTIC_HASH,
+                        "ontology_release_id": 33,
+                        "ontology_definition_hash": ONTOLOGY_HASH,
+                    }
+                ]
+            )
+        if sql.startswith("SELECT snapshot_json FROM semantic_domain_snapshot"):
+            return FakeResult(
+                [{"snapshot_json": json.dumps(SEMANTIC_SNAPSHOT, ensure_ascii=False)}]
+            )
+        if sql.startswith("SELECT definition_json, definition_hash FROM ontology_release"):
+            return FakeResult(
+                [
+                    {
+                        "definition_json": json.dumps(
+                            ONTOLOGY_DEFINITION,
+                            ensure_ascii=False,
+                        ),
+                        "definition_hash": ONTOLOGY_HASH,
                     }
                 ]
             )
@@ -292,7 +330,10 @@ async def test_regular_user_creates_issue_with_three_evidence_types_in_one_trans
 
 
 @pytest.mark.asyncio
-async def test_admin_trace_match_uses_compact_result_row_count_and_preview(monkeypatch):
+@pytest.mark.parametrize("role", ["admin", "technical"])
+async def test_technical_and_admin_trace_match_uses_compact_result_row_count_and_preview(
+    monkeypatch, role
+):
     compact_result = {
         "row_count": 500,
         "truncated": True,
@@ -317,7 +358,7 @@ async def test_admin_trace_match_uses_compact_result_row_count_and_preview(monke
 
     result = await service.create_issue_from_chat(
         payload(trace_id="trace-target", subject_object_id=None),
-        {"id": 1, "username": "admin", "role": "admin"},
+        {"id": 1, "username": role, "role": role},
     )
 
     assert result["source"]["chat_history_id"] == 30

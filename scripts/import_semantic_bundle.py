@@ -16,7 +16,6 @@ except ImportError:  # pragma: no cover - dotenv is optional for direct script u
 from app.db.mysql import get_management_db
 from app.services.semantic_runtime import get_semantic_runtime_service
 
-
 ASSET_GROUPS: tuple[tuple[str, str], ...] = (
     ("concepts", "concept"),
     ("relations", "relation"),

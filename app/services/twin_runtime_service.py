@@ -14,7 +14,6 @@ from app.services.model_release_service import get_model_release_service
 from app.services.ontology_service import (
     OntologyService,
     _content_hash,
-    _stable_release_definition,
     coerce_primary_value,
     get_ontology_service,
     property_definition,
@@ -76,12 +75,18 @@ class TwinRuntimeService:
             domain_id,
             datasource_id=datasource_id,
         )
+        release_definition = release_lineage["ontology_definition"]
+        release_metadata = {
+            key: value
+            for key, value in release_lineage.items()
+            if key != "ontology_definition"
+        }
         created = await self.create_run(
             domain_id=domain_id,
             datasource_id=datasource_id,
             object_type_id=object_type_id,
             model_release_id=int(release_lineage["id"]),
-            release_lineage=release_lineage,
+            release_lineage=release_metadata,
             caller_agent_id=access_agent_id,
             created_by=created_by,
             page=page,
@@ -100,6 +105,7 @@ class TwinRuntimeService:
                     object_type_id=object_type_id,
                     page=page,
                     page_size=page_size,
+                    release_definition=release_definition,
                 )
             else:
                 ontology = get_ontology_service()
@@ -109,22 +115,9 @@ class TwinRuntimeService:
                     object_type_id=object_type_id,
                     page=page,
                     page_size=page_size,
-                    sync_links=False,
+                    sync_links=sync_links,
+                    release_definition=release_definition,
                 )
-                if sync_links and result.get("objects"):
-                    try:
-                        result["links_synced"] = await ontology._sync_links_for_objects(
-                            domain_id,
-                            result["objects"],
-                        )
-                    except Exception as exc:
-                        logger.exception(
-                            "twin relationship sync failed trace_id=%s run_id=%s",
-                            created.get("trace_id"),
-                            run_id,
-                        )
-                        result["relationship_errors"] = [str(exc)]
-                        result["has_errors"] = True
             status = self._run_status(result)
             error_summary = self._error_summary(result)
             await self.complete_run(
@@ -133,7 +126,7 @@ class TwinRuntimeService:
                 statistics={
                     **self._statistics(result),
                     "permission": permission_context.metadata(),
-                    "model_release": release_lineage,
+                    "model_release": release_metadata,
                 },
                 error_summary=error_summary,
             )
@@ -144,7 +137,7 @@ class TwinRuntimeService:
                 statistics={
                     "dry_run": dry_run,
                     "permission": permission_context.metadata(),
-                    "model_release": release_lineage,
+                    "model_release": release_metadata,
                 },
                 error_summary=str(exc),
             )
@@ -160,6 +153,7 @@ class TwinRuntimeService:
         object_type_id: int | None,
         page: int,
         page_size: int | None,
+        release_definition: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         semantic_domain = await get_semantic_runtime_service().get_domain(domain_id)
         if semantic_domain is None:
@@ -176,8 +170,16 @@ class TwinRuntimeService:
         )
         if permission_context is None:
             raise PermissionError("对象同步预览缺少明确的权限主体")
-        object_types = await ontology.list_object_types(domain_id)
-        link_types = await ontology.list_link_types(domain_id)
+        if release_definition is None:
+            object_types = await ontology.list_object_types(domain_id)
+            link_types = await ontology.list_link_types(domain_id)
+        else:
+            scoped_definition = await ontology.prepare_release_sync_definition(
+                domain_id,
+                release_definition,
+            )
+            object_types = scoped_definition["object_types"]
+            link_types = scoped_definition["link_types"]
         if object_type_id is not None:
             object_types = [
                 item for item in object_types if int(item["id"]) == object_type_id
@@ -477,7 +479,7 @@ class TwinRuntimeService:
         *,
         datasource_id: int,
     ) -> dict[str, Any]:
-        """Require an intact active release whose Ontology matches live sync definitions."""
+        """Load and validate the immutable active release used by sync."""
         release = await get_model_release_service().get_active_release(
             domain_id,
             required=True,
@@ -518,26 +520,21 @@ class TwinRuntimeService:
         )
         if not rows:
             raise ValueError("激活企业模型关联的 Ontology 发布不存在，拒绝同步")
+        stored_definition = rows[0].get("definition_json") or {}
+        if isinstance(stored_definition, str):
+            try:
+                stored_definition = json.loads(stored_definition)
+            except json.JSONDecodeError as exc:
+                raise ValueError("Ontology 发布定义无法校验，拒绝同步") from exc
+        if not isinstance(stored_definition, dict):
+            raise ValueError("Ontology 发布定义无效，拒绝同步")
+        actual_ontology_hash = _content_hash(stored_definition)
         stored_ontology_hash = str(rows[0].get("definition_hash") or "")
         expected_ontology_hash = str(release.get("ontology_definition_hash") or "")
-        if not stored_ontology_hash:
-            stored_definition = rows[0].get("definition_json") or {}
-            if isinstance(stored_definition, str):
-                try:
-                    stored_definition = json.loads(stored_definition)
-                except json.JSONDecodeError as exc:
-                    raise ValueError("Ontology 发布定义无法校验，拒绝同步") from exc
-            stored_ontology_hash = _content_hash(stored_definition)
-        if stored_ontology_hash != expected_ontology_hash:
+        if stored_ontology_hash and stored_ontology_hash != actual_ontology_hash:
             raise ValueError("激活企业模型关联的 Ontology 发布内容已变化，拒绝同步")
-
-        live_bundle = await get_ontology_service().export_bundle(
-            domain_id,
-            include_instances=False,
-        )
-        live_ontology_hash = _content_hash(_stable_release_definition(live_bundle))
-        if live_ontology_hash != expected_ontology_hash:
-            raise ValueError("实时 Ontology 定义已偏离激活版本，请重新发布后再同步")
+        if not expected_ontology_hash or actual_ontology_hash != expected_ontology_hash:
+            raise ValueError("激活企业模型关联的 Ontology 发布内容哈希校验失败，拒绝同步")
 
         model_hash = canonical_sha256(
             {
@@ -556,8 +553,9 @@ class TwinRuntimeService:
             "semantic_snapshot_hash": semantic_hash,
             "ontology_release_id": int(release["ontology_release_id"]),
             "ontology_definition_hash": expected_ontology_hash,
-            "definition_mode": "verified_live_ontology",
+            "definition_mode": "active_release_immutable",
             "datasource_id": datasource_id,
+            "ontology_definition": stored_definition,
         }
 
     @classmethod

@@ -1,6 +1,6 @@
 # 问渠 WenQu 企业运营数字孪生与智能决策平台总体设计
 
-> 文档基准日期：2026-09-09
+> 文档基准日期：2026-09-10
 
 ## 1. 项目定位
 
@@ -73,7 +73,7 @@ P0 只建立兼容骨架和统一可见入口：业务领域归属、内置验�
 
 贷款技术切片继续用于验证一条垂直闭环：问数/规则 → 风险事项 → 证据 → 人工复核 → 报告版本 → 受控动作 → 决策审计。它不是整体产品架构。
 
-问数结果通过 `POST /api/risk/domains/{domain_id}/issues/from-chat` 进入风险闭环。接口使用 `agent_id + session_id + trace_id` 精确定位 assistant 轮次，在一个事务中创建风险事项、查询证据、分析摘要证据和可选 Ontology 对象快照；普通用户只能转换自己的会话，管理员可执行跨用户技术验收。
+问数结果通过 `POST /api/risk/domains/{domain_id}/issues/from-chat` 进入风险闭环。接口使用 `agent_id + session_id + trace_id` 精确定位 assistant 轮次，在一个事务中创建风险事项、查询证据、分析摘要证据和可选 Ontology 对象快照；旧 `user` 兼容账号只能转换自己的会话，技术人员权限（当前由 `admin` 兼容账号承载）可执行跨用户技术验收。
 
 ### 2.2 当前技术底座
 
@@ -166,7 +166,7 @@ capability key + 业务参数
 - 结果返回 `executed_sql`（SQL 执行节点规范化后的实际语句；未实际执行或失败时可能为空）和 `execution_trace`，其中保留服务端 `trace_id`、`domain_id`、`datasource_id`、Query Capability 以及 Ontology `release` 信息。
 - Query Capability 严格只读，不调用 `execute_action()`，不创建或修改 Ontology 对象，也不产生外部写入副作用。现有 Chat 图的 SQL 确认开关和 HITL 门禁继续保留；完整的 capability 级人工确认、影子运行、灰度发布和治理审计留到后续阶段。
 
-详细的官方术语对齐、当前代码基线、增量功能点、阶段顺序和验收标准见 [Ontology / OSDK 对齐与 DataQueryAgent 增量改造计划](./ontology-osdk-alignment-plan.md)。
+Ontology / OSDK 的稳定术语、能力边界和当前代码对应关系见 [Ontology / OSDK 对齐技术参考](./reference/ontology-osdk-alignment.md)。阶段顺序和验收状态只在产品路线图维护。
 
 ## 3. 配置关系模型
 
@@ -212,7 +212,7 @@ P0 实现对应：`semantic_domain` 保存公司内部业务领域，`agent_sema
 - 语义层表达业务口径，例如指标、维度、映射、规则、关系。
 - 语义资产的唯一真相源是页面配置和管理库；运行时、迁移和主测试不默认读取本地业务口径 JSON、seed 脚本或 backfill 代码。
 - `examples/` 目录只保存可显式导入的演示资产和案例数据，不参与系统启动、迁移或默认页面展示。
-- 演示域中的规则和阈值必须明确标记为技术样例；只有经过业务负责人确认和真实案例 UAT 的规则才能作为正式业务规则。
+- 演示域中的规则和阈值必须明确标记为技术样例；只有经过业务确认人（由业务人员承担）确认和真实案例 UAT 的规则才能作为正式业务规则。
 - 模型配置分为大语言模型和向量模型。大语言模型用于理解、生成 LogicForm 或兜底 SQL；向量模型用于知识召回。
 - `chat_history` 保存用户可见的轮次记录；`agent_task_checkpoint` 保存可执行任务状态。前者用于展示和审计，后者用于跨请求、跨进程续跑，不能互相替代。
 
@@ -586,7 +586,7 @@ checkpoint 以 `(user_id, agent_id, session_id)` 为主键，`revision` 每次�
 - HITL 等待不是失败，也不能在同一个图调用里轮询用户；恢复必须由后续 HTTP 请求触发。
 - 用户反馈回流：`/api/feedback` 记录 `agent_id`、`session_id`、`trace_id`、评分、备注和上下文 payload，供后续评估和 Prompt/语义层迭代。
 
-上述 HITL 条目描述的是现有 Chat 图中的 SQL 执行确认和低置信度追问，不等同于财税风险事项的业务复核。独立 `ontology_query_capability` 第一版不进入 Chat 图的 SQL 确认门禁，而是按简化流程直接执行只读 SQL；完整的 capability 级人工确认、影子运行、灰度发布和治理控制后置。贷款技术切片已提供开始复核、确认、驳回、补件、解决和重新打开状态，并实施指派复核、禁止普通用户自审和管理员定稿边界。
+上述 HITL 条目描述的是现有 Chat 图中的 SQL 执行确认和低置信度追问，不等同于财税风险事项的业务复核。独立 `ontology_query_capability` 第一版不进入 Chat 图的 SQL 确认门禁，而是按简化流程直接执行只读 SQL；完整的 capability 级人工确认、影子运行、灰度发布和治理控制后置。贷款技术切片已提供开始复核、确认、驳回、补件、解决和重新打开状态，并实施指派复核、禁止创建人自审和技术人员定稿边界。
 
 ## 11. 后续演进方向
 
@@ -598,4 +598,4 @@ checkpoint 以 `(user_id, agent_id, session_id)` 为主键，`revision` 每次�
 
 ## 12. 平台建设与验证路线图
 
-本文不另维护产品排期。平台方向、阶段状态和验收口径唯一见 [Ontology 产品路线图](./ontology-product-roadmap.md)；财税/贷款场景的业务验收见 [风险报告交付垂直场景路线图](./risk-report-delivery-roadmap.md)。本文件只补充实现约束、技术依赖和代码事实。
+本文不另维护产品排期。平台方向、阶段状态和验收口径唯一见 [Ontology 产品路线图](./ontology-product-roadmap.md)；财税/贷款场景的业务验收见 [风险交付垂直场景验证说明](./scenarios/risk-delivery-validation.md)。本文件只补充实现约束、技术依赖和代码事实。

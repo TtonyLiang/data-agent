@@ -45,7 +45,7 @@ async def create_sync_run(
     current_user: PublicUser = Depends(get_current_user),
 ):
     if not payload.dry_run and not is_technical_role(current_user.role):
-        raise HTTPException(status_code=403, detail="只有技术工程师可以启动写入型孪生同步")
+        raise HTTPException(status_code=403, detail="只有技术人员可以启动写入型孪生同步")
     access_agent_id = await require_domain_access(domain_id, current_user)
     permission_agent_id = await _resolve_access_agent(domain_id, access_agent_id)
     try:

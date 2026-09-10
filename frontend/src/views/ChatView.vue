@@ -137,7 +137,7 @@
         <div v-else-if="agentsLoadError" class="empty-hint chat-loading-state" aria-live="assertive">
           <div class="empty-icon error"><el-icon :size="24"><WarningFilled /></el-icon></div>
           <h3>智能体暂时不可用</h3>
-          <p>请确认服务正常后重试，或联系管理员检查验证客户端与数据权限。</p>
+          <p>请确认服务正常后重试，或联系技术人员检查验证客户端与数据权限。</p>
           <el-button type="primary" size="small" :loading="agentsLoading" @click="loadAgents">重新加载</el-button>
         </div>
 
@@ -149,7 +149,7 @@
           <p>{{ semanticHintText }}</p>
           <el-alert
             v-if="agents.length === 0"
-            title="暂无可访问智能体，请联系管理员分配权限。"
+            title="暂无可访问智能体，请联系技术人员分配验证客户端权限。"
             type="warning"
             show-icon
             :closable="false"
@@ -3261,7 +3261,7 @@ function handleSend(turnMode?: ChatTurnMode) {
   const q = inputText.value.trim()
   if (!q || loading.value) return
   if (!agentId.value || agents.value.length === 0) {
-    ElMessage.warning('暂无可访问智能体，请联系管理员分配权限')
+    ElMessage.warning('暂无可访问智能体，请联系技术人员分配验证客户端权限')
     return
   }
   if (!domainId.value || !hasSelectedDomain.value) {

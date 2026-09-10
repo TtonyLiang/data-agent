@@ -380,6 +380,6 @@ assert.ok(
 assert.ok(
   source.includes('垂直验证场景') &&
     source.includes('贷款/财税垂直验证场景') &&
-    source.includes('暂无可访问业务领域，请联系技术工程师完成领域配置'),
+    source.includes('暂无可访问业务领域，请联系技术人员完成领域配置'),
   'risk delivery should present itself as a vertical validation scenario with role-appropriate empty guidance',
 )

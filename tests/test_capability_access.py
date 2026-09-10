@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
+from httpx import ASGITransport, AsyncClient
 
 from app.agent import ontology_tools
 from app.api import capability_access as capability_api
@@ -713,6 +714,104 @@ def test_capability_access_schema_and_routes_are_registered():
 
 
 @pytest.mark.asyncio
+async def test_external_capability_api_authenticates_headers_and_invokes_without_agent(
+    monkeypatch,
+):
+    class FakeCapabilityService:
+        def __init__(self):
+            self.authenticated = None
+            self.invoked = None
+
+        async def authenticate_client(self, client_key, client_secret):
+            self.authenticated = (client_key, client_secret)
+            if client_key != "client-key" or client_secret != "client-secret":
+                raise CapabilityAuthenticationError("凭据无效")
+            return {"id": 8, "client_key": client_key, "status": "active"}
+
+        async def invoke(self, client, capability_key, payload):
+            self.invoked = (client, capability_key, payload)
+            return {
+                "trace_id": "trace-api-1",
+                "domain_id": payload.domain_id,
+                "capability_key": capability_key,
+                "status": "succeeded",
+                "latency_ms": 1.5,
+                "result": {"rows": [{"count": 3}]},
+            }
+
+    service = FakeCapabilityService()
+    monkeypatch.setattr(capability_api, "get_capability_access_service", lambda: service)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/capabilities/query_loan_application:invoke",
+            headers={
+                "X-Capability-Key": "client-key",
+                "X-Capability-Secret": "client-secret",
+            },
+            json={
+                "domain_id": 9,
+                "model_release_id": 12,
+                "logic_form": {"metrics": ["loan_application_count"]},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["trace_id"] == "trace-api-1"
+    assert service.authenticated == ("client-key", "client-secret")
+    assert service.invoked[0]["id"] == 8
+    assert service.invoked[1] == "query_loan_application"
+    assert service.invoked[2].domain_id == 9
+
+
+@pytest.mark.asyncio
+async def test_external_capability_api_returns_auth_and_authorization_failures(
+    monkeypatch,
+):
+    class FakeCapabilityService:
+        async def authenticate_client(self, client_key, client_secret):
+            if client_secret != "client-secret":
+                raise CapabilityAuthenticationError("凭据无效")
+            return {"id": 8, "client_key": client_key, "status": "active"}
+
+        async def invoke(self, client, capability_key, payload):
+            raise CapabilityAuthorizationError("能力未授权")
+
+    monkeypatch.setattr(
+        capability_api, "get_capability_access_service", lambda: FakeCapabilityService()
+    )
+    request = {
+        "domain_id": 9,
+        "logic_form": {"metrics": ["loan_application_count"]},
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        unauthorized = await client.post(
+            "/api/v1/capabilities/query_loan_application:invoke",
+            headers={
+                "X-Capability-Key": "client-key",
+                "X-Capability-Secret": "wrong-secret",
+            },
+            json=request,
+        )
+        forbidden = await client.post(
+            "/api/v1/capabilities/query_loan_application:invoke",
+            headers={
+                "X-Capability-Key": "client-key",
+                "X-Capability-Secret": "client-secret",
+            },
+            json=request,
+        )
+
+    assert unauthorized.status_code == 401
+    assert forbidden.status_code == 403
+    assert forbidden.json()["detail"] == "能力未授权"
+
+
+@pytest.mark.asyncio
 async def test_execution_context_requires_active_unified_model(monkeypatch):
     service = CapabilityAccessService()
     runtime_service = AsyncMock()
@@ -730,15 +829,16 @@ async def test_execution_context_requires_active_unified_model(monkeypatch):
     monkeypatch.setattr(
         service_module, "get_datasource_service", lambda: datasource_service
     )
+    load_query_runtime_context = AsyncMock(
+        return_value=(
+            {"model_release": None, "object_types": []},
+            SimpleNamespace(domain=SimpleNamespace(agent_id=None)),
+        )
+    )
     monkeypatch.setattr(
         service_module,
         "_load_query_runtime_context",
-        AsyncMock(
-            return_value=(
-                {"model_release": None, "object_types": []},
-                SimpleNamespace(domain=SimpleNamespace(agent_id=None)),
-            )
-        ),
+        load_query_runtime_context,
     )
 
     with pytest.raises(
@@ -746,6 +846,13 @@ async def test_execution_context_requires_active_unified_model(monkeypatch):
         match="尚未激活统一企业模型版本",
     ):
         await service._load_execution_context(9, 17, "query_loan_application")
+
+    load_query_runtime_context.assert_awaited_once_with(
+        service_module.get_ontology_service(),
+        9,
+        {"role": "user"},
+        require_active_release=True,
+    )
 
 
 @pytest.mark.asyncio
@@ -852,4 +959,4 @@ async def test_database_error_is_sanitized_for_external_caller(monkeypatch):
 
     serialized = json.dumps(response, ensure_ascii=False)
     assert "customer_secret" not in serialized
-    assert "请联系平台管理员并提供 trace_id" in serialized
+    assert "请联系技术人员并提供 trace_id" in serialized

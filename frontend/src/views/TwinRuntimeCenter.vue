@@ -536,7 +536,6 @@ import {
   fetchOntologyLinkTypes,
   fetchOntologyObjects,
   fetchOntologyObjectTypes,
-  fetchOntologySummary,
   fetchSemanticAssets,
   queryOntologyObjects,
   createTwinSyncRun,
@@ -551,7 +550,6 @@ import {
   type OntologyObject,
   type OntologyProperty,
   type OntologyObjectType,
-  type OntologySummary,
   type SemanticDomain,
   type TwinSyncRun,
 } from '../api'
@@ -563,7 +561,6 @@ const route = useRoute()
 const router = useRouter()
 const domains = ref<SemanticDomain[]>([])
 const domainId = ref<number | null>(null)
-const summary = ref<OntologySummary | null>(null)
 const context = ref<OntologyAgentContext | null>(null)
 const objectTypes = ref<OntologyObjectType[]>([])
 const mappingCount = ref(0)
@@ -578,6 +575,7 @@ const instanceTypeId = ref<number | null>(null)
 const instancePage = ref(1)
 const instancePageSize = ref(50)
 const instanceTotal = ref(0)
+const runtimeObjectCount = ref(0)
 const objects = ref<OntologyObject[]>([])
 const linkTypes = ref<OntologyLinkType[]>([])
 const links = ref<OntologyLink[]>([])
@@ -613,7 +611,7 @@ const selectedAction = computed(() => availableActions.value.find((item) => item
 const executeTargets = computed(() => objectChoices.value.filter((item) => item.object_type_key === selectedAction.value?.target_object_key))
 const instancePageSizes = computed(() => [20, 50, 100])
 const syncEnabledCount = computed(() => objectTypes.value.filter((item) => item.sync_enabled).length)
-const sourceObjectCount = computed(() => Number(summary.value?.counts.source_objects || summary.value?.counts.objects || 0))
+const sourceObjectCount = computed(() => runtimeObjectCount.value)
 const lastSyncedAt = computed(() => objectTypes.value
   .map((item) => item.last_synced_at)
   .filter((value): value is string => Boolean(value))
@@ -658,13 +656,13 @@ watch(domainId, () => {
 
 async function loadRuntime() {
   if (!domainId.value) {
-    summary.value = null
     context.value = null
     objectTypes.value = []
     linkTypes.value = []
     actionTypes.value = []
     objects.value = []
     instanceTotal.value = 0
+    runtimeObjectCount.value = 0
     links.value = []
     actionRuns.value = []
     syncRuns.value = []
@@ -673,20 +671,39 @@ async function loadRuntime() {
   }
   loading.value = true
   try {
-    const [nextSummary, nextContext, nextTypes, nextLinkTypes, nextActionTypes, assets, nextRuns] = await Promise.all([
-      fetchOntologySummary(domainId.value),
-      fetchOntologyAgentContext(domainId.value),
-      fetchOntologyObjectTypes(domainId.value),
-      fetchOntologyLinkTypes(domainId.value),
-      fetchOntologyActionTypes(domainId.value),
+    const [nextContext, nextTypes, nextLinkTypes, nextActionTypes, assets, nextRuns, nextObjectCount] = await Promise.all([
+      fetchOntologyAgentContext(domainId.value, { strictRelease: true }),
+      fetchOntologyObjectTypes(domainId.value, { strictRelease: true }),
+      fetchOntologyLinkTypes(domainId.value, { strictRelease: true }),
+      fetchOntologyActionTypes(domainId.value, { strictRelease: true }),
       fetchSemanticAssets(domainId.value),
       fetchTwinSyncRuns(domainId.value),
+      queryOntologyObjects(domainId.value, { limit: 1, offset: 0 }),
     ])
-    summary.value = nextSummary
+    runtimeObjectCount.value = Number(nextObjectCount.total || 0)
     context.value = nextContext
-    objectTypes.value = nextTypes
-    linkTypes.value = nextLinkTypes
-    actionTypes.value = nextActionTypes
+    // Twin Runtime is release-scoped.  The management endpoints also return
+    // draft definitions, so keep only the definitions exposed by the active
+    // runtime context while preserving their database IDs for instance and
+    // action operations.
+    const releasedObjectKeys = new Set(
+      (nextContext.object_types || [])
+        .map((item) => String(item.object_key || '').trim())
+        .filter(Boolean),
+    )
+    const releasedLinkKeys = new Set(
+      (nextContext.link_types || [])
+        .map((item) => String(item.link_key || '').trim())
+        .filter(Boolean),
+    )
+    const releasedActionKeys = new Set(
+      (nextContext.actions || [])
+        .map((item) => String(item.action_key || '').trim())
+        .filter(Boolean),
+    )
+    objectTypes.value = nextTypes.filter((item) => releasedObjectKeys.has(item.object_key))
+    linkTypes.value = nextLinkTypes.filter((item) => releasedLinkKeys.has(item.link_key))
+    actionTypes.value = nextActionTypes.filter((item) => releasedActionKeys.has(item.action_key))
     if (!objectTypes.value.some((item) => item.id === instanceTypeId.value)) {
       instanceTypeId.value = objectTypes.value[0]?.id || null
       instancePage.value = 1
@@ -865,7 +882,9 @@ async function loadLinks() {
   }
   runtimeViewLoading.value = true
   try {
-    links.value = await fetchOntologyLinks(domainId.value)
+    const releasedLinkKeys = new Set(linkTypes.value.map((item) => item.link_key))
+    const nextLinks = await fetchOntologyLinks(domainId.value, { strictRelease: true })
+    links.value = nextLinks.filter((item) => releasedLinkKeys.has(item.link_key))
   } catch (error) {
     links.value = []
     ElMessage.error(errorMessage(error))
@@ -885,7 +904,13 @@ async function loadObjectChoices(objectKeys: string[]) {
   choiceLoading.value = true
   try {
     const pages = await Promise.all(
-      typeIds.map((typeId) => fetchOntologyObjects(domainId.value!, typeId, INSTANCE_CHOICE_LIMIT, 0)),
+      typeIds.map((typeId) => fetchOntologyObjects(
+        domainId.value!,
+        typeId,
+        INSTANCE_CHOICE_LIMIT,
+        0,
+        { strictRelease: true },
+      )),
     )
     objectChoices.value = pages.flat()
   } catch (error) {
@@ -958,7 +983,7 @@ async function loadActionRuns() {
   }
   runtimeViewLoading.value = true
   try {
-    actionRuns.value = await fetchOntologyActionRuns(domainId.value)
+    actionRuns.value = await fetchOntologyActionRuns(domainId.value, { strictRelease: true })
   } catch (error) {
     actionRuns.value = []
     ElMessage.error(errorMessage(error))
@@ -1128,7 +1153,7 @@ function runStat(run: TwinSyncRun, key: string) {
 function syncActionHint(row: OntologyObjectType, dryRun: boolean) {
   if (!row.sync_enabled) return '请先在企业模型中配置只读同步查询'
   if (!activeModelRelease.value) return '请先创建、校验并激活统一企业模型版本'
-  if (!dryRun && !canManage.value) return '只有技术工程师可以执行写入型同步'
+  if (!dryRun && !canManage.value) return '只有技术人员可以执行写入型同步'
   return ''
 }
 

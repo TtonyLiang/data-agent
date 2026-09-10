@@ -1,7 +1,7 @@
 """用户与登录认证数据模型。
 
 The product-facing roles are ``business`` (业务人员) and ``technical``
-(技术工程师).  ``admin`` and ``user`` remain accepted as compatibility values
+(技术人员，包含数据库工程师).  ``admin`` and ``user`` remain accepted as compatibility values
 for the existing demo and old installations; they are not a new product role
 model.
 """
@@ -16,8 +16,8 @@ UserStatus = Literal["active", "disabled"]
 
 ROLE_LABELS: dict[str, str] = {
     "business": "业务人员",
-    "technical": "技术工程师",
-    "admin": "管理员（技术工程师兼容）",
+    "technical": "技术人员",
+    "admin": "管理员（兼容账号）",
     "user": "业务人员（旧账号兼容）",
 }
 

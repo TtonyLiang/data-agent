@@ -17,6 +17,7 @@ import httpx
 from app.db.migrations import run_management_migrations
 from app.db.mysql import get_management_db
 from app.services.user_service import hash_password
+from scripts._e2e_support import delete_temporary_domain
 
 BASE_URL = "http://127.0.0.1:4400"
 BUNDLE_PATH = Path(__file__).parents[1] / "examples/loan/ontology-bundle.json"
@@ -99,7 +100,48 @@ async def main() -> None:
                 json={"name": "贷款风控 Demo V1", "description": "temporary e2e"},
             )
             published.raise_for_status()
-            statuses["release_version"] = int(published.json()["version"])
+            ontology_release = published.json()
+            statuses["release_version"] = int(ontology_release["version"])
+
+            snapshot = await client.post(
+                f"/api/semantic/domains/{domain_id}/snapshot",
+                headers=headers,
+                json={"name": "贷款风控语义快照", "description": "temporary e2e"},
+            )
+            snapshot.raise_for_status()
+            model_draft = await client.post(
+                f"/api/model-releases/domains/{domain_id}/releases",
+                headers=headers,
+                json={
+                    "semantic_snapshot_id": int(snapshot.json()["id"]),
+                    "ontology_release_id": int(ontology_release["id"]),
+                    "name": "贷款风控统一模型 V1",
+                    "description": "temporary e2e",
+                },
+            )
+            model_draft.raise_for_status()
+            model_release_id = int(model_draft.json()["release"]["id"])
+            model_validation = await client.post(
+                f"/api/model-releases/domains/{domain_id}/releases/"
+                f"{model_release_id}/validate",
+                headers=headers,
+                json={},
+            )
+            model_validation.raise_for_status()
+            if model_validation.json()["release"]["status"] != "validated":
+                raise RuntimeError(
+                    "enterprise model validation failed: "
+                    f"{model_validation.json()['release'].get('validation')}"
+                )
+            activated = await client.post(
+                f"/api/model-releases/domains/{domain_id}/releases/"
+                f"{model_release_id}/activate",
+                headers=headers,
+            )
+            activated.raise_for_status()
+            statuses["model_release_active"] = (
+                activated.json()["release"]["status"] == "active"
+            )
 
             action_items = (
                 await client.get(
@@ -205,9 +247,8 @@ async def main() -> None:
             statuses["export_links"] = len(exported.json().get("links", []))
             print(json.dumps(statuses, ensure_ascii=False, sort_keys=True))
     finally:
-        if domain_id and token:
-            async with httpx.AsyncClient(base_url=BASE_URL, timeout=30) as client:
-                await client.delete(f"/api/semantic/domains/{domain_id}", headers=headers)
+        if domain_id:
+            await delete_temporary_domain(db, domain_id)
         if temporary_agent_id:
             await db.execute_query("DELETE FROM agent WHERE id = :id", {"id": temporary_agent_id})
         await db.execute_query("DELETE FROM app_user WHERE id = :id", {"id": user_id})

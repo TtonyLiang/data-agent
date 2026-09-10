@@ -2,6 +2,8 @@
 
 WenQu 中"数据源"特指业务数据库(MySQL)的连接配置,不含语义层信息。
 语义层资产(SemanticDomain)会绑定到一个数据源,用于校验物理表/字段是否已采集。
+数据源的正式业务权限由业务领域维护；``agent_id`` 仅保留为历史兼容字段，
+不表示数据源属于某个智能体。
 
 本模块包含两类模型:
 1. ``DatasourceConfig`` / ``DatasourceCreate`` / ``DatasourceUpdate``:连接配置。
@@ -40,10 +42,14 @@ class DatasourceConfig(BaseModel):
 class DatasourceCreate(BaseModel):
     """数据源创建入参 —— 用于 POST /api/datasource/create。
 
-    创建时会自动把 password 加密落盘,并把该数据源绑定到 agent_id 指定的智能体。
+    创建时会自动把 password 加密落盘；新链路不要求先绑定验证智能体，
+    业务领域负责维护正式的数据访问边界，``agent_id`` 仅作为历史兼容入参。
     """
 
-    agent_id: int | None = Field(default=None, description="创建后绑定到的智能体")
+    agent_id: int | None = Field(
+        default=None,
+        description="历史兼容字段；正式数据访问边界由业务领域维护",
+    )
     name: str = Field(description="数据源名称")
     db_type: str = Field(default="mysql", description="数据库类型")
     host: str = Field(description="数据库主机地址")
@@ -60,7 +66,10 @@ class DatasourceUpdate(BaseModel):
     这样前端编辑其他字段时不会误清空密码。
     """
 
-    agent_id: int | None = Field(default=None, description="重新绑定到的智能体")
+    agent_id: int | None = Field(
+        default=None,
+        description="历史兼容字段；正式数据访问边界由业务领域维护",
+    )
     name: str = Field(description="数据源名称")
     db_type: str = Field(default="mysql", description="数据库类型")
     host: str = Field(description="数据库主机地址")

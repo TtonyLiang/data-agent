@@ -17,6 +17,7 @@ from app.models.risk_workflow import (
     RiskIssueCreatePayload,
     RiskReviewPayload,
 )
+from app.models.user import is_technical_role
 from app.services.decision_audit_service import (
     canonical_json,
     canonical_sha256,
@@ -311,7 +312,8 @@ class RiskWorkflowService:
             text(
                 "SELECT r.id, r.version, r.name, r.definition_hash, r.created_at, "
                 "m.id AS model_release_id, m.version AS model_release_version, "
-                "m.model_hash, m.semantic_snapshot_id, m.semantic_snapshot_hash "
+                "m.model_hash, m.semantic_snapshot_id, m.semantic_snapshot_hash, "
+                "m.ontology_release_id, m.ontology_definition_hash "
                 "FROM enterprise_model_release m JOIN ontology_release r "
                 "ON r.id = m.ontology_release_id AND r.domain_id = m.domain_id "
                 "WHERE m.domain_id = :domain_id AND m.status = 'active' LIMIT 1"
@@ -321,6 +323,58 @@ class RiskWorkflowService:
         release = _first(result)
         if release is None:
             raise ValueError("当前领域尚未激活统一企业模型版本，不能创建决策记录")
+        snapshot_result = await session.execute(
+            text(
+                "SELECT snapshot_json FROM semantic_domain_snapshot "
+                "WHERE id = :snapshot_id AND domain_id = :domain_id"
+            ),
+            {
+                "snapshot_id": int(release["semantic_snapshot_id"]),
+                "domain_id": domain_id,
+            },
+        )
+        snapshot_row = _first(snapshot_result)
+        if snapshot_row is None:
+            raise ValueError("激活企业模型关联的语义资产快照不存在，不能创建决策记录")
+        semantic_snapshot = _loads(snapshot_row.get("snapshot_json"), {})
+        semantic_hash = canonical_sha256(semantic_snapshot)
+        if semantic_hash != str(release.get("semantic_snapshot_hash") or ""):
+            raise ValueError("激活企业模型关联的语义资产快照完整性校验失败")
+
+        ontology_result = await session.execute(
+            text(
+                "SELECT definition_json, definition_hash FROM ontology_release "
+                "WHERE id = :release_id AND domain_id = :domain_id"
+            ),
+            {
+                "release_id": int(release["ontology_release_id"]),
+                "domain_id": domain_id,
+            },
+        )
+        ontology_row = _first(ontology_result)
+        if ontology_row is None:
+            raise ValueError("激活企业模型关联的 Ontology 发布不存在，不能创建决策记录")
+        ontology_definition = _loads(ontology_row.get("definition_json"), {})
+        ontology_hash = canonical_sha256(ontology_definition)
+        stored_ontology_hash = str(ontology_row.get("definition_hash") or "")
+        if (
+            not stored_ontology_hash
+            or stored_ontology_hash != ontology_hash
+            or str(release.get("ontology_definition_hash") or "") != ontology_hash
+        ):
+            raise ValueError("激活企业模型关联的 Ontology 发布完整性校验失败")
+        model_hash = canonical_sha256(
+            {
+                "format": "wenqu-enterprise-model-release/v1",
+                "semantic_snapshot_hash": semantic_hash,
+                "ontology_definition_hash": ontology_hash,
+            }
+        )
+        if model_hash != str(release.get("model_hash") or ""):
+            raise ValueError("激活企业模型版本哈希校验失败")
+        release["definition_hash"] = ontology_hash
+        release["semantic_snapshot_hash"] = semantic_hash
+        release["model_hash"] = model_hash
         return release
 
     async def _require_domain_agent(
@@ -494,7 +548,7 @@ class RiskWorkflowService:
             "agent_id": payload.agent_id,
             "session_id": payload.session_id,
         }
-        if user.get("role") != "admin":
+        if not is_technical_role(user.get("role")):
             if user.get("id") is None:
                 raise PermissionError("当前用户缺少有效身份")
             filters.append("user_id = :user_id")
@@ -538,7 +592,7 @@ class RiskWorkflowService:
             "session_id": payload.session_id,
             "assistant_id": int(assistant["id"]),
         }
-        if user.get("role") != "admin":
+        if not is_technical_role(user.get("role")):
             question_filters.append("user_id = :question_user_id")
             question_params["question_user_id"] = int(user["id"])
         elif assistant.get("user_id") is not None:
@@ -1106,7 +1160,7 @@ class RiskWorkflowService:
             issue = await self._get_issue(session, domain_id, issue_id, for_update=True)
             release = await self._require_current_release(session, domain_id)
             current_version = int(issue["version"])
-            if user.get("role") != "admin":
+            if not is_technical_role(user.get("role")):
                 if issue.get("created_by") is not None and int(issue["created_by"]) == actor_id:
                     raise PermissionError("风险事项创建人不能复核自己的事项")
                 assignee = str(issue.get("assignee") or "").strip()

@@ -14,7 +14,7 @@ assert.ok(
   source.includes('兼容验证账号') &&
     source.includes('兼容验证客户端权限') &&
     source.includes('兼容验证客户端访问权限') &&
-    source.includes('业务人员和技术工程师直接按业务领域使用平台') &&
+    source.includes('业务人员和技术人员直接按业务领域使用平台') &&
     source.includes('验证客户端不拥有企业模型'),
   'user permissions should describe only legacy Agent grants as compatibility access',
 )

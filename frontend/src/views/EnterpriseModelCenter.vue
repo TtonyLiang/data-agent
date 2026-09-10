@@ -39,10 +39,10 @@
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item command="edit" :disabled="!currentDomain">编辑</el-dropdown-item>
-                  <el-dropdown-item command="copy" :disabled="!currentDomain">复制企业模型</el-dropdown-item>
+                  <el-dropdown-item v-if="canConfigureData" command="copy" :disabled="!currentDomain">复制企业模型</el-dropdown-item>
                   <el-dropdown-item command="import" divided>导入企业模型包</el-dropdown-item>
                   <el-dropdown-item command="export" :disabled="!currentDomain">导出企业模型包</el-dropdown-item>
-                  <el-dropdown-item command="delete" :disabled="!currentDomain" divided>删除</el-dropdown-item>
+                  <el-dropdown-item v-if="canConfigureData" command="delete" :disabled="!currentDomain" divided>删除</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -59,7 +59,7 @@
         </section>
       </div>
 
-      <nav class="model-sections" :class="{ single: !canManage }" aria-label="企业模型建模顺序">
+      <nav class="model-sections" :class="{ single: !canConfigureData }" aria-label="企业模型建模顺序">
         <button
           type="button"
           :disabled="!domainId"
@@ -95,7 +95,7 @@
     <section class="model-center-workspace" aria-label="企业模型工作区">
       <el-empty
         v-if="!domainId"
-        :description="canManage ? '请先新建或选择一个业务领域' : '暂无可访问业务领域，请联系管理员分配验证客户端权限'"
+        :description="canManage ? '请先新建或选择一个业务领域' : '暂无可访问业务领域，请联系技术人员配置业务领域或验证客户端权限'"
       />
       <div v-else-if="activeSection === 'ontology'" class="business-model-workspace">
         <div class="business-model-switch" role="tablist" aria-label="业务模型工作区">
@@ -181,7 +181,7 @@
             :disabled="domainDialogMode === 'edit'"
           />
         </el-form-item>
-        <el-form-item label="默认数据源">
+        <el-form-item v-if="canConfigureData" label="默认数据源">
           <el-select v-model="domainForm.datasource_id" clearable filterable placeholder="可选">
             <el-option
               v-for="datasource in datasources"
@@ -237,7 +237,7 @@ import {
   type SemanticDomain,
   type SemanticDomainRequest,
 } from '../api'
-import { canEditModel } from '../stores/auth'
+import { canEditModel, isTechnicalUser } from '../stores/auth'
 
 const OntologyWorkbench = defineAsyncComponent(() => import('./OntologyWorkbench.vue'))
 const KnowledgeConfig = defineAsyncComponent(() => import('./KnowledgeConfig.vue'))
@@ -259,6 +259,7 @@ const domainNameInput = ref<{ focus: () => void }>()
 const domainForm = ref<SemanticDomainRequest>(emptyDomain())
 const businessView = ref<'ontology' | 'metrics'>('ontology')
 const canManage = computed(() => canEditModel())
+const canConfigureData = computed(() => isTechnicalUser())
 const currentDomain = computed<SemanticDomain | null>(() => (
   domains.value.find((domain) => domain.id === domainId.value) || null
 ))
@@ -270,6 +271,9 @@ const currentDatasourceName = computed(() => {
 })
 
 const activeSection = computed<ModelSection>(() => {
+  // Business users can inspect the data-binding and release sections in
+  // read-only mode. The child views keep technical controls disabled; only
+  // legacy users without model access stay on the business model section.
   if (!canManage.value) return 'ontology'
   if (route.query.section === 'semantic' || route.query.section === 'release') {
     return route.query.section
@@ -280,7 +284,7 @@ const activeSection = computed<ModelSection>(() => {
 onMounted(async () => {
   await Promise.all([
     loadDomains(),
-    canManage.value ? loadDatasources() : Promise.resolve(),
+    canConfigureData.value ? loadDatasources() : Promise.resolve(),
   ])
 })
 
@@ -360,7 +364,9 @@ async function saveDomain() {
   const payload: SemanticDomainRequest = {
     ...domainForm.value,
     agent_id: domainForm.value.agent_id ? Number(domainForm.value.agent_id) : null,
-    datasource_id: domainForm.value.datasource_id ? Number(domainForm.value.datasource_id) : null,
+    datasource_id: canConfigureData.value
+      ? (domainForm.value.datasource_id ? Number(domainForm.value.datasource_id) : null)
+      : (currentDomain.value?.datasource_id || null),
     domain_key: cleanText(domainForm.value.domain_key),
     name: cleanText(domainForm.value.name),
     description: cleanText(domainForm.value.description),
@@ -549,7 +555,7 @@ function errorMessage(error: unknown, fallback: string) {
 .business-model-switch-heading > span { color: var(--wq-primary-strong); font-size: 11px; font-weight: 700; line-height: 1.3; }
 .business-model-switch-heading strong { color: var(--wq-text); font-size: 15px; line-height: 1.35; }
 .business-model-switch-heading small { color: var(--wq-muted); font-size: 11px; line-height: 1.4; }
-.business-model-switch-options { display: grid; grid-template-columns: repeat(2, minmax(0, 290px)); justify-content: start; gap: 8px; width: 100%; }
+.business-model-switch-options { display: grid; grid-template-columns: repeat(2, minmax(0, 290px)); justify-content: center; gap: 8px; width: 100%; }
 .business-model-switch button { position: relative; min-width: 0; min-height: 46px; padding: 6px 10px; display: grid; grid-template-columns: 26px minmax(0, 1fr) 8px; align-items: center; gap: 8px; color: var(--wq-text); text-align: left; background: var(--wq-surface); border: 1px solid var(--wq-border-strong); border-radius: 7px; cursor: pointer; transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 100ms ease; }
 .business-model-switch button:hover { border-color: #93b4fb; background: #fbfdff; }
 .business-model-switch button:active { transform: scale(.99); }
@@ -592,7 +598,7 @@ function errorMessage(error: unknown, fallback: string) {
   .model-sections b, .model-sections small { white-space: normal; }
   .model-sections small { line-height: 1.35; }
   .business-model-switch { grid-template-columns: 1fr; gap: 10px; padding: 12px 16px; }
-  .business-model-switch-options { max-width: none; }
+  .business-model-switch-options { max-width: none; justify-content: stretch; }
 }
 @media (max-width: 460px) {
   .domain-context { grid-template-columns: 1fr; }

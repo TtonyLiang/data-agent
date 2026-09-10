@@ -41,7 +41,7 @@ async def require_admin(current_user: PublicUser = Depends(get_current_user)) ->
 async def require_model_editor(
     current_user: PublicUser = Depends(get_current_user),
 ) -> PublicUser:
-    """Allow business personnel and technical engineers to maintain model drafts.
+    """Allow business personnel and technical personnel to maintain model drafts.
 
     ``admin`` remains a compatibility super-role.  This is intentionally a
     narrow product permission and does not grant data-source or platform
@@ -51,7 +51,7 @@ async def require_model_editor(
         detail = (
             "无权访问管理功能"
             if current_user.role == "user"
-            else "只有业务人员或技术工程师可以维护企业模型"
+            else "只有业务人员或技术人员可以维护企业模型"
         )
         raise HTTPException(status_code=403, detail=detail)
     return current_user
@@ -60,12 +60,12 @@ async def require_model_editor(
 async def require_data_engineer(
     current_user: PublicUser = Depends(get_current_user),
 ) -> PublicUser:
-    """Allow technical engineers and legacy administrators to manage data."""
+    """Allow technical personnel and legacy administrators to manage data."""
     if not is_technical_role(current_user.role):
         detail = (
             "无权访问管理功能"
             if current_user.role == "user"
-            else "只有技术工程师可以维护数据接入与运行配置"
+            else "只有技术人员可以维护数据接入与运行配置"
         )
         raise HTTPException(status_code=403, detail=detail)
     return current_user
@@ -74,12 +74,12 @@ async def require_data_engineer(
 async def require_model_publisher(
     current_user: PublicUser = Depends(get_current_user),
 ) -> PublicUser:
-    """Allow technical engineers/admins to activate and roll back releases."""
+    """Allow technical personnel/admins to activate and roll back releases."""
     if not is_model_publisher_role(current_user.role):
         detail = (
             "无权访问管理功能"
             if current_user.role == "user"
-            else "只有技术工程师可以发布或回滚企业模型"
+            else "只有技术人员可以发布或回滚企业模型"
         )
         raise HTTPException(status_code=403, detail=detail)
     return current_user

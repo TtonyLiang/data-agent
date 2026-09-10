@@ -176,7 +176,7 @@
                     <el-tooltip v-if="canManage" content="编辑" placement="top">
                       <el-button class="table-action-btn" text :icon="Edit" aria-label="编辑对象类型" @click="openObjectTypeDialog(row)" />
                     </el-tooltip>
-                    <el-tooltip v-if="canManage" content="删除" placement="top">
+                    <el-tooltip v-if="canManageData" content="删除" placement="top">
                       <el-button class="table-action-btn is-danger" text type="danger" :icon="Delete" aria-label="删除对象类型" @click="removeObjectType(row)" />
                     </el-tooltip>
                   </div>
@@ -230,7 +230,7 @@
                       <el-button class="table-action-btn" text :icon="Edit" aria-label="编辑关系类型" @click="openLinkTypeDialog(row)" />
                     </el-tooltip>
                     <el-tooltip v-if="canManage" content="删除" placement="top">
-                      <el-button class="table-action-btn is-danger" text type="danger" :icon="Delete" aria-label="删除关系类型" @click="removeLinkType(row)" />
+                      <el-button v-if="canManageData" class="table-action-btn is-danger" text type="danger" :icon="Delete" aria-label="删除关系类型" @click="removeLinkType(row)" />
                     </el-tooltip>
                   </div>
                 </template>
@@ -302,7 +302,7 @@
                     <el-tooltip v-if="canManage" content="编辑动作" placement="top">
                       <el-button class="table-action-btn" text :icon="Edit" aria-label="编辑动作" @click="openActionTypeDialog(row)" />
                     </el-tooltip>
-                    <el-tooltip v-if="canManage" content="删除动作" placement="top">
+                    <el-tooltip v-if="canManageData" content="删除动作" placement="top">
                       <el-button class="table-action-btn is-danger" text type="danger" :icon="Delete" aria-label="删除动作" @click="removeActionType(row)" />
                     </el-tooltip>
                   </div>
@@ -325,7 +325,7 @@
           <ol class="object-form-steps">
             <li><b>1</b><span><strong>定义业务对象</strong><small>业务人员确认</small></span></li>
             <li><b>2</b><span><strong>定义属性与身份</strong><small>业务与技术共同确认</small></span></li>
-            <li><b>3</b><span><strong>映射业务数据</strong><small>技术工程师配置</small></span></li>
+            <li><b>3</b><span><strong>映射业务数据</strong><small>技术人员配置</small></span></li>
           </ol>
         </div>
 
@@ -399,7 +399,7 @@
           </header>
           <div class="technical-guidance" role="note">
             <strong>当前版本采用只读 SQL 映射</strong>
-            <span>由技术工程师配置。数据库列通过 <code>AS 属性标识</code> 对应对象属性，保存时只校验和记录配置，不执行同步。</span>
+            <span>由技术人员配置。数据库列通过 <code>AS 属性标识</code> 对应对象属性，保存时只校验和记录配置，不执行同步。</span>
           </div>
           <div class="form-grid two sync-config-grid">
             <el-form-item label="从业务库同步"><el-switch v-model="objectTypeForm.sync_enabled" :disabled="!canManageData" active-text="启用" inactive-text="不启用" /></el-form-item>
@@ -505,10 +505,10 @@
         <details class="advanced-model-settings">
           <summary>高级技术配置（通常无需修改）</summary>
           <div class="form-grid two advanced-model-grid">
-            <el-form-item label="起点关联属性"><el-select v-model="linkTypeForm.source_property_keys" multiple clearable collapse-tags placeholder="默认使用起点主属性"><el-option v-for="property in linkSourceProperties" :key="property.property_key" :label="propertyOptionLabel(property)" :value="property.property_key" /></el-select><span class="form-help">只有单字段不能唯一关联时才多选；顺序必须与终点一致。</span></el-form-item>
-            <el-form-item label="终点关联属性"><el-select v-model="linkTypeForm.target_property_keys" multiple clearable collapse-tags placeholder="默认使用终点主属性"><el-option v-for="property in linkTargetProperties" :key="property.property_key" :label="propertyOptionLabel(property)" :value="property.property_key" /></el-select><span class="form-help">复合关联要求两端属性数量一致，并按选择顺序逐项匹配。</span></el-form-item>
-            <el-form-item label="技术标识"><el-input v-model="linkTypeForm.link_key" placeholder="留空则根据关系与对象自动生成" /><span class="form-help">供 API、版本和能力引用，通常不需要业务人员填写。</span></el-form-item>
-            <el-form-item label="模型状态"><el-select v-model="linkTypeForm.status"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item>
+            <el-form-item label="起点关联属性"><el-select v-model="linkTypeForm.source_property_keys" :disabled="!canManageData" multiple clearable collapse-tags placeholder="默认使用起点主属性"><el-option v-for="property in linkSourceProperties" :key="property.property_key" :label="propertyOptionLabel(property)" :value="property.property_key" /></el-select><span class="form-help">只有单字段不能唯一关联时才多选；顺序必须与终点一致。</span></el-form-item>
+            <el-form-item label="终点关联属性"><el-select v-model="linkTypeForm.target_property_keys" :disabled="!canManageData" multiple clearable collapse-tags placeholder="默认使用终点主属性"><el-option v-for="property in linkTargetProperties" :key="property.property_key" :label="propertyOptionLabel(property)" :value="property.property_key" /></el-select><span class="form-help">复合关联要求两端属性数量一致，并按选择顺序逐项匹配。</span></el-form-item>
+            <el-form-item label="技术标识"><el-input v-model="linkTypeForm.link_key" :disabled="!canManageData" placeholder="留空则根据关系与对象自动生成" /><span class="form-help">供 API、版本和能力引用，通常不需要业务人员填写。</span></el-form-item>
+            <el-form-item label="模型状态"><el-select v-model="linkTypeForm.status" :disabled="!canManageData"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item>
           </div>
         </details>
       </el-form>
@@ -532,13 +532,13 @@
         <div class="builder-list"><div v-for="(parameter, index) in actionTypeForm.parameters" :key="index" class="builder-row parameter-builder"><el-input v-model="parameter.name" placeholder="业务名称，如 审批金额" /><el-select v-model="parameter.data_type"><el-option v-for="item in propertyTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select><el-checkbox v-model="parameter.required">必填</el-checkbox><el-input v-model="parameter.parameter_key" placeholder="技术标识（留空自动生成）" /><el-input v-model="parameter.options_text" placeholder="可选值，逗号分隔" /><el-button text type="danger" :icon="Delete" :aria-label="`移除动作参数 ${parameter.name || parameter.parameter_key || index + 1}`" @click="actionTypeForm.parameters.splice(index, 1)" /></div></div>
         <details class="advanced-model-settings">
           <summary>高级执行与治理配置</summary>
-          <div class="advanced-section-note">供技术工程师配置权限、复杂条件和执行效果；基础业务动作通常保持默认即可。</div>
-          <div class="form-grid three advanced-model-grid"><el-form-item label="授权角色"><el-select v-model="actionTypeForm.allowed_roles" multiple><el-option label="技术工程师" value="admin" /><el-option label="业务人员" value="user" /></el-select></el-form-item><el-form-item label="模型状态"><el-select v-model="actionTypeForm.status"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item><el-form-item label="审批单号要求"><el-switch v-model="actionTypeForm.requires_approval" active-text="需要审批单号" inactive-text="不要求审批单号" /></el-form-item></div>
-          <div class="subsection-title"><strong>前置条件</strong><el-button text type="primary" :icon="Plus" @click="addPrecondition">添加条件</el-button></div>
-          <div class="builder-list"><div v-for="(condition, index) in actionTypeForm.preconditions" :key="index" class="builder-row condition-builder"><el-select v-model="condition.property" placeholder="对象属性"><el-option v-for="p in targetProperties" :key="p.property_key" :label="p.name" :value="p.property_key" /></el-select><el-select v-model="condition.operator"><el-option v-for="item in operators" :key="item.value" :label="item.label" :value="item.value" /></el-select><el-input v-model="condition.value_text" placeholder="期望值或 $param.x" /><el-input v-model="condition.message" placeholder="不满足时提示" /><el-button text type="danger" :icon="Delete" :aria-label="`移除前置条件 ${index + 1}`" @click="actionTypeForm.preconditions.splice(index, 1)" /></div></div>
-          <div class="subsection-title"><strong>状态效果</strong><el-button text type="primary" :icon="Plus" @click="addEffect">添加效果</el-button></div>
-          <div class="builder-list"><div v-for="(effect, index) in actionTypeForm.effects" :key="index" class="builder-row effect-builder"><el-select v-model="effect.property" placeholder="写入属性"><el-option v-for="p in targetProperties" :key="p.property_key" :label="p.name" :value="p.property_key" /></el-select><el-input v-model="effect.value_text" placeholder="常量、$param.x、$now、$user.name" /><el-button text type="danger" :icon="Delete" :aria-label="`移除状态效果 ${index + 1}`" @click="actionTypeForm.effects.splice(index, 1)" /></div></div>
-          <el-form-item label="技术标识"><el-input v-model="actionTypeForm.action_key" placeholder="留空则根据动作与目标对象自动生成" /><span class="form-help">供 API、版本和 Agent 能力调用，通常不需要业务人员填写。</span></el-form-item>
+          <div class="advanced-section-note">供技术人员配置权限、复杂条件和执行效果；基础业务动作通常保持默认即可。业务人员可以查看这些配置，但只有技术人员可编辑；当前 `admin` 兼容账号保留完整配置能力。</div>
+          <div class="form-grid three advanced-model-grid"><el-form-item label="授权角色"><el-select v-model="actionTypeForm.allowed_roles" :disabled="!canManageData" multiple><el-option label="技术人员" value="admin" /><el-option label="业务人员" value="user" /></el-select></el-form-item><el-form-item label="模型状态"><el-select v-model="actionTypeForm.status" :disabled="!canManageData"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item><el-form-item label="审批单号要求"><el-switch v-model="actionTypeForm.requires_approval" :disabled="!canManageData" active-text="需要审批单号" inactive-text="不要求审批单号" /></el-form-item></div>
+          <div class="subsection-title"><strong>前置条件</strong><el-button text type="primary" :icon="Plus" :disabled="!canManageData" @click="addPrecondition">添加条件</el-button></div>
+          <div class="builder-list"><div v-for="(condition, index) in actionTypeForm.preconditions" :key="index" class="builder-row condition-builder"><el-select v-model="condition.property" :disabled="!canManageData" placeholder="对象属性"><el-option v-for="p in targetProperties" :key="p.property_key" :label="p.name" :value="p.property_key" /></el-select><el-select v-model="condition.operator" :disabled="!canManageData"><el-option v-for="item in operators" :key="item.value" :label="item.label" :value="item.value" /></el-select><el-input v-model="condition.value_text" :disabled="!canManageData" placeholder="期望值或 $param.x" /><el-input v-model="condition.message" :disabled="!canManageData" placeholder="不满足时提示" /><el-button text type="danger" :icon="Delete" :disabled="!canManageData" :aria-label="`移除前置条件 ${index + 1}`" @click="actionTypeForm.preconditions.splice(index, 1)" /></div></div>
+          <div class="subsection-title"><strong>状态效果</strong><el-button text type="primary" :icon="Plus" :disabled="!canManageData" @click="addEffect">添加效果</el-button></div>
+          <div class="builder-list"><div v-for="(effect, index) in actionTypeForm.effects" :key="index" class="builder-row effect-builder"><el-select v-model="effect.property" :disabled="!canManageData" placeholder="写入属性"><el-option v-for="p in targetProperties" :key="p.property_key" :label="p.name" :value="p.property_key" /></el-select><el-input v-model="effect.value_text" :disabled="!canManageData" placeholder="常量、$param.x、$now、$user.name" /><el-button text type="danger" :icon="Delete" :disabled="!canManageData" :aria-label="`移除状态效果 ${index + 1}`" @click="actionTypeForm.effects.splice(index, 1)" /></div></div>
+          <el-form-item label="技术标识"><el-input v-model="actionTypeForm.action_key" :disabled="!canManageData" placeholder="留空则根据动作与目标对象自动生成" /><span class="form-help">供 API、版本和 Agent 能力调用，通常不需要业务人员填写。</span></el-form-item>
         </details>
       </el-form>
       <template #footer><el-button @click="actionTypeDialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveActionType">保存业务动作</el-button></template>

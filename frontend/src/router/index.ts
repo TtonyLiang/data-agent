@@ -33,7 +33,7 @@ router.beforeEach(async (to, from) => {
   }
   if (to.meta.public && isLoggedIn()) return { path: '/' }
   if (technicalOnlyPaths.has(to.path) && !isTechnicalUser()) {
-    ElMessage.warning('该页面仅供技术工程师使用')
+    ElMessage.warning('该页面仅供技术人员使用')
     return { path: '/enterprise-model' }
   }
   if (chatRunState.busy && to.path !== from.path) {

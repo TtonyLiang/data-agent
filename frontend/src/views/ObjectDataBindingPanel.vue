@@ -15,6 +15,7 @@
     <section class="binding-guide" role="note" aria-label="数据绑定说明">
       <strong>配置边界</strong>
       <span>不在这里新建对象或修改属性。查询列通过 <code>AS 属性标识</code> 绑定已有属性，预览不会写入业务库或孪生实例。</span>
+      <span v-if="!canManageTechnical">业务人员可查看并预览；数据源、字段、SQL 和同步参数由技术人员维护。</span>
     </section>
 
     <section v-if="domainId" class="binding-summary" aria-label="对象数据绑定概览">
@@ -126,7 +127,7 @@
         <el-table-column label="操作" width="112" fixed="right" align="center" header-align="center">
           <template #default="{ row }">
             <el-button type="primary" link :icon="Setting" @click="openEditor(row)">
-              配置
+              {{ canManageTechnical ? '配置' : '查看' }}
             </el-button>
           </template>
         </el-table-column>
@@ -146,7 +147,7 @@
             <div><dt>来源查询</dt><dd>{{ hasSourceQuery(row) ? '已配置' : '未配置' }}</dd></div>
             <div><dt>最近同步</dt><dd>{{ syncStatusLabel(row) }}</dd></div>
           </dl>
-          <el-button type="primary" plain :icon="Setting" @click="openEditor(row)">配置数据绑定</el-button>
+          <el-button type="primary" plain :icon="Setting" @click="openEditor(row)">{{ canManageTechnical ? '配置数据绑定' : '查看数据绑定' }}</el-button>
         </article>
       </div>
     </section>
@@ -198,6 +199,7 @@
             <el-form-item label="业务表同步">
               <el-switch
                 v-model="bindingForm.sync_enabled"
+                :disabled="!canManageTechnical"
                 active-text="启用"
                 inactive-text="不启用"
               />
@@ -206,6 +208,7 @@
             <el-form-item label="单次读取上限">
               <el-input-number
                 v-model="bindingForm.sync_limit"
+                :disabled="!canManageTechnical"
                 :min="1"
                 :max="1000"
                 controls-position="right"
@@ -227,10 +230,10 @@
             <el-alert v-if="schemaTables.length === 0" type="warning" :closable="false" title="当前数据源没有已采集 Schema，请先采集表结构，或切换到高级 SQL。" />
             <div class="guided-binding-heading">
               <div><strong>选择业务表并绑定字段</strong><span>平台根据属性标识和字段名自动推荐，仍可逐项调整。</span></div>
-              <el-button size="small" :disabled="!selectedTableName" @click="autoMapFields">重新自动匹配</el-button>
+              <el-button size="small" :disabled="!canManageTechnical || !selectedTableName" @click="autoMapFields">重新自动匹配</el-button>
             </div>
             <el-form-item label="来源业务表">
-              <el-select v-model="selectedTableName" filterable placeholder="选择已采集表" @change="handleSourceTableChange">
+              <el-select v-model="selectedTableName" :disabled="!canManageTechnical" filterable placeholder="选择已采集表" @change="handleSourceTableChange">
                 <el-option v-for="table in schemaTables" :key="table.table_name" :label="tableLabel(table)" :value="table.table_name" />
               </el-select>
             </el-form-item>
@@ -238,7 +241,7 @@
               <div v-for="property in editingObject.properties" :key="property.property_key" class="field-mapping-row">
                 <div><strong>{{ property.name }}</strong><code>{{ property.property_key }}</code></div>
                 <span aria-hidden="true">对应</span>
-                <el-select v-model="propertyMappings[property.property_key]" clearable filterable placeholder="选择数据库字段" :aria-label="`为${property.name || property.property_key}选择数据库字段`">
+                <el-select v-model="propertyMappings[property.property_key]" :disabled="!canManageTechnical" clearable filterable placeholder="选择数据库字段" :aria-label="`为${property.name || property.property_key}选择数据库字段`">
                   <el-option v-for="column in sourceTableColumns" :key="column.column_name" :label="columnLabel(column)" :value="column.column_name" />
                 </el-select>
                 <el-tag v-if="property.property_key === editingObject.primary_property" type="warning" effect="plain" size="small">主属性</el-tag>
@@ -255,6 +258,7 @@
             <el-input
               ref="queryInput"
               v-model="bindingForm.source_query"
+              :disabled="!canManageTechnical"
               class="query-input"
               type="textarea"
               :rows="9"
@@ -289,7 +293,7 @@
           <span>保存只更新当前对象的数据绑定，业务定义、属性和状态保持不变。</span>
           <div>
             <el-button @click="editorOpen = false">取消</el-button>
-            <el-button type="primary" :loading="saving" @click="saveBinding">保存绑定</el-button>
+            <el-button type="primary" :disabled="!canManageTechnical" :loading="saving" @click="saveBinding">保存绑定</el-button>
           </div>
         </div>
       </template>
@@ -384,6 +388,7 @@ import {
   type OntologyPropertyType,
   type SemanticDomain,
 } from '../api'
+import { isTechnicalUser } from '../stores/auth'
 import { formatDateTime } from '../utils/datetime'
 
 const props = defineProps<{
@@ -416,6 +421,7 @@ const selectedTableName = ref('')
 const propertyMappings = reactive<Record<string, string>>({})
 
 const domainName = computed(() => props.currentDomain?.name || '当前业务领域')
+const canManageTechnical = computed(() => isTechnicalUser())
 const configuredCount = computed(() => objectTypes.value.filter(hasSourceQuery).length)
 const enabledCount = computed(() => objectTypes.value.filter((item) => item.sync_enabled).length)
 const failedCount = computed(() => objectTypes.value.filter((item) => item.last_sync_status === 'failed').length)

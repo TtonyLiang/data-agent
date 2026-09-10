@@ -1,6 +1,6 @@
 # Agent Prompts
 
-这个目录管理问数链路中固定的默认提示词种子。应用启动迁移会把这里登记在 `PROMPT_CATALOG` 中的模板播种到管理库 `prompt_template`，管理台「系统参数 / Prompt 模板」会展示这些默认值，管理员可以直接修改。
+这个目录管理问数链路中固定的默认提示词种子。应用启动迁移会把这里登记在 `PROMPT_CATALOG` 中的模板播种到管理库 `prompt_template`，管理台「系统参数 / Prompt 模板」会展示这些默认值，技术人员可以直接修改。
 
 运行时仍通过 `PromptService.resolve(prompt_key, default_template, ...)` 解析：优先使用管理库中最匹配的 active 模板；管理库缺失或模板变量渲染失败时，才回退到本目录文件默认值。
 

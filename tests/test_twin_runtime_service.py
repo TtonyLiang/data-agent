@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services import twin_runtime_service
+from app.services.ontology_service import _stable_release_definition
 from app.services.twin_runtime_service import TwinRuntimeService
 
 
@@ -259,11 +260,19 @@ async def test_preview_sync_rejects_inactive_domain(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sync_requires_active_release_and_rejects_live_definition_drift(monkeypatch):
+async def test_sync_uses_active_release_when_live_definition_drifts(monkeypatch):
     service = TwinRuntimeService()
     snapshot_json = {"version": 1, "domain": {"datasource_id": 8}}
     semantic_hash = twin_runtime_service.canonical_sha256(snapshot_json)
-    ontology_hash = "b" * 64
+    definition = {
+        "format": "wenqu-ontology",
+        "version": 1,
+        "domain": {"domain_key": "loan_risk"},
+        "object_types": [],
+        "link_types": [],
+        "action_types": [],
+    }
+    ontology_hash = twin_runtime_service._content_hash(definition)
     release = {
         "id": 3,
         "version": 2,
@@ -304,11 +313,20 @@ async def test_sync_requires_active_release_and_rejects_live_definition_drift(mo
     }
     monkeypatch.setattr(twin_runtime_service, "get_ontology_service", lambda: ontology)
     db = FakeDB()
-    db.rows = [{"id": 9, "definition_hash": ontology_hash}]
+    db.rows = [
+        {
+            "id": 9,
+            "definition_json": json.dumps(definition, ensure_ascii=False),
+            "definition_hash": ontology_hash,
+        }
+    ]
     monkeypatch.setattr(twin_runtime_service, "get_management_db", lambda: db)
 
-    with pytest.raises(ValueError, match="实时 Ontology 定义已偏离激活版本"):
-        await service._validated_active_release(4, datasource_id=8)
+    result = await service._validated_active_release(4, datasource_id=8)
+
+    assert result["definition_mode"] == "active_release_immutable"
+    assert result["ontology_definition"] == definition
+    ontology.export_bundle.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -342,7 +360,7 @@ async def test_sync_accepts_legacy_release_when_runtime_exposes_relation_key_arr
         }
     )
     ontology_hash = twin_runtime_service._content_hash(
-        twin_runtime_service._stable_release_definition(legacy_bundle)
+        _stable_release_definition(legacy_bundle)
     )
     release = {
         "id": 3,
@@ -389,7 +407,8 @@ async def test_sync_accepts_legacy_release_when_runtime_exposes_relation_key_arr
     result = await service._validated_active_release(4, datasource_id=8)
 
     assert result["ontology_definition_hash"] == ontology_hash
-    assert result["definition_mode"] == "verified_live_ontology"
+    assert result["definition_mode"] == "active_release_immutable"
+    assert result["ontology_definition"] == legacy_bundle
 
 
 @pytest.mark.asyncio
@@ -450,7 +469,7 @@ async def test_all_object_types_failed_marks_run_failed(monkeypatch):
     create_kwargs = service.create_run.await_args.kwargs
     assert create_kwargs["model_release_id"] == 3
     assert create_kwargs["release_lineage"]["definition_mode"] == (
-        "verified_live_ontology"
+        "active_release_immutable"
     )
     assert complete.await_args.kwargs["status"] == "failed"
     assert complete.await_args.kwargs["statistics"]["model_release"]["id"] == 3
@@ -509,7 +528,11 @@ async def test_relationship_failure_after_object_sync_marks_run_partial(monkeypa
     complete, ontology = await _prepare_execute_sync(
         monkeypatch, service, result, include_ontology=True
     )
-    ontology._sync_links_for_objects.side_effect = RuntimeError("link join failed")
+    ontology.sync_objects_from_datasource.return_value = {
+        **result,
+        "relationship_errors": ["link join failed"],
+        "has_errors": True,
+    }
 
     response = await service.execute_sync(
         domain_id=4,
@@ -524,6 +547,14 @@ async def test_relationship_failure_after_object_sync_marks_run_partial(monkeypa
 
     assert complete.await_args.kwargs["status"] == "partial"
     assert response["result"]["relationship_errors"]
+    assert ontology.sync_objects_from_datasource.await_args.kwargs["release_definition"] == {
+        "format": "wenqu-ontology",
+        "version": 1,
+        "domain": {"domain_key": "loan_risk"},
+        "object_types": [],
+        "link_types": [],
+        "action_types": [],
+    }
 
 
 @pytest.mark.asyncio
@@ -573,7 +604,15 @@ async def _prepare_execute_sync(
                 "semantic_snapshot_hash": "a" * 64,
                 "ontology_release_id": 9,
                 "ontology_definition_hash": "b" * 64,
-                "definition_mode": "verified_live_ontology",
+                "definition_mode": "active_release_immutable",
+                "ontology_definition": {
+                    "format": "wenqu-ontology",
+                    "version": 1,
+                    "domain": {"domain_key": "loan_risk"},
+                    "object_types": [],
+                    "link_types": [],
+                    "action_types": [],
+                },
             }
         ),
     )

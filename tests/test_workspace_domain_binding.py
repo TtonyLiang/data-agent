@@ -9,8 +9,33 @@ from app.models.agent import AgentDomainBindingUpdate
 from app.models.knowledge import SemanticConcept, SemanticDomain, SemanticRuntime
 from app.models.user import PublicUser
 from app.services import semantic_runtime, workspace_service
+from app.services.decision_audit_service import canonical_sha256
 from app.services.semantic_runtime import SemanticRuntimeService
 from app.services.workspace_service import WorkspaceService
+
+
+def _active_model_release(
+    *,
+    release_id: int = 21,
+    semantic_snapshot_id: int = 31,
+    semantic_snapshot_hash: str = "a" * 64,
+    ontology_definition_hash: str = "b" * 64,
+    model_hash: str | None = None,
+) -> dict:
+    model_hash = model_hash or canonical_sha256(
+        {
+            "format": "wenqu-enterprise-model-release/v1",
+            "semantic_snapshot_hash": semantic_snapshot_hash,
+            "ontology_definition_hash": ontology_definition_hash,
+        }
+    )
+    return {
+        "id": release_id,
+        "semantic_snapshot_id": semantic_snapshot_id,
+        "semantic_snapshot_hash": semantic_snapshot_hash,
+        "ontology_definition_hash": ontology_definition_hash,
+        "model_hash": model_hash,
+    }
 
 
 class BindingDB:
@@ -205,11 +230,7 @@ async def test_vector_sync_without_agent_keeps_model_build_available(monkeypatch
 
     class ModelReleaseService:
         async def get_active_release(self, _domain_id):
-            return {
-                "id": 21,
-                "semantic_snapshot_id": 31,
-                "semantic_snapshot_hash": "a" * 64,
-            }
+            return _active_model_release()
 
     class EmbeddingService:
         async def get_index_identity(self, agent_id=None):
@@ -261,9 +282,107 @@ async def test_vector_sync_without_agent_keeps_model_build_available(monkeypatch
     assert response["agent_ids"] == []
     assert response["model_release_id"] == 21
     assert response["semantic_snapshot_id"] == 31
+    assert response["semantic_snapshot_hash"] == "a" * 64
+    assert response["ontology_definition_hash"] == "b" * 64
+    assert response["model_hash"] == _active_model_release()["model_hash"]
     assert len(vector_store.inserted) == 1
     assert vector_store.inserted[0][0] is None
     assert vector_store.inserted[0][2][0].agent_id == 0
+    assert vector_store.inserted[0][2][0].metadata["model_hash"] == response["model_hash"]
+
+
+@pytest.mark.asyncio
+async def test_vector_sync_requires_active_enterprise_model_release(monkeypatch):
+    domain = SemanticDomain(
+        id=7,
+        workspace_id=1,
+        agent_id=None,
+        datasource_id=42,
+        domain_key="loan_risk",
+        name="贷款风控",
+    )
+
+    class SemanticService:
+        async def get_domain(self, domain_id):
+            assert domain_id == 7
+            return domain
+
+        async def get_domain_agent_ids(self, _domain_id):
+            return []
+
+    class ModelReleaseService:
+        async def get_active_release(self, _domain_id):
+            return None
+
+    monkeypatch.setattr(
+        semantic_api,
+        "get_semantic_runtime_service",
+        lambda: SemanticService(),
+    )
+    monkeypatch.setattr(
+        semantic_api,
+        "get_model_release_service",
+        lambda: ModelReleaseService(),
+    )
+    admin = PublicUser(id=1, username="admin", role="admin", status="active")
+
+    with pytest.raises(semantic_api.HTTPException) as exc_info:
+        await semantic_api.sync_domain_to_vector(7, admin)
+
+    assert exc_info.value.status_code == 409
+    assert "尚未激活统一企业模型版本" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_vector_sync_rejects_incomplete_or_tampered_release_hash(monkeypatch):
+    domain = SemanticDomain(
+        id=7,
+        workspace_id=1,
+        agent_id=None,
+        datasource_id=42,
+        domain_key="loan_risk",
+        name="贷款风控",
+    )
+
+    class SemanticService:
+        def __init__(self):
+            self.runtime_builds = 0
+
+        async def get_domain(self, domain_id):
+            assert domain_id == 7
+            return domain
+
+        async def get_domain_agent_ids(self, _domain_id):
+            return []
+
+        async def build_runtime_from_snapshot(self, *args, **kwargs):
+            self.runtime_builds += 1
+            raise AssertionError("hash-invalid release must not build runtime")
+
+    semantic_service = SemanticService()
+
+    class ModelReleaseService:
+        async def get_active_release(self, _domain_id):
+            return _active_model_release(model_hash="0" * 64)
+
+    monkeypatch.setattr(
+        semantic_api,
+        "get_semantic_runtime_service",
+        lambda: semantic_service,
+    )
+    monkeypatch.setattr(
+        semantic_api,
+        "get_model_release_service",
+        lambda: ModelReleaseService(),
+    )
+    admin = PublicUser(id=1, username="admin", role="admin", status="active")
+
+    with pytest.raises(semantic_api.HTTPException) as exc_info:
+        await semantic_api.sync_domain_to_vector(7, admin)
+
+    assert exc_info.value.status_code == 409
+    assert "哈希校验失败" in exc_info.value.detail
+    assert semantic_service.runtime_builds == 0
 
 
 @pytest.mark.asyncio
@@ -310,11 +429,7 @@ async def test_vector_sync_deduplicates_agents_sharing_embedding_configuration(m
 
     class ModelReleaseService:
         async def get_active_release(self, _domain_id):
-            return {
-                "id": 21,
-                "semantic_snapshot_id": 31,
-                "semantic_snapshot_hash": "a" * 64,
-            }
+            return _active_model_release()
 
     class EmbeddingService:
         def __init__(self):
@@ -365,6 +480,7 @@ async def test_vector_sync_deduplicates_agents_sharing_embedding_configuration(m
     assert vector_store.inserted[0][2][0].agent_id == 0
     assert vector_store.inserted[0][3]["model_release_id"] == 21
     assert vector_store.inserted[0][3]["embedding_model_config_id"] == 5
+    assert vector_store.inserted[0][2][0].metadata["model_hash"] == response["model_hash"]
 
 
 class AtomicDomainDB:

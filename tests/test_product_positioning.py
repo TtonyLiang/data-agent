@@ -24,7 +24,7 @@ def test_primary_product_position_is_enterprise_ontology_digital_twin():
 
 
 def test_loan_risk_demo_is_explicitly_non_production():
-    roadmap = (ROOT / "docs/risk-report-delivery-roadmap.md").read_text(encoding="utf-8")
+    roadmap = (ROOT / "docs/scenarios/risk-delivery-validation.md").read_text(encoding="utf-8")
     demo = (ROOT / "examples/loan/RISK_DELIVERY_DEMO.md").read_text(encoding="utf-8")
 
     assert "合成演示" in roadmap

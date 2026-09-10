@@ -10,7 +10,10 @@ This directory contains sample assets for local demos and regression tests.
 - All six object types in `ontology-bundle.json` enable read-only datasource synchronization
   with a page size of 200 and a stable, unbounded top-level `SELECT`.
 - `ONTOLOGY_DEMO.md` explains the workbench workflow, object/action model, and REST replay.
-- `scripts/verify_loan_ontology_demo.py` replays import -> validate -> publish -> approve -> collect -> close -> audit.
+- `scripts/verify_loan_ontology_demo.py` replays import -> validate -> publish and activate the unified model -> approve -> collect -> close -> audit.
+- `scripts/verify_full_platform_flow.py` verifies Schema collection, domain-owned permissions,
+  enterprise-model activation, twin synchronization, external Query Capability, and built-in
+  validation-Agent parity against direct business-database baselines.
 - To use the question-answering assets, import `semantic-domain.json` with `scripts/import_semantic_bundle.py`; to use the operational Ontology, import `ontology-bundle.json` from the `/ontology` workbench. See `ONTOLOGY_DEMO.md` for the complete sequence.
 
 Ontology definitions and local action overlays are stored in the management database. Synchronized
@@ -18,9 +21,9 @@ source properties come from the domain's bound business datasource and remain re
 
 ## Ontology datasource synchronization
 
-Entering the object-instances tab, or refreshing it, synchronizes the selected object type's
-current page from the domain's default datasource. Switching types or pages continues through all
-source rows using server-side `LIMIT/OFFSET`; configured queries contain no top-level `LIMIT`.
+Use the twin-runtime page to preview or manually synchronize an object type from the domain's
+default datasource. Synchronization uses the active enterprise-model release and server-side
+`LIMIT/OFFSET`; configured queries contain no top-level `LIMIT`.
 
 | Object type | Base table | Derived or renamed fields |
 |---|---|---|
@@ -33,8 +36,9 @@ source rows using server-side `LIMIT/OFFSET`; configured queries contain no top-
 
 Datasource access is read-only. Synced values are stored as source properties; fields changed by
 Ontology actions are stored as local overlays and take precedence on subsequent synchronizations.
-This is page-triggered synchronization, not database CDC or a background scheduler. The bound
-agent must have read permission for every table referenced by a source query.
+This is manual synchronization, not database CDC or a background scheduler. Domain-owned table
+and column permissions are the formal boundary for every table referenced by a source query;
+Agent permissions remain only as an explicit compatibility fallback for older domains.
 
 ## Non-destructive local demo seed
 

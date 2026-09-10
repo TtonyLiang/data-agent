@@ -667,6 +667,7 @@ class CapabilityAccessService:
             get_ontology_service(),
             domain_id,
             {"role": "user"},
+            require_active_release=True,
         )
         if execution_agent_id is not None:
             runtime.domain.agent_id = execution_agent_id
@@ -807,7 +808,7 @@ class CapabilityAccessService:
             public_result["final_answer"] = message
         elif status == "database_error":
             message = (
-                "业务数据查询失败，请联系平台管理员并提供 trace_id "
+                "业务数据查询失败，请联系技术人员并提供 trace_id "
                 f"{trace_id}"
             )
             public_result["sql_error"] = message

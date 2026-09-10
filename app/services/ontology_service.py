@@ -359,6 +359,122 @@ class OntologyService:
                 return item
         return None
 
+    async def prepare_release_sync_definition(
+        self,
+        domain_id: int,
+        release_definition: dict[str, Any],
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Bind an immutable release definition to current storage row IDs.
+
+        The release owns business/technical behavior such as SQL, properties,
+        relation keys, and action effects.  Current rows are consulted only to
+        resolve the physical IDs required by the instance tables; draft values
+        are never merged into the released definition.
+        """
+        if not isinstance(release_definition, dict):
+            raise ValueError("激活企业模型关联的 Ontology 定义无效")
+        live_object_types = await self.list_object_types(domain_id)
+        live_link_types = await self.list_link_types(domain_id)
+        live_action_types = await self.list_action_types(domain_id)
+        object_by_key = {
+            str(item.get("object_key")): item for item in live_object_types
+        }
+        link_by_key = {
+            str(item.get("link_key")): item for item in live_link_types
+        }
+        action_by_key = {
+            str(item.get("action_key")): item for item in live_action_types
+        }
+
+        def active_items(key: str) -> list[dict[str, Any]]:
+            items = release_definition.get(key) or []
+            if not isinstance(items, list):
+                raise ValueError(f"激活企业模型的 {key} 定义无效")
+            return [
+                item
+                for item in items
+                if isinstance(item, dict)
+                and str(item.get("status") or "active").lower() == "active"
+            ]
+
+        object_types: list[dict[str, Any]] = []
+        for released in active_items("object_types"):
+            object_key = str(released.get("object_key") or "").strip()
+            live = object_by_key.get(object_key)
+            if live is None:
+                raise ValueError(
+                    f"激活企业模型的对象类型 {object_key or '未命名'} 已不存在，不能同步"
+                )
+            object_types.append(
+                {
+                    **_normalize_row(released),
+                    "id": int(live["id"]),
+                    "domain_id": domain_id,
+                }
+            )
+
+        link_types: list[dict[str, Any]] = []
+        for released in active_items("link_types"):
+            link_key = str(released.get("link_key") or "").strip()
+            live = link_by_key.get(link_key)
+            if live is None:
+                raise ValueError(
+                    f"激活企业模型的关系类型 {link_key or '未命名'} 已不存在，不能同步"
+                )
+            link_types.append(
+                {
+                    **_normalize_row(released),
+                    "id": int(live["id"]),
+                    "domain_id": domain_id,
+                }
+            )
+
+        action_types: list[dict[str, Any]] = []
+        for released in active_items("action_types"):
+            action_key = str(released.get("action_key") or "").strip()
+            live = action_by_key.get(action_key)
+            if live is None:
+                raise ValueError(
+                    f"激活企业模型的动作类型 {action_key or '未命名'} 已不存在，不能运行"
+                )
+            action_types.append(
+                {
+                    **_normalize_row(released),
+                    "id": int(live["id"]),
+                    "domain_id": domain_id,
+                }
+            )
+
+        return {
+            "object_types": object_types,
+            "link_types": link_types,
+            "action_types": action_types,
+        }
+
+    async def get_release_scoped_definitions(
+        self,
+        domain_id: int,
+        *,
+        require_active_release: bool = True,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Return runtime definitions from the active release only.
+
+        Management screens keep using the live draft tables. Runtime screens
+        call this method so edits in a draft cannot change the definitions,
+        labels, mappings, or action effects used by an already active model.
+        """
+        _, _, _, definition, _ = await self._load_runtime_definition(
+            domain_id,
+            allow_compatibility_fallback=not require_active_release,
+        )
+        if definition is None:
+            return {
+                "object_types": await self.list_object_types(domain_id),
+                "link_types": await self.list_link_types(domain_id),
+                "action_types": await self.list_action_types(domain_id),
+            }
+        return await self.prepare_release_sync_definition(domain_id, definition)
+
     async def upsert_object_type(self, payload: OntologyObjectTypePayload) -> int:
         await self._require_domain(payload.domain_id)
         properties = [item.model_dump() for item in payload.properties]
@@ -595,7 +711,7 @@ class OntologyService:
         return [_normalize_row(row) for row in rows]
 
     async def _load_runtime_definition(
-        self, domain_id: int
+        self, domain_id: int, *, allow_compatibility_fallback: bool = True
     ) -> tuple[
         dict[str, Any] | None,
         dict[str, Any] | None,
@@ -613,6 +729,8 @@ class OntologyService:
         """
         model_release = await get_model_release_service().get_active_release(domain_id)
         if model_release is None:
+            if not allow_compatibility_fallback:
+                raise ValueError("当前业务领域尚未激活统一企业模型版本")
             warning = {
                 "code": "enterprise_model_release_fallback",
                 "message": (
@@ -694,7 +812,13 @@ class OntologyService:
         }
         return model_metadata, semantic_snapshot, ontology_release, definition, []
 
-    async def build_agent_context(self, domain_id: int, *, role: str = "user") -> dict[str, Any]:
+    async def build_agent_context(
+        self,
+        domain_id: int,
+        *,
+        role: str = "user",
+        require_active_release: bool = False,
+    ) -> dict[str, Any]:
         """Build the bounded, runtime-facing Ontology context for an agent.
 
         Draft/deprecated definitions are deliberately omitted from the agent
@@ -710,7 +834,10 @@ class OntologyService:
             ontology_release,
             definition,
             runtime_warnings,
-        ) = await self._load_runtime_definition(domain_id)
+        ) = await self._load_runtime_definition(
+            domain_id,
+            allow_compatibility_fallback=not require_active_release,
+        )
         if definition is None:
             raw_object_types = await self.list_object_types(domain_id)
             raw_link_types = await self.list_link_types(domain_id)
@@ -1395,6 +1522,59 @@ class OntologyService:
         return allowed_ids
 
     @staticmethod
+    async def _allowed_database_object_type_ids_from_definitions(
+        domain_id: int,
+        object_types: list[dict[str, Any]],
+        table_permissions: dict[str, bool],
+        column_permissions: dict[tuple[str, str], ColumnPolicy],
+    ) -> list[int] | None:
+        object_keys = [
+            str(item.get("object_key") or "").strip()
+            for item in object_types
+            if str(item.get("object_key") or "").strip()
+        ]
+        if not object_keys:
+            return []
+        placeholders = []
+        params: dict[str, Any] = {"domain_id": domain_id}
+        for index, object_key in enumerate(sorted(set(object_keys))):
+            key = f"object_key_{index}"
+            placeholders.append(f":{key}")
+            params[key] = object_key
+        rows = await get_management_db().execute_query(
+            "SELECT id, object_key FROM ontology_object_type "
+            "WHERE domain_id = :domain_id "
+            f"AND object_key IN ({', '.join(placeholders)})",
+            params,
+        )
+        ids_by_key = {str(row.get("object_key")): int(row["id"]) for row in rows}
+        allowed_ids: list[int] = []
+        for object_type in object_types:
+            object_key = str(object_type.get("object_key") or "").strip()
+            object_type_id = ids_by_key.get(object_key)
+            if object_type_id is None:
+                continue
+            source_tables = extract_table_references(
+                str(object_type.get("source_query") or "")
+            )
+            if not source_tables or any(
+                not get_permission_service().table_allowed(table, table_permissions)
+                for table in source_tables
+            ):
+                continue
+            primary_policy = OntologyService._column_policy_for_sources(
+                str(object_type.get("primary_property") or ""),
+                source_tables,
+                column_permissions,
+            )
+            if primary_policy is not None and (
+                not primary_policy.allowed or primary_policy.masking_policy != "none"
+            ):
+                continue
+            allowed_ids.append(object_type_id)
+        return allowed_ids
+
+    @staticmethod
     def _append_object_type_access_filter(
         where: list[str],
         params: dict[str, Any],
@@ -1422,6 +1602,7 @@ class OntologyService:
         offset: int = 0,
         access_agent_id: int | None = None,
         apply_permissions: bool = True,
+        release_definition: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         domain = await self._require_domain(domain_id)
         permission_context = (
@@ -1439,18 +1620,43 @@ class OntologyService:
         )
         params: dict[str, Any] = {"domain_id": domain_id}
         where = ["o.domain_id = :domain_id"]
+        released_by_id: dict[int, dict[str, Any]] = {}
+        if release_definition is not None:
+            released_types = release_definition.get("object_types") or []
+            released_by_id = {
+                int(item["id"]): item
+                for item in released_types
+                if isinstance(item, dict) and item.get("id") is not None
+            }
+            if not released_by_id:
+                return []
+            placeholders = []
+            for index, released_id in enumerate(sorted(released_by_id)):
+                key = f"released_object_type_{index}"
+                placeholders.append(f":{key}")
+                params[key] = released_id
+            where.append(f"o.object_type_id IN ({', '.join(placeholders)})")
         if object_type_id is not None:
             where.append("o.object_type_id = :object_type_id")
             params["object_type_id"] = object_type_id
-        allowed_type_ids = (
-            await self._allowed_database_object_type_ids(
+        if permission_context is None:
+            allowed_type_ids = None
+        elif release_definition is None:
+            allowed_type_ids = await self._allowed_database_object_type_ids(
                 domain_id,
                 permission_context[1],
                 permission_context[2],
             )
-            if permission_context is not None
-            else None
-        )
+        else:
+            # Runtime reads are release-scoped.  Permission discovery must use
+            # the frozen release mappings too; consulting the live object-type
+            # rows here would let an un-published draft SQL change visibility.
+            allowed_type_ids = await self._allowed_database_object_type_ids_from_definitions(
+                domain_id,
+                release_definition.get("object_types") or [],
+                permission_context[1],
+                permission_context[2],
+            )
         self._append_object_type_access_filter(where, params, allowed_type_ids)
         sql += " AND ".join(where)
         sql += " ORDER BY o.updated_at DESC, o.id DESC"
@@ -1459,6 +1665,22 @@ class OntologyService:
             params["limit"] = min(max(int(limit), 1), 1000)
             params["offset"] = max(int(offset), 0)
         rows = await get_management_db().execute_query(sql, params)
+        if released_by_id:
+            scoped_rows = []
+            for raw_row in rows:
+                row = _normalize_row(raw_row)
+                released = released_by_id.get(int(row.get("object_type_id") or 0))
+                if released is None:
+                    continue
+                row["object_type_key"] = released.get("object_key")
+                row["object_type_name"] = released.get("name") or row.get(
+                    "object_type_name"
+                )
+                row["_permission_source_query"] = released.get("source_query")
+                row["_permission_primary_property"] = released.get("primary_property")
+                row["_permission_display_property"] = released.get("display_property")
+                scoped_rows.append(row)
+            rows = scoped_rows
         return self._protect_object_rows(rows, permission_context)
 
     async def sync_objects_from_datasource(
@@ -1470,8 +1692,15 @@ class OntologyService:
         page: int = 1,
         page_size: int | None = None,
         sync_links: bool = True,
+        release_definition: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Synchronize one source page while preserving local action overlays."""
+        """Synchronize one source page while preserving local action overlays.
+
+        When ``release_definition`` is supplied, all mapping and behavior
+        fields come from that immutable active release.  Live rows are used
+        only to resolve storage IDs, so editing the draft cannot change an
+        in-flight or subsequent release-scoped sync.
+        """
         domain = await self._require_domain(domain_id)
         datasource_id = int(domain.get("datasource_id") or 0)
         if not datasource_id:
@@ -1484,7 +1713,18 @@ class OntologyService:
             and permission_context.source == "unconfigured"
         ):
             raise PermissionError("当前业务领域未配置数据权限")
-        object_types = await self.list_object_types(domain_id)
+        if release_definition is None:
+            object_types = await self.list_object_types(domain_id)
+            link_types = await self.list_link_types(domain_id)
+            action_types = await self.list_action_types(domain_id)
+        else:
+            scoped_definition = await self.prepare_release_sync_definition(
+                domain_id,
+                release_definition,
+            )
+            object_types = scoped_definition["object_types"]
+            link_types = scoped_definition["link_types"]
+            action_types = scoped_definition["action_types"]
         if object_type_id is not None:
             object_types = [item for item in object_types if int(item["id"]) == object_type_id]
             if not object_types:
@@ -1495,8 +1735,6 @@ class OntologyService:
 
         source_db = await get_datasource_db(datasource_id)
         permission_service = get_permission_service()
-        action_types = await self.list_action_types(domain_id)
-        link_types = await self.list_link_types(domain_id)
         page_number = max(int(page), 1)
         results: list[dict[str, Any]] = []
         raw_synced_objects: list[dict[str, Any]] = []
@@ -1597,10 +1835,15 @@ class OntologyService:
             results.append(result)
 
         link_count = 0
+        relationship_errors: list[str] = []
         if sync_links and raw_synced_objects:
-            link_count = await self._sync_links_for_objects(
-                domain_id, raw_synced_objects, link_types=link_types
-            )
+            try:
+                link_count = await self._sync_links_for_objects(
+                    domain_id, raw_synced_objects, link_types=link_types
+                )
+            except Exception as exc:
+                logger.exception("ontology relationship sync failed domain_id=%s", domain_id)
+                relationship_errors.append(str(exc))
         return {
             "domain_id": domain_id,
             "datasource_id": datasource_id,
@@ -1610,7 +1853,8 @@ class OntologyService:
             "objects": [item for result in results for item in result["objects"]],
             "total": total_rows,
             "links_synced": link_count,
-            "has_errors": any(result["errors"] for result in results),
+            "relationship_errors": relationship_errors,
+            "has_errors": any(result["errors"] for result in results) or bool(relationship_errors),
         }
 
     def _validated_source_query(self, source_query: str) -> str:
@@ -1922,13 +2166,56 @@ class OntologyService:
         adapters.
         """
         domain = await self._require_domain(domain_id)
+        (
+            model_release,
+            semantic_snapshot,
+            ontology_release,
+            definition,
+            runtime_warnings,
+        ) = await self._load_runtime_definition(
+            domain_id,
+            allow_compatibility_fallback=False,
+        )
+        if not isinstance(definition, dict):
+            raise ValueError("当前业务领域尚未激活统一企业模型版本")
+        released_object_types = [
+            _normalize_row(item)
+            for item in definition.get("object_types") or []
+            if isinstance(item, dict) and item.get("status") == "active"
+        ]
+        released_types_by_key = {
+            str(item.get("object_key")): item
+            for item in released_object_types
+            if str(item.get("object_key") or "").strip()
+        }
         permission_context = await self._load_object_permission_context(domain, access_agent_id)
         safe_limit = min(max(int(limit), 1), 100)
         safe_offset = max(int(offset), 0)
         normalized_type = str(object_type_key or "").strip() or None
         normalized_search = str(search or "").strip() or None
+        if normalized_type and normalized_type not in released_types_by_key:
+            raise ValueError("对象类型未包含在当前激活的企业模型版本中")
+        if not released_types_by_key:
+            return {
+                "objects": [],
+                "total": 0,
+                "limit": safe_limit,
+                "offset": safe_offset,
+                "has_more": False,
+                "permission": self._permission_context_metadata(permission_context),
+                "model_release": model_release,
+                "semantic_snapshot": semantic_snapshot,
+                "ontology_release": ontology_release,
+                "warnings": runtime_warnings,
+            }
         where = ["o.domain_id = :domain_id", "o.status = 'active'"]
         params: dict[str, Any] = {"domain_id": domain_id}
+        released_placeholders = []
+        for index, object_key in enumerate(sorted(released_types_by_key)):
+            key = f"released_object_key_{index}"
+            released_placeholders.append(f":{key}")
+            params[key] = object_key
+        where.append(f"t.object_key IN ({', '.join(released_placeholders)})")
         if normalized_type:
             where.append("t.object_key = :object_type_key")
             params["object_type_key"] = normalized_type
@@ -1936,8 +2223,9 @@ class OntologyService:
             where.append("(o.display_name LIKE :search OR o.primary_value LIKE :search)")
             params["search"] = f"%{normalized_search}%"
         allowed_type_ids = (
-            await self._allowed_database_object_type_ids(
+            await self._allowed_database_object_type_ids_from_definitions(
                 domain_id,
+                released_object_types,
                 permission_context[1],
                 permission_context[2],
             )
@@ -1964,7 +2252,19 @@ class OntologyService:
             "LIMIT :limit OFFSET :offset",
             {**params, "limit": safe_limit, "offset": safe_offset},
         )
-        protected_rows = self._protect_object_rows(rows, permission_context)
+        release_scoped_rows = []
+        for raw_row in rows:
+            row = _normalize_row(raw_row)
+            released_type = released_types_by_key.get(str(row.get("object_type_key") or ""))
+            if released_type is not None:
+                row["object_type_name"] = released_type.get("name") or row.get(
+                    "object_type_name"
+                )
+                row["_permission_source_query"] = released_type.get("source_query")
+                row["_permission_primary_property"] = released_type.get("primary_property")
+                row["_permission_display_property"] = released_type.get("display_property")
+            release_scoped_rows.append(row)
+        protected_rows = self._protect_object_rows(release_scoped_rows, permission_context)
         return {
             "objects": protected_rows,
             "total": total,
@@ -1972,6 +2272,10 @@ class OntologyService:
             "offset": safe_offset,
             "has_more": safe_offset + len(protected_rows) < total,
             "permission": self._permission_context_metadata(permission_context),
+            "model_release": model_release,
+            "semantic_snapshot": semantic_snapshot,
+            "ontology_release": ontology_release,
+            "warnings": runtime_warnings,
         }
 
     async def get_object(
@@ -2275,6 +2579,7 @@ class OntologyService:
         *,
         access_agent_id: int | None = None,
         apply_permissions: bool = True,
+        release_definition: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         domain = await self._require_domain(domain_id)
         permission_context = (
@@ -2282,6 +2587,29 @@ class OntologyService:
             if apply_permissions
             else None
         )
+        params: dict[str, Any] = {"domain_id": domain_id}
+        release_links: dict[int, dict[str, Any]] = {}
+        release_objects: dict[str, dict[str, Any]] = {}
+        link_filter = ""
+        if release_definition is not None:
+            release_links = {
+                int(item["id"]): item
+                for item in release_definition.get("link_types") or []
+                if isinstance(item, dict) and item.get("id") is not None
+            }
+            release_objects = {
+                str(item.get("object_key")): item
+                for item in release_definition.get("object_types") or []
+                if isinstance(item, dict) and item.get("object_key")
+            }
+            if not release_links:
+                return []
+            placeholders = []
+            for index, link_id in enumerate(sorted(release_links)):
+                key = f"released_link_type_{index}"
+                placeholders.append(f":{key}")
+                params[key] = link_id
+            link_filter = f" AND l.link_type_id IN ({', '.join(placeholders)})"
         rows = await get_management_db().execute_query(
             "SELECT l.*, t.link_key, t.name AS link_type_name, "
             "s.display_name AS source_name, s.primary_value AS source_primary_value, "
@@ -2301,9 +2629,40 @@ class OntologyService:
             "JOIN ontology_object d ON d.id = l.target_object_id "
             "JOIN ontology_object_type st ON st.id = s.object_type_id "
             "JOIN ontology_object_type dt ON dt.id = d.object_type_id "
-            "WHERE l.domain_id = :domain_id ORDER BY l.id DESC",
-            {"domain_id": domain_id},
+            "WHERE l.domain_id = :domain_id" + link_filter + " ORDER BY l.id DESC",
+            params,
         )
+        if release_links:
+            scoped_rows = []
+            for raw_row in rows:
+                row = _normalize_row(raw_row)
+                released_link = release_links.get(int(row.get("link_type_id") or 0))
+                if released_link is None:
+                    continue
+                row["link_key"] = released_link.get("link_key")
+                row["link_type_name"] = released_link.get("name") or row.get(
+                    "link_type_name"
+                )
+                for endpoint, object_key_field in (
+                    ("source", "source_object_key"),
+                    ("target", "target_object_key"),
+                ):
+                    object_definition = release_objects.get(
+                        str(released_link.get(object_key_field) or "")
+                    )
+                    if object_definition is None:
+                        continue
+                    row[f"_permission_{endpoint}_source_query"] = object_definition.get(
+                        "source_query"
+                    )
+                    row[f"_permission_{endpoint}_primary_property"] = object_definition.get(
+                        "primary_property"
+                    )
+                    row[f"_permission_{endpoint}_display_property"] = object_definition.get(
+                        "display_property"
+                    )
+                scoped_rows.append(row)
+            rows = scoped_rows
         return self._protect_link_rows(rows, permission_context)
 
     async def create_link(self, payload: OntologyLinkPayload) -> int:
@@ -2325,6 +2684,48 @@ class OntologyService:
             raise ValueError("关系起点对象类型不匹配")
         if target["object_type_key"] != link_type["target_object_key"]:
             raise ValueError("关系终点对象类型不匹配")
+        cardinality = str(link_type.get("cardinality") or "many_to_many")
+        cardinality_sql = {
+            "one_to_one": (
+                "AND (source_object_id = :source_object_id "
+                "OR target_object_id = :target_object_id)"
+            ),
+            "one_to_many": "AND target_object_id = :target_object_id",
+            "many_to_one": "AND source_object_id = :source_object_id",
+        }.get(cardinality)
+        if cardinality_sql:
+            existing_links = await get_management_db().execute_query(
+                "SELECT source_object_id, target_object_id FROM ontology_link "
+                "WHERE link_type_id = :link_type_id " + cardinality_sql + " LIMIT 1",
+                {
+                    "link_type_id": payload.link_type_id,
+                    "source_object_id": payload.source_object_id,
+                    "target_object_id": payload.target_object_id,
+                },
+            )
+            conflict = next(
+                (
+                    existing_link
+                    for existing_link in existing_links
+                    if not (
+                        int(existing_link["source_object_id"])
+                        == payload.source_object_id
+                        and int(existing_link["target_object_id"])
+                        == payload.target_object_id
+                    )
+                ),
+                None,
+            )
+            if conflict is not None:
+                cardinality_label = {
+                    "one_to_one": "一对一",
+                    "one_to_many": "一对多",
+                    "many_to_one": "多对一",
+                }[cardinality]
+                name = link_type.get("name") or link_type.get("link_key")
+                raise ValueError(
+                    f"关系 {name} 的基数为{cardinality_label}，端点已存在冲突关系"
+                )
         return await get_management_db().execute_insert(
             "INSERT INTO ontology_link "
             "(domain_id, link_type_id, source_object_id, target_object_id, properties) VALUES "
@@ -2584,6 +2985,7 @@ class OntologyService:
         limit: int = 100,
         access_agent_id: int | None = None,
         apply_permissions: bool = True,
+        release_definition: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         domain = await self._require_domain(domain_id)
         permission_context = (
@@ -2610,6 +3012,27 @@ class OntologyService:
             "WHERE r.domain_id = :domain_id"
         )
         params: dict[str, Any] = {"domain_id": domain_id, "limit": min(max(limit, 1), 500)}
+        release_actions: dict[int, dict[str, Any]] = {}
+        release_objects: dict[str, dict[str, Any]] = {}
+        if release_definition is not None:
+            release_actions = {
+                int(item["id"]): item
+                for item in release_definition.get("action_types") or []
+                if isinstance(item, dict) and item.get("id") is not None
+            }
+            release_objects = {
+                str(item.get("object_key")): item
+                for item in release_definition.get("object_types") or []
+                if isinstance(item, dict) and item.get("object_key")
+            }
+            if not release_actions:
+                return []
+            placeholders = []
+            for index, action_id in enumerate(sorted(release_actions)):
+                key = f"released_action_type_{index}"
+                placeholders.append(f":{key}")
+                params[key] = action_id
+            sql += f" AND r.action_type_id IN ({', '.join(placeholders)})"
         if user_id is not None:
             sql += " AND r.user_id = :user_id"
             params["user_id"] = user_id
@@ -2618,6 +3041,15 @@ class OntologyService:
         protected_runs: list[dict[str, Any]] = []
         for raw_row in rows:
             row = _normalize_row(raw_row)
+            released_action = release_actions.get(int(row.get("action_type_id") or 0))
+            if released_action is not None:
+                row["action_key"] = released_action.get("action_key")
+                row["action_name"] = released_action.get("name") or row.get("action_name")
+                target_definition = release_objects.get(
+                    str(released_action.get("target_object_key") or "")
+                )
+            else:
+                target_definition = None
             target = {
                 "source_kind": row.pop("_permission_target_source_kind", None),
                 "source_datasource_id": row.pop("_permission_target_datasource_id", None),
@@ -2632,6 +3064,14 @@ class OntologyService:
                 "primary_property": row.pop("_permission_target_primary_property", None),
                 "display_property": row.pop("_permission_target_display_property", None),
             }
+            if target_definition is not None:
+                object_type.update(
+                    {
+                        "source_query": target_definition.get("source_query"),
+                        "primary_property": target_definition.get("primary_property"),
+                        "display_property": target_definition.get("display_property"),
+                    }
+                )
             protected_target = self._protect_object_rows(
                 [self._permission_metadata(target, object_type)],
                 permission_context,

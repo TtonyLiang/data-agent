@@ -47,7 +47,7 @@
 
     <el-empty
       v-if="!domainLoading && domains.length === 0"
-      :description="isTechnicalUser() ? '暂无可用领域，请先在企业模型中完成领域配置' : '暂无可访问业务领域，请联系技术工程师完成领域配置'"
+      :description="isTechnicalUser() ? '暂无可用领域，请先在企业模型中完成领域配置' : '暂无可访问业务领域，请联系技术人员完成领域配置'"
     >
       <el-button type="primary" :icon="Refresh" @click="loadDomains">重新加载</el-button>
     </el-empty>

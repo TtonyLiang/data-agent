@@ -16,6 +16,10 @@ import httpx
 from app.db.migrations import run_management_migrations
 from app.db.mysql import get_management_db
 from app.services.user_service import hash_password
+from scripts._e2e_support import (
+    activate_enterprise_model_release,
+    delete_temporary_domain,
+)
 
 BASE_URL = "http://127.0.0.1:4400"
 BUNDLE_PATH = Path(__file__).parents[1] / "examples/supply_chain/ontology-bundle.json"
@@ -91,7 +95,16 @@ async def main() -> None:
                 json={"description": "e2e"},
             )
             published.raise_for_status()
-            statuses["release_version"] = int(published.json()["version"])
+            ontology_release = published.json()
+            statuses["release_version"] = int(ontology_release["version"])
+            model_release = await activate_enterprise_model_release(
+                client,
+                domain_id,
+                headers,
+                int(ontology_release["id"]),
+                name="供应链统一模型 V1",
+            )
+            statuses["model_release_active"] = model_release["status"] == "active"
             actions = (
                 await client.get(f"/api/ontology/domains/{domain_id}/action-types", headers=headers)
             ).json()["action_types"]
@@ -124,9 +137,8 @@ async def main() -> None:
             statuses["export_objects"] = len(exported.json().get("objects", []))
             print(json.dumps(statuses, ensure_ascii=False, sort_keys=True))
     finally:
-        if domain_id and token:
-            async with httpx.AsyncClient(base_url=BASE_URL, timeout=30) as client:
-                await client.delete(f"/api/semantic/domains/{domain_id}", headers=headers)
+        if domain_id:
+            await delete_temporary_domain(db, domain_id)
         if temporary_agent_id:
             await db.execute_query("DELETE FROM agent WHERE id = :id", {"id": temporary_agent_id})
         await db.execute_query("DELETE FROM app_user WHERE id = :id", {"id": user_id})

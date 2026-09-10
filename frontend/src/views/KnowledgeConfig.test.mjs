@@ -44,7 +44,7 @@ assert.ok(
 assert.ok(
   source.includes('指标业务口径') &&
     source.includes('业务人员确认') &&
-    source.includes('物理数据绑定（技术工程师高级配置）') &&
+    source.includes('物理数据绑定（技术人员高级配置）') &&
     source.includes('SQL 计算公式') &&
     source.includes('数据库结构变化时，只调整这里，不改变上层业务语义'),
   'metric and mapping forms should separate business semantics from technical data bindings',
@@ -122,4 +122,27 @@ assert.ok(
     source.includes('_original_default_filters') &&
     source.includes('return originalFilters'),
   'editing simplified forms should preserve multi-hop joins and additional default filters',
+)
+
+assert.ok(
+  source.includes('const canManageTechnical = computed(() => isTechnicalUser())') &&
+    source.includes('v-model="assetDraft.base_table" :disabled="!canManageTechnical"') &&
+    source.includes('v-model="assetDraft.time_field" :disabled="!canManageTechnical"') &&
+    source.includes('v-model="assetDraft.formula_sql" :disabled="!canManageTechnical"') &&
+    source.includes('v-model="assetDraft.join_left" :disabled="!canManageTechnical"') &&
+    source.includes('v-model="assetDraft.join_right" :disabled="!canManageTechnical"') &&
+  source.includes('v-model="assetDraft.compile_strategy_type" :disabled="!canManageTechnical"') &&
+    source.includes("!['relation', 'mapping', 'template'].includes(assetType)") &&
+    source.includes('v-model="assetDraft.table_name" :disabled="!canManageTechnical"') &&
+    source.includes('v-model="assetDraft.column_name" :disabled="!canManageTechnical"') &&
+    source.includes('v-model="assetDraft.expression_sql" :disabled="!canManageTechnical"') &&
+    source.includes('v-model="assetDraft.data_type" :disabled="!canManageTechnical"') &&
+    source.includes('v-if="canManageTechnical" type="primary" size="small" @click="openAssetDialog(\'mapping\')"') &&
+    objectBindingSource.includes("import { isTechnicalUser } from '../stores/auth'") &&
+    objectBindingSource.includes('const canManageTechnical = computed(() => isTechnicalUser())') &&
+    objectBindingSource.includes('v-model="bindingForm.sync_enabled"') &&
+    objectBindingSource.includes(':disabled="!canManageTechnical"') &&
+    objectBindingSource.includes('v-model="bindingForm.source_query"') &&
+    objectBindingSource.includes(':disabled="!canManageTechnical"'),
+  'business users should see technical bindings but only technical users or admin may edit physical metric, join, mapping, LogicForm, and object-sync fields',
 )

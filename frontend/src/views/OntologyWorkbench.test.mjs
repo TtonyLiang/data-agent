@@ -292,7 +292,7 @@ assert.ok(
   objectDialogSource.includes('建议按顺序配置') &&
     objectDialogSource.includes('先确认业务含义，再完成技术映射') &&
     objectDialogSource.includes('业务人员确认') &&
-    objectDialogSource.includes('技术工程师配置') &&
+    objectDialogSource.includes('技术人员配置') &&
     objectDialogSource.indexOf('id="object-business-title"') < objectDialogSource.indexOf('id="object-property-title"') &&
     objectDialogSource.indexOf('id="object-property-title"') < objectDialogSource.indexOf('id="object-mapping-title"'),
   'object creation should separate business definition, object identity, and technical mapping in that order',
@@ -345,8 +345,24 @@ assert.ok(
     actionDialogSource.includes('保存时自动转换为动作的状态前置条件和状态效果') &&
     actionDialogSource.includes('只有 Agent 或业务应用需要提供的输入才添加') &&
     actionDialogSource.includes('技术标识（留空自动生成）') &&
-    actionDialogSource.includes('供技术工程师配置权限、复杂条件和执行效果'),
+    actionDialogSource.includes('供技术人员配置权限、复杂条件和执行效果'),
   'action creation should expose intent, state transition, and business inputs before folded governance and execution DSL settings',
+)
+
+assert.ok(
+  source.includes('const canManageData = computed(() => isTechnicalUser())') &&
+    objectDialogSource.includes('v-model="objectTypeForm.sync_enabled" :disabled="!canManageData"') &&
+    objectDialogSource.includes('v-model="objectTypeForm.sync_limit" :disabled="!canManageData"') &&
+    objectDialogSource.includes('v-model="objectTypeForm.source_query"') &&
+    objectDialogSource.includes(':disabled="!canManageData"') &&
+    linkDialogSource.includes('v-model="linkTypeForm.source_property_keys" :disabled="!canManageData"') &&
+    linkDialogSource.includes('v-model="linkTypeForm.target_property_keys" :disabled="!canManageData"') &&
+    linkDialogSource.includes('v-model="linkTypeForm.link_key" :disabled="!canManageData"') &&
+    actionDialogSource.includes('v-model="actionTypeForm.allowed_roles" :disabled="!canManageData"') &&
+    actionDialogSource.includes('v-model="actionTypeForm.requires_approval" :disabled="!canManageData"') &&
+    actionDialogSource.includes('v-model="actionTypeForm.action_key" :disabled="!canManageData"') &&
+    actionDialogSource.includes('业务人员可以查看这些配置，但只有技术人员可编辑'),
+  'business users should edit business definitions while technical relationship keys, object sync/SQL, and action governance remain read-only; admin remains technical-capable',
 )
 
 assert.ok(

@@ -6,6 +6,7 @@ from app.models.permission import (
     ColumnPermissionRule,
     DatasourcePermissionConfig,
     DatasourcePermissionReplace,
+    DomainDatasourcePermissionConfig,
     TablePermissionRule,
 )
 
@@ -32,6 +33,28 @@ class FakePermissionService:
         self.replaced = (agent_id, datasource_id, request)
         return DatasourcePermissionConfig(
             agent_id=agent_id,
+            datasource_id=datasource_id,
+            **request.model_dump(),
+        )
+
+    async def get_domain_permission_configuration(self, domain_id, datasource_id):
+        return DomainDatasourcePermissionConfig(
+            domain_id=domain_id,
+            datasource_id=datasource_id,
+            table_permissions=[TablePermissionRule(table_name="loan_application", allowed=True)],
+            column_permissions=[
+                ColumnPermissionRule(
+                    table_name="loan_application",
+                    column_name="mobile",
+                    masking_policy="partial",
+                )
+            ],
+        )
+
+    async def replace_domain_permission_configuration(self, domain_id, datasource_id, request):
+        self.replaced = (domain_id, datasource_id, request)
+        return DomainDatasourcePermissionConfig(
+            domain_id=domain_id,
             datasource_id=datasource_id,
             **request.model_dump(),
         )
@@ -117,6 +140,60 @@ async def test_datasource_permission_api_reads_and_replaces_rules(monkeypatch):
     assert service.replaced == (4, 7, request)
     assert updated["permissions"]["column_permissions"][0]["allowed"] is False
     assert updated["message"] == "访问权限已保存"
+
+
+@pytest.mark.asyncio
+async def test_domain_permission_api_reads_and_replaces_rules(monkeypatch):
+    service = FakePermissionService()
+
+    class Domain:
+        datasource_id = 7
+
+    class SemanticService:
+        async def get_domain(self, domain_id):
+            return Domain() if domain_id == 4 else None
+
+    monkeypatch.setattr(datasource_api, "get_permission_service", lambda: service)
+    monkeypatch.setattr(datasource_api, "get_semantic_runtime_service", lambda: SemanticService())
+    configure_permission_scope(monkeypatch)
+
+    fetched = await datasource_api.get_domain_datasource_permissions(7, 4)
+    request = DatasourcePermissionReplace(
+        table_permissions=[TablePermissionRule(table_name="loan_application", allowed=True)],
+        column_permissions=[
+            ColumnPermissionRule(
+                table_name="loan_application",
+                column_name="mobile",
+                allowed=False,
+                masking_policy="redact",
+            )
+        ],
+    )
+    updated = await datasource_api.replace_domain_datasource_permissions(7, 4, request)
+
+    assert fetched["permissions"]["domain_id"] == 4
+    assert fetched["permissions"]["column_permissions"][0]["masking_policy"] == "partial"
+    assert service.replaced == (4, 7, request)
+    assert updated["permissions"]["column_permissions"][0]["allowed"] is False
+
+
+@pytest.mark.asyncio
+async def test_domain_permission_api_rejects_unbound_datasource(monkeypatch):
+    class Domain:
+        datasource_id = 8
+
+    class SemanticService:
+        async def get_domain(self, _domain_id):
+            return Domain()
+
+    monkeypatch.setattr(datasource_api, "get_semantic_runtime_service", lambda: SemanticService())
+    configure_permission_scope(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await datasource_api.get_domain_datasource_permissions(7, 4)
+
+    assert exc_info.value.status_code == 400
+    assert "未绑定当前数据源" in str(exc_info.value.detail)
 
 
 @pytest.mark.asyncio

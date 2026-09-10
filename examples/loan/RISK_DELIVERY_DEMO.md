@@ -55,7 +55,7 @@ GET  /api/risk/domains/{domain_id}/audit/verify
 2. 创建事项时注入临时领域的 `domain_id`，并用 `expected_version` 保护人工复核。
 3. 将 bundle 中的事项引用转换为真实 `issue_ids`。
 4. `POST /reports` 原子创建报告和 `V1`，`POST /versions` 创建 `V2`。
-5. 服务端自动绑定当前 Ontology release，脚本校验两个版本返回的 `ontology_release_id`。
+5. 服务端通过当前激活的统一企业模型绑定 Ontology release，脚本校验两个版本返回的 `ontology_release_id`。
 6. 定稿请求使用 `expected_version=2`，防止并发版本变化。
 
 ## 4. 运行验证
@@ -79,7 +79,7 @@ WENQU_BASE_URL=http://127.0.0.1:4401 \
   uv run python scripts/verify_loan_risk_delivery_demo.py
 ```
 
-脚本会创建临时管理员和临时领域，导入并发布 `examples/loan/ontology-bundle.json`，再读取风险 bundle 执行闭环。成功时只输出状态、版本和数量，不输出账号、密码或 token。无论成功或失败，`finally` 都会尝试删除临时领域、临时 agent 和临时管理员。
+脚本会创建临时管理员和临时领域，导入 Ontology、创建语义快照并激活统一企业模型版本，再读取风险 bundle 执行闭环。成功时只输出状态、版本和数量，不输出账号、密码或 token。无论成功或失败，`finally` 都会显式清理脚本创建的临时领域、临时 agent 和临时管理员，不改变产品 API 对已治理领域的删除保护。
 
 结构测试：
 

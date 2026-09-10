@@ -64,7 +64,7 @@ Databases / APIs / files / business events
 
 Finance/tax report delivery, lending risk, and conversational querying are vertical applications and validation scenarios, not the final boundary of the platform. Chat currently demonstrates and validates the foundation rather than defining the product roadmap.
 
-### Capability Boundary as of 2026-09-08
+### Capability Summary
 
 | Status | Scope |
 |--------|-------|
@@ -72,6 +72,8 @@ Finance/tax report delivery, lending risk, and conversational querying are verti
 | **Implemented technical slice** | Manual twin preview/execution with version lineage, external Query Capability credentials and grants, invocation audit, and built-in/external consumer parity tests |
 | **Implemented validation applications** | Conversational querying plus the lending-domain risk/evidence/review/report/decision-audit loop on synthetic data |
 | **Future work** | Production incremental sync/CDC, identity resolution, state history, data quality/lineage, SDK and quota governance, external Decision/Action APIs, and reliable external-system writeback |
+
+This is a stable capability summary, not a separate progress tracker. The [Ontology Product Roadmap](docs/ontology-product-roadmap.md) is the only source for phase status, priorities, and acceptance progress.
 
 The loan-risk domain is currently used only to validate the technical workflow. Its sample data, thresholds, rules, and conclusions are synthetic and must not be treated as real lending, finance, tax, accounting, audit, or compliance advice.
 
@@ -87,7 +89,7 @@ Model objects, properties, relationships, events, states, and actions together w
 
 ### Data Processing and Twin Runtime
 
-Map database records into Ontology object instances while keeping source properties separate from local action overlays. The first runtime version supports permission-aware preview, administrator-triggered execution, run statistics, trace records, and active-model/data-source drift checks. Scheduled incremental sync, CDC, cross-system identity resolution, complete state history, and production data-quality governance remain future work.
+Map database records into Ontology object instances while keeping source properties separate from local action overlays. The first runtime version supports permission-aware preview, manual execution by technical personnel (currently through the legacy `admin` account), run statistics, trace records, and active-model/data-source drift checks. Scheduled incremental sync, CDC, cross-system identity resolution, complete state history, and production data-quality governance remain future work.
 
 ### Capability Publishing Center
 
@@ -115,13 +117,13 @@ Actions are part of the Ontology model, with explicit parameters, preconditions,
 
 SQL results are automatically fed into a Python sandbox for statistical analysis (distribution, trend, ranking, anomaly detection), then a structured Markdown report of at least 300 Chinese characters is generated with charts and data interpretation.
 
-### Validation Client Compatibility
+### Optional Validation Client Compatibility
 
-Configure one or more built-in validation agents with different models, datasources, and domains. The target relationship is asset-first: a published business domain and capability can be reused by any agent or application. Existing agent-scoped query behavior is retained only as a compatibility adapter; external agents do not need to be created in this project.
+Optionally configure one or more built-in validation agents with different models, datasources, and domains. The target relationship is asset-first: a published business domain and capability can be reused by any agent or application. Existing agent-scoped query behavior is retained only as a compatibility adapter; external agents do not need to be created in this project. An internal validation agent is not required to define a model, connect a datasource, configure permissions, publish a release, or run the twin runtime.
 
 ### Security
 
-- JWT authentication with role-based access (admin / regular user)
+- JWT authentication with product roles for business personnel and technical personnel, while retaining legacy `admin/user` account values for compatibility
 - SQL safety validation (single read-only SELECT, dangerous keyword interception, LIMIT injection)
 - Three-layer permission control (datasource authorization, table whitelist, column masking)
 - Python executor isolation (AST validation, import whitelist, resource limits, containerization)
@@ -237,6 +239,8 @@ uv run python scripts/import_semantic_bundle.py \
 
 Note: In the demo environment, always pass `--agent-id 1 --datasource-id 1` explicitly. `import_semantic_bundle.py` only upserts semantic assets; it does not delete old `semantic_relation` records that are not present in the bundle. Remove obsolete relations separately and deliberately, after backing up and verifying the data.
 
+The demo importer's `--agent-id` is a legacy compatibility parameter for the sample script; it does not make an internal Agent a prerequisite for enterprise-model modeling, data onboarding, release publishing, or runtime use.
+
 The loan domain is a synthetic technical demo. Its rules and generated conclusions are not real lending or compliance opinions.
 
 **Douyin E-commerce domain:**
@@ -247,12 +251,12 @@ uv run python examples/douyin_ecommerce/seed_douyin_ecommerce.py
 
 ### 6. Verify
 
-Open `http://localhost:4399` with an administrator account and inspect:
+Open `http://localhost:4399` with the legacy `admin` account currently used for development validation and inspect:
 
 - `/enterprise-model` for query-semantic and Ontology assets under one domain.
 - `/twin-runtime` for object types, instance counts, and manual paginated synchronization.
 - `/capability-center` for current object-query, Query Capability, and Action contracts.
-- `/agent` to configure the built-in validation agent and choose its default domain; external agents call the capability contracts directly.
+- `/agent` (optional) to configure the built-in validation agent for debugging and regression; external agents call the capability contracts directly.
 
 Then ask a question in Chat using the built-in validation agent:
 
@@ -454,8 +458,9 @@ The Planner automatically infers analysis mode based on result data characterist
 #### Authentication & Authorization
 
 - **JWT-based auth**: Register/login to obtain access_token, all API requests carry Bearer Token
-- **Roles**: Admin (full access), Regular User (per-agent authorization)
-- **Session isolation**: Chat history is user-scoped, regular users only see authorized agents
+- **Product roles**: Business personnel and technical personnel (including database engineers)
+- **Compatibility accounts**: `admin` currently carries development-validation access; `user` retains only the legacy read-only validation-Agent authorization path
+- **Session isolation**: Chat history is user-scoped; legacy `user` accounts only see authorized validation agents
 
 #### SQL Safety
 
@@ -785,16 +790,19 @@ wenqu-dataquery-agent/
 │   │   ├── api/                  # API client
 │   │   └── router/               # Route configuration
 │   └── package.json
+├── AGENTS.md                     # Project-wide development harness
 ├── docs/                         # Documentation (see docs/README.md)
 │   ├── product-business-flow.md  # Business flow and data lineage
 │   ├── ontology-product-roadmap.md # Platform roadmap
 │   ├── project-design.md         # Technical design
 │   ├── project-structure.md      # Functional, code, and data map
 │   ├── business-data-onboarding.md # Business/data onboarding runbook
-│   ├── ontology-osdk-alignment-plan.md # Engineering/OSDK alignment
-│   ├── risk-report-delivery-roadmap.md # Vertical validation
+│   ├── reference/                  # Stable technical references
+│   │   └── ontology-osdk-alignment.md
+│   ├── scenarios/                  # Vertical validation scenarios
+│   │   └── risk-delivery-validation.md
 │   ├── images/                   # Technical foundation references
-│   └── archive/                  # Historical references
+│   └── archive/                  # Completed audits and historical research
 ├── examples/                     # Demo data
 │   ├── loan/                     # Loan risk domain
 │   └── douyin_ecommerce/         # Douyin e-commerce domain
@@ -852,7 +860,7 @@ uv run python scripts/import_semantic_bundle.py \
   --datasource-id 1
 ```
 
-Note: The demo command must explicitly specify the agent and datasource (`--agent-id 1 --datasource-id 1`). The import script only performs upserts and does not delete old `semantic_relation` records.
+Note: The current demo script requires explicit agent and datasource arguments (`--agent-id 1 --datasource-id 1`) only to reuse its legacy execution path. The import script only performs upserts and does not delete old `semantic_relation` records. The `--agent-id` value is a legacy demo-script compatibility parameter; it does not make an internal Agent a prerequisite for model setup, data onboarding, release publishing, or runtime use.
 
 This domain validates the platform's technical contracts with synthetic data and rules. It is not a validated lending or finance/tax compliance model.
 
@@ -878,16 +886,7 @@ Example queries:
 
 ## Roadmap
 
-The platform roadmap is maintained in the [Ontology Product Roadmap](docs/ontology-product-roadmap.md), dated 2026-09-08. The [Risk Report Delivery Roadmap](docs/risk-report-delivery-roadmap.md) remains a vertical finance/tax and lending validation plan rather than the overall product roadmap.
-
-| Phase | Goal | Acceptance gate |
-|-------|------|-----------------|
-| P0 platform skeleton | Add business-domain ownership, the three unified product entries, and an internal validation-Agent adapter | Existing demo data migrates compatibly; Enterprise Model, Twin Runtime, and Capability Center are visible without breaking current querying |
-| P0.5 data-security gate | Enforce explicit table/column permissions, masking lineage, version pinning, and protected object/action access | Allowed, denied, alias-masking, synchronization, and external-call tests pass before real sensitive data is connected |
-| P1 Enterprise Model Center | Govern objects, links, metrics, rules, mappings, actions, and releases as one model | One real domain can be modeled, mapping-tested, published, diffed, and rolled back |
-| P2 Twin Runtime | Add incremental sync, identity resolution, current/history state, quality, and lineage | Real data updates reliably; conflicts, bad records, and provenance are traceable |
-| P3 Capability Publishing Center | Formally publish and govern Agent-independent Query / Decision / Action contracts | External agents call by version and permission without creating an internal Agent; schemas, audit, limits, and failure contracts are stable |
-| P4 vertical validation | Validate platform value in real finance/tax, lending, or other domains | At least one domain completes a historical shadow run with measured accuracy, efficiency, and traceability |
+The platform roadmap is maintained only in the [Ontology Product Roadmap](docs/ontology-product-roadmap.md). This README intentionally does not duplicate phase status or acceptance gates. [Risk Delivery Validation](docs/scenarios/risk-delivery-validation.md) is a vertical finance/tax and lending scenario rather than the overall product roadmap.
 
 Chat remains a demonstration and interface-validation surface. Complex conversational optimization, general multi-agent orchestration, and long-term agent memory are not near-term priorities.
 

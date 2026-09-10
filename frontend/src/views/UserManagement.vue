@@ -3,7 +3,7 @@
     <header class="page-header">
       <div>
         <h2>用户管理</h2>
-        <p>管理公司内部业务人员、技术工程师和兼容验证账号。</p>
+        <p>管理公司内部业务人员、技术人员和兼容验证账号。</p>
       </div>
       <el-button type="primary" @click="openCreate">新增用户</el-button>
     </header>
@@ -15,7 +15,7 @@
       <el-table-column label="角色" width="100">
         <template #default="{ row }">
           <el-tag :type="productRole(row.role) === 'technical' ? 'danger' : 'info'">
-            {{ row.role_label || (productRole(row.role) === 'technical' ? '技术工程师' : '业务人员') }}
+            {{ row.role_label || (productRole(row.role) === 'technical' ? '技术人员' : '业务人员') }}
           </el-tag>
         </template>
       </el-table-column>
@@ -61,7 +61,7 @@
         <el-form-item label="角色">
           <el-select v-model="userForm.role">
             <el-option label="业务人员" value="business" />
-            <el-option label="技术工程师" value="technical" />
+            <el-option label="技术人员" value="technical" />
             <el-option v-if="editingUser?.role === 'admin'" label="管理员（兼容）" value="admin" />
             <el-option v-if="editingUser?.role === 'user'" label="旧账号（只读兼容）" value="user" />
           </el-select>
@@ -80,7 +80,7 @@
     </el-dialog>
 
     <el-dialog v-model="showAgentDialog" title="兼容验证客户端访问权限" width="560px" align-center>
-      <p class="dialog-tip">这里只处理历史账号的验证客户端兼容授权；验证客户端不拥有企业模型。业务人员和技术工程师直接按业务领域使用平台。</p>
+      <p class="dialog-tip">这里只处理历史账号的验证客户端兼容授权；验证客户端不拥有企业模型。业务人员和技术人员直接按业务领域使用平台。</p>
       <el-checkbox-group v-model="selectedAgentIds" class="agent-checks">
         <el-checkbox v-for="agent in agents" :key="agent.id" :label="agent.id">
           {{ agent.name }}

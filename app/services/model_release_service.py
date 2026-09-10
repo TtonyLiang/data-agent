@@ -1,8 +1,9 @@
 """Lifecycle service for unified enterprise model releases.
 
 A release binds one immutable semantic snapshot to one immutable Ontology
-release. Runtime consumers are intentionally not changed here; this service is
-the management foundation for selecting a stable model version later.
+release. Chat, Twin Runtime, external Capability consumers, risk workflows,
+and Ontology actions use the active release as their shared model boundary;
+this service owns release creation, validation, activation, and retirement.
 """
 
 from __future__ import annotations

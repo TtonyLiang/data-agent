@@ -19,6 +19,10 @@ import httpx
 from app.db.migrations import run_management_migrations
 from app.db.mysql import get_management_db
 from app.services.user_service import hash_password
+from scripts._e2e_support import (
+    activate_enterprise_model_release,
+    delete_temporary_domain,
+)
 
 BASE_URL = os.getenv("WENQU_BASE_URL", "http://127.0.0.1:4400")
 ROOT = Path(__file__).parents[1]
@@ -165,6 +169,14 @@ async def main() -> None:
             )
             ontology_release_id = int(published["id"])
             statuses["ontology_release_version"] = int(published["version"])
+            model_release = await activate_enterprise_model_release(
+                client,
+                domain_id,
+                headers,
+                ontology_release_id,
+                name="贷款风险交付统一模型 V1",
+            )
+            statuses["model_release_active"] = model_release["status"] == "active"
 
             object_response = await client.get(
                 f"/api/ontology/domains/{domain_id}/objects", headers=headers
@@ -305,9 +317,8 @@ async def main() -> None:
             )
             print(json.dumps(statuses, ensure_ascii=False, sort_keys=True))
     finally:
-        if domain_id and token:
-            async with httpx.AsyncClient(base_url=BASE_URL, timeout=30) as client:
-                await client.delete(f"/api/semantic/domains/{domain_id}", headers=headers)
+        if domain_id:
+            await delete_temporary_domain(db, domain_id)
         if temporary_agent_id:
             await db.execute_query("DELETE FROM agent WHERE id = :id", {"id": temporary_agent_id})
         await db.execute_query("DELETE FROM app_user WHERE id = :id", {"id": user_id})

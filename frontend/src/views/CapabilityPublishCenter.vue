@@ -35,7 +35,7 @@
 
     <el-empty
       v-if="!loading && domains.length === 0"
-      :description="canManage ? '暂无业务领域，请先在企业模型中创建并发布' : '暂无可访问业务领域，请联系管理员分配验证客户端权限'"
+      :description="canManage ? '暂无业务领域，请先在企业模型中创建并发布' : '暂无可访问业务领域，请联系技术人员配置业务领域或验证客户端权限'"
     />
 
     <template v-else-if="currentDomain">

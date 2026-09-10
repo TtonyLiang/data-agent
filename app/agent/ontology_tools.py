@@ -173,13 +173,18 @@ async def _load_query_runtime_context(
     service: OntologyService,
     domain_id: int,
     user: dict[str, Any],
+    *,
+    require_active_release: bool = False,
 ) -> tuple[dict[str, Any], SemanticRuntime]:
     """Load one bounded Ontology context and its semantic runtime.
 
     The loaded context/runtime pair is passed to the shared
     ``build_query_context`` builder by callers that need Query Capabilities.
     """
-    context = await service.build_agent_context(domain_id, role=str(user.get("role") or "user"))
+    context_kwargs: dict[str, Any] = {"role": str(user.get("role") or "user")}
+    if require_active_release:
+        context_kwargs["require_active_release"] = True
+    context = await service.build_agent_context(domain_id, **context_kwargs)
     runtime_service = get_semantic_runtime_service()
     domain = await runtime_service.get_domain(domain_id)
     if domain is None:

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import logging
+from copy import deepcopy
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -27,6 +29,7 @@ from app.api.deps import (
 )
 from app.models.knowledge import LogicForm, SemanticAssetPayload, SemanticDomain
 from app.models.user import PublicUser, is_technical_role
+from app.services.decision_audit_service import canonical_sha256
 from app.services.embedding_service import get_embedding_service
 from app.services.model_release_service import get_model_release_service
 from app.services.ontology_semantic_bridge import validate_semantic_relation_bindings
@@ -36,6 +39,221 @@ from app.services.vector_store import VectorRecord, get_vector_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+SEMANTIC_ASSET_KEY_FIELDS = {
+    "concept": "concept_key",
+    "relation": "relation_key",
+    "metric": "metric_key",
+    "rule": "rule_key",
+    "mapping": "asset_key",
+    "template": "template_key",
+}
+SEMANTIC_TECH_FIELD_DEFAULTS: dict[str, dict[str, Any]] = {
+    "metric": {"formula_sql": "", "base_table": "", "time_field": None},
+    "relation": {"join_path": [], "conditions": []},
+    "template": {
+        "intent_type": "metric_query",
+        "required_slots": [],
+        "optional_slots": [],
+        "compile_strategy": {},
+    },
+}
+SEMANTIC_TECH_ONLY_ASSET_TYPES = {"mapping"}
+SEMANTIC_TECH_ONLY_DELETE_ASSET_TYPES = {"mapping", "relation", "metric", "template"}
+SEMANTIC_TECH_FIELD_DETAIL = "SQL、物理字段、JOIN 路径和 LogicForm 编译配置由技术人员维护"
+
+
+def _validate_vector_release_lineage(model_release: dict[str, Any]) -> dict[str, str]:
+    """Validate the immutable hashes before creating a release-scoped index."""
+    semantic_hash = str(model_release.get("semantic_snapshot_hash") or "").strip()
+    ontology_hash = str(model_release.get("ontology_definition_hash") or "").strip()
+    model_hash = str(model_release.get("model_hash") or "").strip()
+    if not semantic_hash or not ontology_hash or not model_hash:
+        raise HTTPException(
+            status_code=409,
+            detail="激活企业模型版本缺少完整内容哈希，不能生成正式语义检索索引",
+        )
+    expected_model_hash = canonical_sha256(
+        {
+            "format": "wenqu-enterprise-model-release/v1",
+            "semantic_snapshot_hash": semantic_hash,
+            "ontology_definition_hash": ontology_hash,
+        }
+    )
+    if model_hash != expected_model_hash:
+        raise HTTPException(
+            status_code=409,
+            detail="激活企业模型版本哈希校验失败，不能生成正式语义检索索引",
+        )
+    return {
+        "semantic_snapshot_hash": semantic_hash,
+        "ontology_definition_hash": ontology_hash,
+        "model_hash": model_hash,
+    }
+
+
+def _canonical_permission_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        return None if stripped == "" else stripped
+    if isinstance(value, (list, tuple)):
+        normalized = [_canonical_permission_value(item) for item in value]
+        return [item for item in normalized if item is not None]
+    if isinstance(value, dict):
+        return {
+            str(key): _canonical_permission_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            if _canonical_permission_value(item) is not None
+        }
+    return value
+
+
+def _permission_values_equal(left: Any, right: Any) -> bool:
+    return _canonical_permission_value(left) == _canonical_permission_value(right)
+
+
+def _is_default_or_empty(value: Any, default: Any) -> bool:
+    return _permission_values_equal(value, default) or _permission_values_equal(value, None)
+
+
+async def _get_existing_semantic_asset(
+    svc,
+    domain_id: int,
+    asset_type: str,
+    data: dict[str, Any],
+) -> dict[str, Any] | None:
+    key_field = SEMANTIC_ASSET_KEY_FIELDS.get(asset_type)
+    if not key_field:
+        return None
+    assets = await svc.list_assets(domain_id, asset_type)
+    items = (assets or {}).get(asset_type) or []
+    raw_id = data.get("id")
+    if raw_id is not None:
+        try:
+            target_id = int(raw_id)
+        except (TypeError, ValueError):
+            target_id = None
+        if target_id is not None:
+            for item in items:
+                if int(item.get("id") or 0) == target_id:
+                    return dict(item)
+    key_value = str(data.get(key_field) or "").strip()
+    if key_value:
+        for item in items:
+            if str(item.get(key_field) or "").strip() == key_value:
+                return dict(item)
+    return None
+
+
+async def _prepare_semantic_asset_for_role(
+    svc,
+    domain_id: int,
+    asset_type: str,
+    data: dict[str, Any],
+    current_user: PublicUser,
+) -> dict[str, Any]:
+    """Preserve technical fields for business edits and reject attempted changes."""
+    prepared = dict(data)
+    if is_technical_role(current_user.role):
+        return prepared
+    if asset_type in SEMANTIC_TECH_ONLY_ASSET_TYPES:
+        raise HTTPException(status_code=403, detail=SEMANTIC_TECH_FIELD_DETAIL)
+    tech_defaults = SEMANTIC_TECH_FIELD_DEFAULTS.get(asset_type)
+    if not tech_defaults:
+        return prepared
+    existing = await _get_existing_semantic_asset(svc, domain_id, asset_type, prepared)
+    changed_fields: list[str] = []
+    key_field = SEMANTIC_ASSET_KEY_FIELDS.get(asset_type)
+    if (
+        existing
+        and key_field
+        and key_field in prepared
+        and str(prepared.get(key_field) or "") != str(existing.get(key_field) or "")
+    ):
+        changed_fields.append(key_field)
+    for field, default in tech_defaults.items():
+        if field not in prepared:
+            prepared[field] = existing.get(field) if existing else deepcopy(default)
+            continue
+        requested = prepared.get(field)
+        if existing:
+            if not _permission_values_equal(requested, existing.get(field)):
+                changed_fields.append(field)
+        elif not _is_default_or_empty(requested, default):
+            changed_fields.append(field)
+    if asset_type == "relation":
+        existing_metadata = (
+            dict(existing.get("metadata") or {}) if existing else {}
+        )
+        requested_metadata = prepared.get("metadata")
+        if requested_metadata is None:
+            prepared["metadata"] = deepcopy(existing_metadata)
+        else:
+            requested_metadata = dict(requested_metadata)
+            existing_link_key = existing_metadata.get("link_key")
+            if "link_key" in requested_metadata:
+                requested_link_key = requested_metadata.get("link_key")
+                if existing and not _permission_values_equal(
+                    requested_link_key, existing_link_key
+                ):
+                    changed_fields.append("metadata.link_key")
+                elif not existing and _canonical_permission_value(requested_link_key) is not None:
+                    changed_fields.append("metadata.link_key")
+            elif existing and existing_link_key is not None:
+                requested_metadata["link_key"] = existing_link_key
+            prepared["metadata"] = requested_metadata
+    if changed_fields:
+        raise HTTPException(
+            status_code=403,
+            detail=f"{SEMANTIC_TECH_FIELD_DETAIL}: {', '.join(changed_fields)}",
+        )
+    return prepared
+
+
+def _prepare_semantic_bundle_for_role(
+    bundle: dict[str, Any], current_user: PublicUser
+) -> dict[str, Any]:
+    prepared = deepcopy(bundle)
+    if is_technical_role(current_user.role):
+        return prepared
+    domain = prepared.get("domain") or {}
+    if domain.get("datasource_id") is not None or domain.get("agent_id") is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="业务人员可以导入业务定义，但不能导入默认数据源或验证客户端绑定",
+        )
+    assets = prepared.get("assets") or {}
+    if not isinstance(assets, dict):
+        return prepared
+    for asset_type, tech_defaults in SEMANTIC_TECH_FIELD_DEFAULTS.items():
+        for item in assets.get(asset_type, []) or []:
+            if not isinstance(item, dict):
+                continue
+            for field, default in tech_defaults.items():
+                if field not in item:
+                    item[field] = deepcopy(default)
+                    continue
+                if not _is_default_or_empty(item.get(field), default):
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"{SEMANTIC_TECH_FIELD_DETAIL}: {asset_type}.{field}",
+                    )
+    for item in assets.get("relation", []) or []:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        if _canonical_permission_value(metadata.get("link_key")) is not None:
+            raise HTTPException(
+                status_code=403,
+                detail=f"{SEMANTIC_TECH_FIELD_DETAIL}: relation.metadata.link_key",
+            )
+    if assets.get("mapping"):
+        raise HTTPException(status_code=403, detail=SEMANTIC_TECH_FIELD_DETAIL)
+    return prepared
 
 
 async def _relation_binding_errors(
@@ -75,9 +293,30 @@ async def list_all_domains(_: PublicUser = Depends(require_data_engineer)):
 
 
 @router.post("/domains")
-async def upsert_domain(payload: SemanticDomain, _: PublicUser = Depends(require_model_editor)):
+async def upsert_domain(
+    payload: SemanticDomain,
+    current_user: PublicUser = Depends(require_model_editor),
+):
     """创建或更新公司内部业务领域；domain_key 在当前单公司模型库内唯一。"""
     svc = get_semantic_runtime_service()
+    if not is_technical_role(current_user.role):
+        existing = await svc.get_domain(payload.id) if payload.id else None
+        existing_datasource_id = (
+            int(existing.datasource_id) if existing and existing.datasource_id else None
+        )
+        existing_agent_id = int(existing.agent_id) if existing and existing.agent_id else None
+        requested_datasource_id = (
+            int(payload.datasource_id) if payload.datasource_id else None
+        )
+        requested_agent_id = int(payload.agent_id) if payload.agent_id else None
+        if (
+            requested_datasource_id != existing_datasource_id
+            or requested_agent_id != existing_agent_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="业务人员可以维护业务定义，但不能修改默认数据源或验证客户端绑定",
+            )
     try:
         domain_id = await svc.upsert_domain(
             payload.model_dump(exclude={"created_at", "updated_at"})
@@ -93,7 +332,7 @@ async def upsert_domain(payload: SemanticDomain, _: PublicUser = Depends(require
 
 
 @router.delete("/domains/{domain_id}")
-async def delete_domain(domain_id: int, _: PublicUser = Depends(require_model_editor)):
+async def delete_domain(domain_id: int, _: PublicUser = Depends(require_data_engineer)):
     """删除尚未产生版本或运行历史的空闲业务领域。"""
     svc = get_semantic_runtime_service()
     try:
@@ -106,7 +345,11 @@ async def delete_domain(domain_id: int, _: PublicUser = Depends(require_model_ed
 
 
 @router.post("/domains/{domain_id}/copy")
-async def copy_domain(domain_id: int, request: dict, _: PublicUser = Depends(require_model_editor)):
+async def copy_domain(
+    domain_id: int,
+    request: dict,
+    _: PublicUser = Depends(require_data_engineer),
+):
     """复制语义领域(含全部资产)到新领域。"""
     svc = get_semantic_runtime_service()
     try:
@@ -132,9 +375,13 @@ async def export_domain(domain_id: int, _: PublicUser = Depends(require_model_ed
 
 
 @router.post("/domains/import")
-async def import_domain(request: dict, _: PublicUser = Depends(require_model_editor)):
+async def import_domain(
+    request: dict,
+    current_user: PublicUser = Depends(require_model_editor),
+):
     """导入语义领域 bundle。domain_key 重复时报错。"""
     svc = get_semantic_runtime_service()
+    request = _prepare_semantic_bundle_for_role(request, current_user)
     try:
         domain_id = await svc.import_domain_bundle(request)
     except ValueError as exc:
@@ -287,23 +534,23 @@ async def upsert_asset(
     svc = get_semantic_runtime_service()
     if await svc.get_domain(domain_id) is None:
         raise HTTPException(status_code=404, detail="语义领域不存在")
-    if payload.asset_type in {"mapping", "relation"} and not is_technical_role(
-        current_user.role
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail="关系查询路径和物理数据映射由技术工程师维护",
-        )
+    asset_data = await _prepare_semantic_asset_for_role(
+        svc,
+        domain_id,
+        payload.asset_type,
+        payload.data,
+        current_user,
+    )
     try:
         if payload.asset_type == "relation":
             binding_errors = await _relation_binding_errors(
                 domain_id,
-                [payload.data],
+                [asset_data],
                 require_active=False,
             )
             if binding_errors:
                 raise ValueError(str(binding_errors[0]["message"]))
-        asset_id = await svc.upsert_asset(domain_id, payload.asset_type, payload.data)
+        asset_id = await svc.upsert_asset(domain_id, payload.asset_type, asset_data)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"id": asset_id, "asset_type": payload.asset_type, "message": "语义资产已保存"}
@@ -320,10 +567,12 @@ async def delete_asset(
     svc = get_semantic_runtime_service()
     if await svc.get_domain(domain_id) is None:
         raise HTTPException(status_code=404, detail="语义领域不存在")
-    if asset_type in {"mapping", "relation"} and not is_technical_role(current_user.role):
+    if asset_type in SEMANTIC_TECH_ONLY_DELETE_ASSET_TYPES and not is_technical_role(
+        current_user.role
+    ):
         raise HTTPException(
             status_code=403,
-            detail="关系查询路径和物理数据映射由技术工程师维护",
+            detail="带有物理绑定或运行编译配置的语义资产由技术人员删除",
         )
     try:
         deleted = await svc.delete_asset(domain_id, asset_type, asset_id)
@@ -424,34 +673,20 @@ async def sync_domain_to_vector(domain_id: int, _: PublicUser = Depends(require_
         raise HTTPException(status_code=404, detail="语义领域不存在")
     execution_agent_ids = await svc.get_domain_agent_ids(domain_id)
     model_release = await get_model_release_service().get_active_release(domain_id)
-    if model_release is not None:
-        model_release_id = int(model_release["id"])
-        semantic_snapshot_id = int(model_release["semantic_snapshot_id"])
-        runtime = await svc.build_runtime_from_snapshot(
-            domain_id,
-            semantic_snapshot_id,
-            agent_id=None,
-            expected_snapshot_hash=str(
-                model_release.get("semantic_snapshot_hash") or ""
-            ),
+    if model_release is None:
+        raise HTTPException(
+            status_code=409,
+            detail="当前业务领域尚未激活统一企业模型版本，不能生成正式语义检索索引",
         )
-    else:
-        snapshots = await svc.list_snapshots(domain_id)
-        if not snapshots:
-            return {
-                "synced": 0,
-                "asset_count": 0,
-                "agent_ids": execution_agent_ids,
-                "skipped": True,
-                "message": "当前领域没有企业模型版本或语义快照，未生成向量索引",
-            }
-        model_release_id = None
-        semantic_snapshot_id = int(snapshots[0]["id"])
-        runtime = await svc.build_runtime_from_snapshot(
-            domain_id,
-            semantic_snapshot_id,
-            agent_id=None,
-        )
+    release_hashes = _validate_vector_release_lineage(model_release)
+    model_release_id = int(model_release["id"])
+    semantic_snapshot_id = int(model_release["semantic_snapshot_id"])
+    runtime = await svc.build_runtime_from_snapshot(
+        domain_id,
+        semantic_snapshot_id,
+        agent_id=None,
+        expected_snapshot_hash=release_hashes["semantic_snapshot_hash"],
+    )
 
     # 第2步:遍历各类资产,拼接可向量化的文本
     records = []
@@ -563,6 +798,11 @@ async def sync_domain_to_vector(domain_id: int, _: PublicUser = Depends(require_
                         "domain_id": domain_id,
                         "model_release_id": model_release_id,
                         "semantic_snapshot_id": semantic_snapshot_id,
+                        "semantic_snapshot_hash": release_hashes["semantic_snapshot_hash"],
+                        "ontology_definition_hash": release_hashes[
+                            "ontology_definition_hash"
+                        ],
+                        "model_hash": release_hashes["model_hash"],
                         "embedding_model_config_id": identity.get("config_id"),
                         "embedding_model_version": identity["version"],
                     },
@@ -598,6 +838,7 @@ async def sync_domain_to_vector(domain_id: int, _: PublicUser = Depends(require_
         "agent_ids": execution_agent_ids,
         "model_release_id": model_release_id,
         "semantic_snapshot_id": semantic_snapshot_id,
+        **release_hashes,
         "embedding_indexes": synced_indexes,
         "message": (
             f"同步完成，共 {len(records)} 条语义资产，"

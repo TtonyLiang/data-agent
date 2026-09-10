@@ -64,14 +64,16 @@
 
 财税报告交付、贷款风控和智能问数是平台上的垂直应用与技术验证场景，不再代表平台本身的最终边界。当前对话功能用于演示和验证底座能力，近期不作为重点投入方向。
 
-### 截至 2026-09-04 的能力边界
+### 能力范围概览
 
 | 状态 | 范围 |
 |------|------|
 | **已实现基础** | 查询语义资产、Ontology 对象/关系/动作建模、LogicForm 与确定性 SQL、对象实例、发布和审计原型，以及可演示的智能问数、分析与报告 |
 | **已实现技术切片** | 对象查询、第一版 Query Capability、受控 Action 工具，以及贷款域的风险事项、证据、复核、报告版本和决策审计闭环 |
-| **P0 兼容骨架（已实现）** | 业务领域归属、统一“企业模型”入口，以及复用现有接口的“孪生运行”和“能力发布中心”页面；内置 Agent 仅作验证适配 |
+| **已实现兼容基础** | 业务领域归属、统一“企业模型”入口，以及复用现有接口的“孪生运行”和“能力发布中心”页面；内置 Agent 仅作验证适配 |
 | **后续建设** | 生产级增量同步/CDC、对象身份解析、状态历史、数据质量与血缘、正式能力发布治理、通用 Decision Capability 和外部系统可靠写回 |
+
+这里是稳定的能力范围概览，不单独维护阶段进度。平台方向、优先级、阶段状态和验收进度唯一以 [Ontology 产品路线图](docs/ontology-product-roadmap.md) 为准。
 
 当前先用贷款风控域验证技术闭环。其中数据、阈值、规则和结论均为合成演示，不得视为真实授信、财务、税务、会计、审计或其他合规意见。
 
@@ -115,13 +117,13 @@
 
 SQL 查询结果自动进入 Python 安全执行器进行统计分析（分布、趋势、排名、异常检测），最终生成不少于 300 字的中文 Markdown 结构化报告，包含图表和数据解读。
 
-### 验证客户端兼容配置
+### 可选的验证客户端兼容配置
 
-支持配置一个或多个本项目内置验证 Agent，绑定不同模型、数据源和业务领域。目标关系是“企业模型先发布，任何 Agent 再按授权消费”：内置验证 Agent 与第三方 Agent 应调用同一能力合同、遵循同一业务口径。现有按 Agent 隔离的运行边界仅作为兼容适配，不是平台底座边界。
+可按需配置一个或多个本项目内置验证 Agent，绑定不同模型、数据源和业务领域。目标关系是“企业模型先发布，任何 Agent 再按授权消费”：内置验证 Agent 与第三方 Agent 应调用同一能力合同、遵循同一业务口径。现有按 Agent 隔离的运行边界仅作为兼容适配，不是平台底座边界。建模、数据接入、权限配置、版本发布和孪生运行不要求先创建内置 Agent。
 
 ### 安全体系
 
-- JWT 用户认证与角色权限（管理员 / 普通用户）
+- JWT 用户认证与角色权限（业务人员 / 技术人员；兼容 `admin/user` 历史账号值）
 - SQL 安全校验（单条只读 SELECT、危险关键字拦截、LIMIT 注入）
 - 三层权限控制（数据源授权、表级白名单、列级脱敏）
 - Python 执行器隔离（AST 校验、导入白名单、资源限制、容器化）
@@ -157,7 +159,7 @@ Prompt 模板支持按智能体、模型、语义层覆盖；系统参数支持�
 
 企业业务模型把两类互补资产放在同一个领域和发布边界下：Ontology 提供对象、关系、状态和动作；查询语义提供概念、指标、规则、映射和模板，并把业务模型连接到真实数据与可编译查询。产品入口统一并不要求立即合并所有底层表。
 
-Ontology / OSDK 术语对齐及 `dataqueryAgent` 增量改造计划见 [相关架构与开发计划](docs/ontology-osdk-alignment-plan.md)。
+Ontology / OSDK 的稳定术语和技术边界见 [Ontology / OSDK 对齐技术参考](docs/reference/ontology-osdk-alignment.md)。
 
 ---
 
@@ -237,7 +239,9 @@ uv run python scripts/import_semantic_bundle.py \
   --datasource-id 1
 ```
 
-注意：演示环境必须显式传入 `--agent-id 1 --datasource-id 1`。`import_semantic_bundle.py` 只会对语义资产执行 upsert，不会删除数据库中 bundle 未包含的旧 `semantic_relation`；如需清理旧关系，必须在备份和核对后另行定向处理。
+注意：当前演示脚本需要显式传入 `--agent-id 1 --datasource-id 1` 才能复用旧脚本链路；这只是脚本参数要求，不是平台建模、数据接入或运行时的产品前置条件。`import_semantic_bundle.py` 只会对语义资产执行 upsert，不会删除数据库中 bundle 未包含的旧 `semantic_relation`；如需清理旧关系，必须在备份和核对后另行定向处理。
+
+演示导入脚本中的 `--agent-id` 是历史兼容参数，只服务于示例脚本，不代表企业模型建模、数据接入、版本发布或孪生运行必须先创建内部 Agent。
 
 贷款域是合成数据和演示规则组成的技术样例，其规则与生成结论不构成真实授信或合规意见。
 
@@ -249,12 +253,12 @@ uv run python examples/douyin_ecommerce/seed_douyin_ecommerce.py
 
 ### 6. 验证
 
-打开 `http://localhost:4399`，使用管理员账号依次查看：
+打开 `http://localhost:4399`，当前开发验证使用 `admin` 兼容账号依次查看：
 
 - `/enterprise-model`：公司内部统一模型库中的查询语义与 Ontology。
 - `/twin-runtime`：对象类型、实例数量和手动分页同步状态。
 - `/capability-center`：当前可用的对象查询、Query Capability 和 Action 合同。
-- `/agent`：配置本项目内置的调试与验证智能体；第三方 Agent 直接调用能力合同。
+- `/agent`（可选）：配置本项目内置的调试与验证智能体；第三方 Agent 直接调用能力合同。
 
 然后进入对话页面，用已绑定领域的 Agent 提问：
 
@@ -458,8 +462,9 @@ Planner 根据结果数据特征自动推断分析模式：
 #### 认证与授权
 
 - **JWT 登录态**：注册/登录获取 access_token，所有 API 请求携带 Bearer Token
-- **角色**：管理员（全部权限）、普通用户（按智能体授权）
-- **会话隔离**：对话历史按用户隔离，普通用户只能看到自己授权的智能体
+- **产品角色**：业务人员、技术人员（包含数据库工程师）
+- **兼容账号**：`admin` 当前承载开发验证权限，`user` 仅保留按验证 Agent 授权的历史只读链路
+- **会话隔离**：对话历史按用户隔离，旧 `user` 兼容账号只能看到已授权的验证 Agent
 
 #### SQL 安全
 
@@ -797,16 +802,19 @@ wenqu-dataquery-agent/
 │   │   ├── api/                  # API 客户端
 │   │   └── router/               # 路由配置
 │   └── package.json
+├── AGENTS.md                     # 项目级开发与文档维护规范
 ├── docs/                         # 文档（入口见 docs/README.md）
 │   ├── product-business-flow.md  # 业务流程与数据链路
 │   ├── ontology-product-roadmap.md # 平台主路线图
 │   ├── project-design.md         # 技术总体设计
 │   ├── project-structure.md      # 功能块、代码和数据结构地图
 │   ├── business-data-onboarding.md # 业务领域与真实表接入手册
-│   ├── ontology-osdk-alignment-plan.md # 工程与 OSDK 对齐
-│   ├── risk-report-delivery-roadmap.md # 垂直场景验证
+│   ├── reference/                  # 稳定技术参考
+│   │   └── ontology-osdk-alignment.md
+│   ├── scenarios/                  # 垂直验证场景
+│   │   └── risk-delivery-validation.md
 │   ├── images/                   # 技术底座参考图
-│   └── archive/                  # 历史参考
+│   └── archive/                  # 已完成审计和历史调研
 ├── examples/                     # 演示数据
 │   ├── loan/                     # 信贷风控域
 │   └── douyin_ecommerce/         # 抖音电商域
@@ -864,7 +872,7 @@ uv run python scripts/import_semantic_bundle.py \
   --datasource-id 1
 ```
 
-注意：必须显式指定演示智能体和数据源（`--agent-id 1 --datasource-id 1`）。该导入脚本只执行 upsert，不会删除旧的 `semantic_relation` 记录。
+注意：当前演示脚本需要显式指定演示智能体和数据源（`--agent-id 1 --datasource-id 1`）才能复用旧脚本链路；该导入脚本只执行 upsert，不会删除旧的 `semantic_relation` 记录。这里的 `--agent-id` 只是示例脚本的历史兼容参数，不代表企业模型建模、数据接入、版本发布或孪生运行必须先创建内部 Agent。
 
 该领域使用合成数据和规则验证平台技术契约，不是经过业务验证的授信或财税合规模型。
 
@@ -890,15 +898,7 @@ uv run python examples/douyin_ecommerce/seed_douyin_ecommerce.py
 
 ## 路线图
 
-平台路线图详见 2026-09-08 版[Ontology 产品路线图](docs/ontology-product-roadmap.md)。[风险报告交付路线图](docs/risk-report-delivery-roadmap.md)保留为财税/贷款垂直场景的验证计划，不再代表整体产品路线。
-
-| 阶段 | 目标 | 验收门槛 |
-|------|------|----------|
-| P0 平台骨架 | 建立业务领域边界、三个统一入口和内置验证 Agent 适配 | 现有演示数据可兼容迁移；企业模型、孪生运行和能力中心可见且不破坏原有问数 |
-| P1 企业模型中心 | 统一对象、关系、指标、规则、映射、动作和发布治理 | 一个真实领域可完成建模、映射校验、版本发布、差异查看和回滚 |
-| P2 孪生运行时 | 建设增量同步、对象身份解析、当前/历史状态、质量与血缘 | 真实数据可稳定增量更新；冲突、坏数据和来源可追溯 |
-| P3 能力发布中心 | 形成与 Agent 解耦的 Query / Decision / Action 正式发布与治理 | 外部 Agent 无需创建内部 Agent 即可按版本和权限调用；输入输出、审计、限流和失败契约稳定 |
-| P4 垂直场景验证 | 用财税、贷款等真实场景验证平台价值 | 至少一个领域完成历史案例影子运行，并量化准确率、效率和可追溯性 |
+平台方向、优先级、阶段状态和验收进度唯一见[Ontology 产品路线图](docs/ontology-product-roadmap.md)。本 README 不再复制阶段状态和验收门槛。[风险交付验证说明](docs/scenarios/risk-delivery-validation.md)只用于财税/贷款垂直场景验证，不代表整体产品路线。
 
 当前 Agent 对话只承担底座能力演示和接口验证。复杂多轮对话、通用 Agent 编排和长期记忆暂不作为近期主线。
 

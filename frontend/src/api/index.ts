@@ -1197,8 +1197,13 @@ export async function fetchOntologySummary(domainId: number): Promise<OntologySu
   return data
 }
 
-export async function fetchOntologyObjectTypes(domainId: number): Promise<OntologyObjectType[]> {
-  const { data } = await api.get(`/ontology/domains/${domainId}/object-types`)
+export async function fetchOntologyObjectTypes(
+  domainId: number,
+  options?: { strictRelease?: boolean },
+): Promise<OntologyObjectType[]> {
+  const { data } = await api.get(`/ontology/domains/${domainId}/object-types`, {
+    params: options?.strictRelease ? { strict_release: true } : undefined,
+  })
   return data.object_types || []
 }
 
@@ -1265,8 +1270,13 @@ export async function deleteOntologyObjectType(domainId: number, objectTypeId: n
   return data
 }
 
-export async function fetchOntologyLinkTypes(domainId: number): Promise<OntologyLinkType[]> {
-  const { data } = await api.get(`/ontology/domains/${domainId}/link-types`)
+export async function fetchOntologyLinkTypes(
+  domainId: number,
+  options?: { strictRelease?: boolean },
+): Promise<OntologyLinkType[]> {
+  const { data } = await api.get(`/ontology/domains/${domainId}/link-types`, {
+    params: options?.strictRelease ? { strict_release: true } : undefined,
+  })
   return data.link_types || []
 }
 
@@ -1280,13 +1290,23 @@ export async function deleteOntologyLinkType(domainId: number, linkTypeId: numbe
   return data
 }
 
-export async function fetchOntologyActionTypes(domainId: number): Promise<OntologyActionType[]> {
-  const { data } = await api.get(`/ontology/domains/${domainId}/action-types`)
+export async function fetchOntologyActionTypes(
+  domainId: number,
+  options?: { strictRelease?: boolean },
+): Promise<OntologyActionType[]> {
+  const { data } = await api.get(`/ontology/domains/${domainId}/action-types`, {
+    params: options?.strictRelease ? { strict_release: true } : undefined,
+  })
   return data.action_types || []
 }
 
-export async function fetchOntologyAgentContext(domainId: number): Promise<OntologyAgentContext> {
-  const { data } = await api.get<OntologyAgentContext>(`/ontology/domains/${domainId}/agent-context`)
+export async function fetchOntologyAgentContext(
+  domainId: number,
+  options?: { strictRelease?: boolean },
+): Promise<OntologyAgentContext> {
+  const { data } = await api.get<OntologyAgentContext>(`/ontology/domains/${domainId}/agent-context`, {
+    params: options?.strictRelease ? { strict_release: true } : undefined,
+  })
   return data
 }
 
@@ -1439,12 +1459,14 @@ export async function fetchOntologyObjects(
   objectTypeId?: number,
   limit = 1000,
   offset = 0,
+  options?: { strictRelease?: boolean },
 ): Promise<OntologyObject[]> {
   const { data } = await api.get(`/ontology/domains/${domainId}/objects`, {
     params: {
       ...(objectTypeId ? { object_type_id: objectTypeId } : {}),
       limit,
       offset,
+      ...(options?.strictRelease ? { strict_release: true } : {}),
     },
   })
   return data.objects || []
@@ -1460,8 +1482,13 @@ export async function deleteOntologyObject(domainId: number, objectId: number) {
   return data
 }
 
-export async function fetchOntologyLinks(domainId: number): Promise<OntologyLink[]> {
-  const { data } = await api.get(`/ontology/domains/${domainId}/links`)
+export async function fetchOntologyLinks(
+  domainId: number,
+  options?: { strictRelease?: boolean },
+): Promise<OntologyLink[]> {
+  const { data } = await api.get(`/ontology/domains/${domainId}/links`, {
+    params: options?.strictRelease ? { strict_release: true } : undefined,
+  })
   return data.links || []
 }
 
@@ -1487,8 +1514,13 @@ export async function executeOntologyAction(
   return data
 }
 
-export async function fetchOntologyActionRuns(domainId: number): Promise<OntologyActionRun[]> {
-  const { data } = await api.get(`/ontology/domains/${domainId}/action-runs`)
+export async function fetchOntologyActionRuns(
+  domainId: number,
+  options?: { strictRelease?: boolean },
+): Promise<OntologyActionRun[]> {
+  const { data } = await api.get(`/ontology/domains/${domainId}/action-runs`, {
+    params: options?.strictRelease ? { strict_release: true } : undefined,
+  })
   return data.runs || []
 }
 

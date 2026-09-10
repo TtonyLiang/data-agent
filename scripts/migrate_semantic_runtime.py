@@ -11,7 +11,6 @@ except ImportError:  # pragma: no cover
 
 from app.db.mysql import get_management_db
 
-
 CREATE_TABLES: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS semantic_domain (
@@ -50,7 +49,8 @@ CREATE_TABLES: tuple[str, ...] = (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
         domain_id BIGINT NOT NULL COMMENT '所属语义领域',
         relation_key VARCHAR(128) NOT NULL COMMENT '关系标识',
-        relation_type VARCHAR(32) NOT NULL COMMENT 'relationship/event_flow/state_transition/join_path',
+        relation_type VARCHAR(32) NOT NULL COMMENT
+            'relationship/event_flow/state_transition/join_path',
         source_concept VARCHAR(128) NOT NULL COMMENT '源概念',
         target_concept VARCHAR(128) NOT NULL COMMENT '目标概念',
         name VARCHAR(256) NOT NULL COMMENT '关系名称',
@@ -142,9 +142,21 @@ CREATE_TABLES: tuple[str, ...] = (
 )
 
 CHAT_HISTORY_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("logic_form", "ALTER TABLE chat_history ADD COLUMN logic_form JSON DEFAULT NULL COMMENT '语义中间表达' AFTER content"),
-    ("compiled_sql", "ALTER TABLE chat_history ADD COLUMN compiled_sql TEXT DEFAULT NULL COMMENT '确定性编译SQL' AFTER logic_form"),
-    ("execution_trace", "ALTER TABLE chat_history ADD COLUMN execution_trace JSON DEFAULT NULL COMMENT '执行轨迹' AFTER compiled_sql"),
+    (
+        "logic_form",
+        "ALTER TABLE chat_history ADD COLUMN logic_form JSON DEFAULT NULL "
+        "COMMENT '语义中间表达' AFTER content",
+    ),
+    (
+        "compiled_sql",
+        "ALTER TABLE chat_history ADD COLUMN compiled_sql TEXT DEFAULT NULL "
+        "COMMENT '确定性编译SQL' AFTER logic_form",
+    ),
+    (
+        "execution_trace",
+        "ALTER TABLE chat_history ADD COLUMN execution_trace JSON DEFAULT NULL "
+        "COMMENT '执行轨迹' AFTER compiled_sql",
+    ),
 )
 
 
@@ -152,7 +164,8 @@ async def column_exists(table_name: str, column_name: str) -> bool:
     db = get_management_db()
     rows = await db.execute_query(
         "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
-        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name AND COLUMN_NAME = :column_name",
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name "
+        "AND COLUMN_NAME = :column_name",
         {"table_name": table_name, "column_name": column_name},
     )
     return bool(rows)

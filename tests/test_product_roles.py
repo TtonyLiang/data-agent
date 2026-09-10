@@ -19,7 +19,7 @@ def make_user(role: str) -> PublicUser:
 
 def test_product_roles_have_business_facing_labels_and_capabilities():
     assert role_label("business") == "业务人员"
-    assert role_label("technical") == "技术工程师"
+    assert role_label("technical") == "技术人员"
     assert "model_edit" in role_capabilities("business")
     assert "data_source_manage" not in role_capabilities("business")
     assert "data_source_manage" in role_capabilities("technical")
@@ -40,7 +40,7 @@ async def test_model_and_data_boundaries_keep_legacy_user_read_only(monkeypatch)
 
     for role in ("technical", "admin"):
         assert await deps.require_data_engineer(make_user(role))
-    with pytest.raises(HTTPException, match="技术工程师"):
+    with pytest.raises(HTTPException, match="技术人员"):
         await deps.require_data_engineer(make_user("business"))
 
     assert await deps.require_model_publisher(make_user("technical"))

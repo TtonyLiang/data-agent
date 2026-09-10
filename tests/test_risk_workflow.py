@@ -22,6 +22,26 @@ from app.services.risk_workflow_service import (
     review_target_status,
 )
 
+SEMANTIC_SNAPSHOT = {
+    "domain": {"id": 4, "domain_key": "loan_risk", "name": "贷款风控"},
+    "assets": {},
+}
+ONTOLOGY_DEFINITION = {
+    "domain": {"id": 4, "domain_key": "loan_risk", "name": "贷款风控"},
+    "object_types": [],
+    "link_types": [],
+    "action_types": [],
+}
+SEMANTIC_HASH = canonical_sha256(SEMANTIC_SNAPSHOT)
+ONTOLOGY_HASH = canonical_sha256(ONTOLOGY_DEFINITION)
+MODEL_HASH = canonical_sha256(
+    {
+        "format": "wenqu-enterprise-model-release/v1",
+        "semantic_snapshot_hash": SEMANTIC_HASH,
+        "ontology_definition_hash": ONTOLOGY_HASH,
+    }
+)
+
 
 class FakeResult:
     def __init__(self, rows=None, *, lastrowid=0, rowcount=0):
@@ -125,12 +145,14 @@ class WorkflowSession:
                 "id": 9,
                 "version": 3,
                 "name": "贷款风控 V3",
-                "definition_hash": "a" * 64,
+                "definition_hash": ONTOLOGY_HASH,
                 "model_release_id": 19,
                 "model_release_version": 4,
-                "model_hash": "c" * 64,
+                "model_hash": MODEL_HASH,
                 "semantic_snapshot_id": 29,
-                "semantic_snapshot_hash": "b" * 64,
+                "semantic_snapshot_hash": SEMANTIC_HASH,
+                "ontology_release_id": 9,
+                "ontology_definition_hash": ONTOLOGY_HASH,
             }
             if release
             else None
@@ -147,6 +169,22 @@ class WorkflowSession:
         self.executed.append((sql, dict(params)))
         if sql.startswith("SELECT r.id, r.version, r.name, r.definition_hash"):
             return FakeResult([self.release] if self.release else [])
+        if sql.startswith("SELECT snapshot_json FROM semantic_domain_snapshot"):
+            return FakeResult(
+                [{"snapshot_json": json.dumps(SEMANTIC_SNAPSHOT, ensure_ascii=False)}]
+            )
+        if sql.startswith("SELECT definition_json, definition_hash FROM ontology_release"):
+            return FakeResult(
+                [
+                    {
+                        "definition_json": json.dumps(
+                            ONTOLOGY_DEFINITION,
+                            ensure_ascii=False,
+                        ),
+                        "definition_hash": ONTOLOGY_HASH,
+                    }
+                ]
+            )
         if sql.startswith("SELECT id FROM risk_issue WHERE domain_id"):
             return FakeResult([])
         if sql.startswith("SELECT id FROM risk_report WHERE domain_id"):
@@ -283,6 +321,43 @@ async def test_issue_creation_requires_a_published_release(monkeypatch):
     assert not any(sql.startswith("INSERT INTO risk_issue") for sql, _ in session.executed)
 
 
+@pytest.mark.parametrize(
+    ("field", "message"),
+    [
+        ("semantic_snapshot_hash", "语义资产快照完整性"),
+        ("ontology_definition_hash", "Ontology 发布完整性"),
+        ("model_hash", "模型版本哈希"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_issue_creation_rejects_tampered_active_release_hash(
+    monkeypatch,
+    field,
+    message,
+):
+    session = WorkflowSession()
+    session.release[field] = "0" * 64
+    service = RiskWorkflowService()
+    service.audit = RecordingAudit()
+    monkeypatch.setattr(
+        risk_workflow_service, "get_management_db", lambda: WorkflowDB(session)
+    )
+
+    with pytest.raises(ValueError, match=message):
+        await service.create_issue(
+            RiskIssueCreatePayload(
+                domain_id=4,
+                issue_key="loan.hash_tampered",
+                category="credit_risk",
+                severity="high",
+                title="发布版本被篡改",
+            ),
+            {"id": 8, "username": "analyst"},
+        )
+
+    assert not any(sql.startswith("INSERT INTO risk_issue") for sql, _ in session.executed)
+
+
 @pytest.mark.asyncio
 async def test_manual_issue_subject_respects_object_permission(monkeypatch):
     session = WorkflowSession()
@@ -384,7 +459,8 @@ async def test_regular_user_cannot_self_review_or_review_another_assignee(monkey
 
 
 @pytest.mark.asyncio
-async def test_admin_can_review_unassigned_issue(monkeypatch):
+@pytest.mark.parametrize("role", ["admin", "technical"])
+async def test_technical_and_admin_can_review_unassigned_issue(monkeypatch, role):
     session = WorkflowSession(issues=[issue_row(created_by=8, assignee=None)])
     service = RiskWorkflowService()
     service.audit = RecordingAudit()
@@ -396,7 +472,7 @@ async def test_admin_can_review_unassigned_issue(monkeypatch):
         4,
         11,
         RiskReviewPayload(action="start_review", comment="管理员接管", expected_version=1),
-        {"id": 8, "username": "admin", "role": "admin"},
+        {"id": 8, "username": role, "role": role},
     )
 
     assert result["issue"]["status"] == "in_review"
@@ -468,13 +544,13 @@ async def test_report_creation_freezes_issue_snapshot_and_creates_v1(monkeypatch
     assert snapshot["ontology_release"] == {
         "id": 9,
         "version": 3,
-        "definition_hash": "a" * 64,
+        "definition_hash": ONTOLOGY_HASH,
         "enterprise_model": {
             "id": 19,
             "version": 4,
-            "model_hash": "c" * 64,
+            "model_hash": MODEL_HASH,
             "semantic_snapshot_id": 29,
-            "semantic_snapshot_hash": "b" * 64,
+            "semantic_snapshot_hash": SEMANTIC_HASH,
         },
     }
     assert snapshot["issues"][0]["status"] == "open"
@@ -500,7 +576,7 @@ async def test_report_creation_freezes_issue_snapshot_and_creates_v1(monkeypatch
         "report.created",
         "report.version.created",
     ]
-    assert audit.events[1]["payload"]["ontology_release"]["definition_hash"] == "a" * 64
+    assert audit.events[1]["payload"]["ontology_release"]["definition_hash"] == ONTOLOGY_HASH
 
 
 class WorkflowReadDB:
@@ -523,10 +599,10 @@ class WorkflowReadDB:
                     "id": 9,
                     "version": 3,
                     "name": "贷款风控 V3",
-                    "definition_hash": "a" * 64,
+                    "definition_hash": ONTOLOGY_HASH,
                     "model_release_id": 19,
                     "model_release_version": 4,
-                    "model_hash": "c" * 64,
+                    "model_hash": MODEL_HASH,
                 }
             ]
         if "GROUP BY status, severity" in sql:
@@ -560,7 +636,7 @@ async def test_issue_detail_and_summary_response_contract(monkeypatch):
     assert "issue" not in detail
 
     summary = await service.get_summary(4)
-    assert summary["latest_release"]["definition_hash"] == "a" * 64
+    assert summary["latest_release"]["definition_hash"] == ONTOLOGY_HASH
     assert summary["counts"] == {
         "issues": 6,
         "open_issues": 2,

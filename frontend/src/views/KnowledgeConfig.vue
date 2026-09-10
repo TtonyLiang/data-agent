@@ -149,7 +149,7 @@
               <el-table-column label="基础表" min-width="190"><template #default="{ row }"><code>{{ row.base_table || '未配置' }}</code></template></el-table-column>
               <el-table-column label="时间字段" min-width="190"><template #default="{ row }"><code>{{ row.time_field || '未配置' }}</code></template></el-table-column>
               <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="metricBindingComplete(row) ? 'success' : 'warning'" effect="plain">{{ metricBindingComplete(row) ? '已绑定' : '待补充' }}</el-tag></template></el-table-column>
-              <el-table-column label="操作" width="150" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openAssetDetail('metric', row)">详情</el-button><el-button link type="primary" @click="openEditAsset('metric', row)">配置</el-button></template></el-table-column>
+              <el-table-column label="操作" width="150" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openAssetDetail('metric', row)">详情</el-button><el-button v-if="canManageTechnical" link type="primary" @click="openEditAsset('metric', row)">配置</el-button></template></el-table-column>
             </el-table>
           </template>
 
@@ -160,18 +160,18 @@
               <el-table-column label="关系方向" min-width="250"><template #default="{ row }"><code>{{ row.source_object_key }}</code><span class="relation-inline-arrow">→</span><code>{{ row.target_object_key }}</code></template></el-table-column>
               <el-table-column label="物理连接" min-width="300"><template #default="{ row }">{{ relationJoinLabel(row.semantic_relation) }}</template></el-table-column>
               <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="relationHasJoin(row.semantic_relation) ? 'success' : 'warning'" effect="plain">{{ relationHasJoin(row.semantic_relation) ? '已绑定' : '待配置' }}</el-tag></template></el-table-column>
-              <el-table-column label="操作" width="130" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openRelationForLink(row)">{{ row.semantic_relation ? '编辑' : '配置' }}</el-button></template></el-table-column>
+              <el-table-column label="操作" width="130" fixed="right"><template #default="{ row }"><el-button v-if="canManageTechnical" link type="primary" @click="openRelationForLink(row)">{{ row.semantic_relation ? '编辑' : '配置' }}</el-button><span v-else class="muted-copy">技术人员配置</span></template></el-table-column>
             </el-table>
           </template>
 
           <template v-else-if="bindingSection === 'mapping'">
-            <div class="binding-section-heading"><div><h3>字段映射</h3><p>从已采集 Schema 选择表和字段，将维度、过滤项和对象属性绑定到真实数据。</p></div><el-button type="primary" size="small" @click="openAssetDialog('mapping')">新增映射</el-button></div>
+            <div class="binding-section-heading"><div><h3>字段映射</h3><p>从已采集 Schema 选择表和字段，将维度、过滤项和对象属性绑定到真实数据。</p></div><el-button v-if="canManageTechnical" type="primary" size="small" @click="openAssetDialog('mapping')">新增映射</el-button></div>
             <el-table :data="assets.mapping || []" size="small" class="binding-table">
               <el-table-column label="业务字段" min-width="180"><template #default="{ row }"><div class="primary-cell"><strong>{{ semanticLabel(String(row.asset_key || '')) }}</strong><code>{{ row.asset_key }}</code></div></template></el-table-column>
               <el-table-column label="查询角色" width="120"><template #default="{ row }">{{ roleLabel(String(row.role || '')) }}</template></el-table-column>
               <el-table-column label="物理表" min-width="180"><template #default="{ row }"><code>{{ row.table_name }}</code></template></el-table-column>
               <el-table-column label="字段或表达式" min-width="250"><template #default="{ row }"><code>{{ row.column_name || row.expression_sql || '未配置' }}</code></template></el-table-column>
-              <el-table-column label="操作" width="150" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openAssetDetail('mapping', row)">详情</el-button><el-button link type="primary" @click="openEditAsset('mapping', row)">编辑</el-button></template></el-table-column>
+              <el-table-column label="操作" width="150" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openAssetDetail('mapping', row)">详情</el-button><el-button v-if="canManageTechnical" link type="primary" @click="openEditAsset('mapping', row)">编辑</el-button></template></el-table-column>
             </el-table>
           </template>
 
@@ -187,12 +187,12 @@
                 </el-table>
               </el-collapse-item>
               <el-collapse-item title="LogicForm 模板" name="templates">
-                <div class="advanced-section-action"><el-button size="small" @click="openAssetDialog('template')">新增模板</el-button></div>
+                <div class="advanced-section-action"><el-button v-if="canManageTechnical" size="small" @click="openAssetDialog('template')">新增模板</el-button></div>
                 <el-table :data="assets.template || []" size="small">
                   <el-table-column label="模板" min-width="190"><template #default="{ row }"><div class="primary-cell"><strong>{{ row.name }}</strong><code>{{ row.template_key }}</code></div></template></el-table-column>
                   <el-table-column label="意图" width="130"><template #default="{ row }">{{ intentTypeLabel(String(row.intent_type || '')) }}</template></el-table-column>
                   <el-table-column label="示例问法" min-width="280"><template #default="{ row }">{{ (row.examples || []).join('；') || '-' }}</template></el-table-column>
-                  <el-table-column label="操作" width="140"><template #default="{ row }"><el-button link type="primary" @click="openAssetDetail('template', row)">详情</el-button><el-button link type="primary" @click="openEditAsset('template', row)">编辑</el-button></template></el-table-column>
+                  <el-table-column label="操作" width="140"><template #default="{ row }"><el-button link type="primary" @click="openAssetDetail('template', row)">详情</el-button><el-button v-if="canManageTechnical" link type="primary" @click="openEditAsset('template', row)">编辑</el-button></template></el-table-column>
                 </el-table>
               </el-collapse-item>
             </el-collapse>
@@ -285,19 +285,19 @@
                 </div>
               </section>
               <details class="advanced-asset-settings">
-                <summary>物理 JOIN 绑定（技术工程师高级配置）</summary>
+                <summary>物理 JOIN 绑定（技术人员高级配置）</summary>
                 <div class="advanced-asset-note">
                   这里只说明该业务关系在数据库中如何连接，不改变关系本身的业务含义。字段格式建议为“表名.字段名”。
                 </div>
-                <el-form-item label="左侧物理字段"><el-select v-model="assetDraft.join_left" filterable allow-create default-first-option placeholder="选择已采集字段"><el-option v-for="item in qualifiedColumnOptions" :key="`left-${item.value}`" :label="item.label" :value="item.value" /></el-select></el-form-item>
-                <el-form-item label="右侧物理字段"><el-select v-model="assetDraft.join_right" filterable allow-create default-first-option placeholder="选择已采集字段"><el-option v-for="item in qualifiedColumnOptions" :key="`right-${item.value}`" :label="item.label" :value="item.value" /></el-select></el-form-item>
+                <el-form-item label="左侧物理字段"><el-select v-model="assetDraft.join_left" :disabled="!canManageTechnical" filterable allow-create default-first-option placeholder="选择已采集字段"><el-option v-for="item in qualifiedColumnOptions" :key="`left-${item.value}`" :label="item.label" :value="item.value" /></el-select></el-form-item>
+                <el-form-item label="右侧物理字段"><el-select v-model="assetDraft.join_right" :disabled="!canManageTechnical" filterable allow-create default-first-option placeholder="选择已采集字段"><el-option v-for="item in qualifiedColumnOptions" :key="`right-${item.value}`" :label="item.label" :value="item.value" /></el-select></el-form-item>
               </details>
             </template>
 
             <template v-else-if="editingAssetType === 'metric'">
               <div class="asset-boundary-note" role="note">
                 <strong>先确认业务口径，再绑定物理数据</strong>
-                <span>业务人员负责确认指标名称、含义和适用维度；技术工程师负责表、字段和 SQL 公式。</span>
+                <span>业务人员负责确认指标名称、含义和适用维度；技术人员负责表、字段和 SQL 公式。</span>
               </div>
               <section class="asset-form-section" aria-labelledby="metric-business-title">
                 <div class="asset-form-section-heading">
@@ -346,12 +346,12 @@
                 </el-form-item>
               </section>
               <details class="advanced-asset-settings">
-                <summary>物理数据绑定（技术工程师高级配置）</summary>
+                <summary>物理数据绑定（技术人员高级配置）</summary>
                 <div class="advanced-asset-note">以下配置决定查询运行时如何从数据库计算该指标，不应由业务人员自行修改。</div>
-                <el-form-item label="基础物理表"><el-select v-model="assetDraft.base_table" filterable allow-create default-first-option placeholder="发布前必须选择已采集表"><el-option v-for="item in tableOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
-                <el-form-item label="物理时间字段"><el-select v-model="assetDraft.time_field" clearable filterable allow-create default-first-option placeholder="选择已采集时间字段"><el-option v-for="item in qualifiedColumnOptions" :key="`time-${item.value}`" :label="item.label" :value="item.value" /></el-select></el-form-item>
+                <el-form-item label="基础物理表"><el-select v-model="assetDraft.base_table" :disabled="!canManageTechnical" filterable allow-create default-first-option placeholder="发布前必须选择已采集表"><el-option v-for="item in tableOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
+                <el-form-item label="物理时间字段"><el-select v-model="assetDraft.time_field" :disabled="!canManageTechnical" clearable filterable allow-create default-first-option placeholder="选择已采集时间字段"><el-option v-for="item in qualifiedColumnOptions" :key="`time-${item.value}`" :label="item.label" :value="item.value" /></el-select></el-form-item>
                 <el-form-item label="SQL 计算公式">
-                  <el-input v-model="assetDraft.formula_sql" type="textarea" :rows="3" placeholder="支持 {base} 表别名占位" />
+                  <el-input v-model="assetDraft.formula_sql" :disabled="!canManageTechnical" type="textarea" :rows="3" placeholder="支持 {base} 表别名占位" />
                 </el-form-item>
               </details>
             </template>
@@ -393,7 +393,7 @@
             <template v-else-if="editingAssetType === 'mapping'">
               <div class="asset-boundary-note" role="note">
                 <strong>映射只负责技术落地，不重新定义业务含义</strong>
-                <span>业务人员先在对象、指标和规则中确认口径；本页由技术工程师把语义资产绑定到真实表字段。</span>
+                <span>业务人员先在对象、指标和规则中确认口径；本页由技术人员把语义资产绑定到真实表字段。</span>
               </div>
               <section class="asset-form-section" aria-labelledby="mapping-semantic-title">
                 <div class="asset-form-section-heading">
@@ -404,16 +404,16 @@
                   <el-tag size="small" effect="plain">引用既有口径</el-tag>
                 </div>
                 <el-form-item label="资产类型">
-                  <el-select v-model="assetDraft.asset_type">
+                <el-select v-model="assetDraft.asset_type" :disabled="!canManageTechnical">
                     <el-option label="维度" value="dimension" />
                     <el-option label="过滤项" value="filter" />
                     <el-option label="指标" value="metric" />
                     <el-option label="概念" value="concept" />
                   </el-select>
                 </el-form-item>
-                <el-form-item label="语义资产"><el-select v-model="assetDraft.asset_key" filterable allow-create default-first-option placeholder="选择业务字段或指标"><el-option v-for="item in mappingAssetOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
+                <el-form-item label="语义资产"><el-select v-model="assetDraft.asset_key" :disabled="!canManageTechnical" filterable allow-create default-first-option placeholder="选择业务字段或指标"><el-option v-for="item in mappingAssetOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
                 <el-form-item label="查询角色">
-                  <el-select v-model="assetDraft.role">
+                  <el-select v-model="assetDraft.role" :disabled="!canManageTechnical">
                     <el-option label="维度" value="dimension" />
                     <el-option label="过滤" value="filter" />
                     <el-option label="时间" value="time" />
@@ -423,25 +423,25 @@
                 </el-form-item>
               </section>
               <details class="advanced-asset-settings">
-                <summary>物理数据绑定（技术工程师高级配置）</summary>
+                <summary>物理数据绑定（技术人员高级配置）</summary>
                 <div class="advanced-asset-note">表名、字段名和 SQL 表达式属于技术实现。数据库结构变化时，只调整这里，不改变上层业务语义。</div>
-                <el-form-item label="物理表名" required><el-select v-model="assetDraft.table_name" filterable allow-create default-first-option placeholder="选择已采集表" @change="handleMappingTableSelect"><el-option v-for="item in tableOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
-                <el-form-item label="物理字段名"><el-select v-model="assetDraft.column_name" clearable filterable allow-create default-first-option placeholder="选择已采集字段" @change="handleMappingColumnSelect"><el-option v-for="item in mappingColumnOptions" :key="item.value" :label="item.label" :value="item.columnName" /></el-select></el-form-item>
+                <el-form-item label="物理表名" required><el-select v-model="assetDraft.table_name" :disabled="!canManageTechnical" filterable allow-create default-first-option placeholder="选择已采集表" @change="handleMappingTableSelect"><el-option v-for="item in tableOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
+                <el-form-item label="物理字段名"><el-select v-model="assetDraft.column_name" :disabled="!canManageTechnical" clearable filterable allow-create default-first-option placeholder="选择已采集字段" @change="handleMappingColumnSelect"><el-option v-for="item in mappingColumnOptions" :key="item.value" :label="item.label" :value="item.columnName" /></el-select></el-form-item>
                 <el-form-item label="SQL 表达式">
-                  <el-input v-model="assetDraft.expression_sql" placeholder="可选，字段映射为空时使用" />
+                  <el-input v-model="assetDraft.expression_sql" :disabled="!canManageTechnical" placeholder="可选，字段映射为空时使用" />
                 </el-form-item>
                 <el-form-item label="数据类型">
-                  <el-input v-model="assetDraft.data_type" placeholder="如 varchar / int / decimal" />
+                  <el-input v-model="assetDraft.data_type" :disabled="!canManageTechnical" placeholder="如 varchar / int / decimal" />
                 </el-form-item>
               </details>
             </template>
 
             <template v-else>
               <el-form-item label="标识">
-                <el-input v-model="assetDraft.template_key" placeholder="如 metric_query" />
+                <el-input v-model="assetDraft.template_key" :disabled="!canManageTechnical" placeholder="如 metric_query" />
               </el-form-item>
               <el-form-item label="意图类型">
-                <el-select v-model="assetDraft.intent_type">
+                <el-select v-model="assetDraft.intent_type" :disabled="!canManageTechnical">
                   <el-option label="指标查询" value="metric_query" />
                   <el-option label="元数据查询" value="metadata_query" />
                   <el-option label="普通问答" value="chat" />
@@ -451,13 +451,13 @@
                 <el-input v-model="assetDraft.name" />
               </el-form-item>
               <el-form-item label="必填槽位">
-                <el-input v-model="assetDraft.required_slots_text" placeholder="如 metrics" />
+                <el-input v-model="assetDraft.required_slots_text" :disabled="!canManageTechnical" placeholder="如 metrics" />
               </el-form-item>
               <el-form-item label="可选槽位">
-                <el-input v-model="assetDraft.optional_slots_text" placeholder="如 dimensions, filters, time_range" />
+                <el-input v-model="assetDraft.optional_slots_text" :disabled="!canManageTechnical" placeholder="如 dimensions, filters, time_range" />
               </el-form-item>
               <el-form-item label="编译策略">
-                <el-select v-model="assetDraft.compile_strategy_type">
+                <el-select v-model="assetDraft.compile_strategy_type" :disabled="!canManageTechnical">
                   <el-option label="指标查询" value="metric_select" />
                   <el-option label="元数据查询" value="metadata_select" />
                 </el-select>
@@ -479,7 +479,7 @@
       </div>
       <template #footer>
         <el-button @click="showAssetDialog = false">取消</el-button>
-        <el-button type="primary" @click="handleSaveAsset">保存</el-button>
+        <el-button type="primary" :disabled="!canEditAsset(editingAssetType)" @click="handleSaveAsset">保存</el-button>
       </template>
     </el-dialog>
 
@@ -616,9 +616,9 @@ const emit = defineEmits<{
 const assetTabs = [
   { name: 'concept', label: '查询词汇', description: '直接引用本体对象，只补充用户查询时使用的同义词和口语。' },
   { name: 'relation', label: '关系查询路径', description: '引用本体中已有业务关系，为跨对象查询补充物理 JOIN 绑定。' },
-  { name: 'metric', label: '指标', description: '业务人员确认口径；技术工程师绑定表、字段和 SQL 公式。' },
+  { name: 'metric', label: '指标', description: '业务人员确认口径；技术人员绑定表、字段和 SQL 公式。' },
   { name: 'rule', label: '规则', description: '过滤规则、时间规则、权限边界和动作约束。' },
-  { name: 'mapping', label: '数据映射', description: '技术工程师将既有语义资产绑定到物理表字段或受控 SQL 表达式。' },
+  { name: 'mapping', label: '数据映射', description: '技术人员将既有语义资产绑定到物理表字段或受控 SQL 表达式。' },
   { name: 'template', label: 'LogicForm 模板', description: '自然语言意图到结构化槽位的模板。' },
 ]
 
@@ -673,7 +673,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
   },
   relation: {
     title: '关系查询路径填写说明',
-    subtitle: '这里不创建第二份业务关系。先引用企业本体中已有的 link_key，再由技术工程师补充查询所需的物理 JOIN。',
+    subtitle: '这里不创建第二份业务关系。先引用企业本体中已有的 link_key，再由技术人员补充查询所需的物理 JOIN。',
     fields: [
       {
         key: 'relation_key',
@@ -688,14 +688,14 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         label: '物理 JOIN 绑定',
         title: '物理 JOIN 绑定',
         purpose: '告诉查询编译器，这条既有业务关系在真实数据库中如何连接。',
-        instructions: ['由技术工程师填写。', '左右字段建议使用“表名.字段名”。', '字段必须存在于已采集 Schema。', '数据库结构变化时只调整绑定，不改变本体关系。'],
+        instructions: ['由技术人员填写。', '左右字段建议使用“表名.字段名”。', '字段必须存在于已采集 Schema。', '数据库结构变化时只调整绑定，不改变本体关系。'],
         examples: ['orders.customer_id = customers.customer_id'],
       },
     ],
   },
   metric: {
     title: '指标填写说明',
-    subtitle: '业务人员先确认指标名称、含义、维度和过滤口径；技术工程师再配置物理表、时间字段和 SQL 公式。',
+    subtitle: '业务人员先确认指标名称、含义、维度和过滤口径；技术人员再配置物理表、时间字段和 SQL 公式。',
     fields: [
       {
         key: 'metric_key',
@@ -899,7 +899,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
   },
   mapping: {
     title: '映射填写说明',
-    subtitle: '映射是技术工程师维护的技术绑定。它引用已有业务口径，把语义资产连接到真实数据库表字段。',
+    subtitle: '映射是技术人员维护的技术绑定。它引用已有业务口径，把语义资产连接到真实数据库表字段。',
     fields: [
       {
         key: 'asset_type',
@@ -929,7 +929,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         key: 'table_name',
         label: '表名',
         title: '表名',
-        purpose: '技术工程师指定映射到哪张真实数据库表。',
+        purpose: '技术人员指定映射到哪张真实数据库表。',
         instructions: ['这是高级技术配置。', '填写已采集 Schema 里的英文表名。', '不要填写中文表名。'],
         examples: ['orders'],
       },
@@ -937,7 +937,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         key: 'column_name',
         label: '字段名',
         title: '字段名',
-        purpose: '技术工程师指定映射到表里的哪个真实字段。',
+        purpose: '技术人员指定映射到表里的哪个真实字段。',
         instructions: ['这是高级技术配置。', '填写字段英文名。', '如果不是单字段映射，可留空并填写表达式。'],
         examples: ['product_type', 'region', 'region'],
       },
@@ -945,7 +945,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
         key: 'expression_sql',
         label: '表达式',
         title: '表达式',
-        purpose: '当语义资产不是单一字段时，由技术工程师配置 SQL 表达式。',
+        purpose: '当语义资产不是单一字段时，由技术人员配置 SQL 表达式。',
         instructions: ['这是高级技术配置。', '只填写 SQL 表达式。', '能用字段名解决时优先用字段名。'],
         examples: ["CASE WHEN status = 'paid' THEN '已支付' ELSE '未支付' END"],
       },
@@ -1050,7 +1050,7 @@ const canManageTechnical = computed(() => isTechnicalUser())
 
 function canEditAsset(assetType: string) {
   if (!canEditModel()) return false
-  return !['relation', 'mapping'].includes(assetType) || canManageTechnical.value
+  return !['relation', 'mapping', 'template'].includes(assetType) || canManageTechnical.value
 }
 
 const currentAssetTab = computed(() => assetTabs.find(tab => tab.name === editingAssetType.value))

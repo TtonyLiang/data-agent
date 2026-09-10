@@ -48,6 +48,9 @@ assert.ok(
     modelSource.includes('业务模型') &&
     modelSource.includes('数据绑定') &&
     modelSource.includes('校验发布') &&
+    modelSource.includes('v-if="canConfigureData"') &&
+    modelSource.includes('const canConfigureData = computed(() => isTechnicalUser())') &&
+    modelSource.includes("import { canEditModel, isTechnicalUser } from '../stores/auth'") &&
     modelSource.includes('业务对象与动作') &&
     modelSource.includes('指标与业务规则') &&
     modelSource.includes('class="business-model-switch-heading"') &&
@@ -121,7 +124,7 @@ assert.ok(
     twinSource.includes('预览不会写入对象') &&
     twinSource.includes(':scrollbar-tabindex="-1"') &&
     twinSource.includes('activeModelRelease') &&
-    twinSource.includes('只有技术工程师可以执行写入型同步') &&
+    twinSource.includes('只有技术人员可以执行写入型同步') &&
     twinSource.includes('当前领域没有激活的统一企业模型版本') &&
     twinSource.includes('当前页面是手动运行入口，不表示已经接入 CDC 或自动调度') &&
     twinSource.includes('对象身份合并与状态历史'),
@@ -155,7 +158,8 @@ assert.ok(
     twinSource.includes('@current-change="handleInstancePageChange"') &&
     twinSource.includes('@size-change="handleInstancePageSizeChange"') &&
     twinSource.includes('const INSTANCE_CHOICE_LIMIT = 200') &&
-    twinSource.includes('fetchOntologyObjects(domainId.value!, typeId, INSTANCE_CHOICE_LIMIT, 0)') &&
+    twinSource.includes('fetchOntologyObjects(') &&
+    twinSource.includes('{ strictRelease: true }') &&
     !twinSource.includes('fetchOntologyObjects(domainId.value!, typeId, 1000, 0)'),
   'object instances should use server-side pagination while auxiliary choices remain bounded',
 )
