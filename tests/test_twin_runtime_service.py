@@ -1,3 +1,4 @@
+import copy
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -308,6 +309,87 @@ async def test_sync_requires_active_release_and_rejects_live_definition_drift(mo
 
     with pytest.raises(ValueError, match="实时 Ontology 定义已偏离激活版本"):
         await service._validated_active_release(4, datasource_id=8)
+
+
+@pytest.mark.asyncio
+async def test_sync_accepts_legacy_release_when_runtime_exposes_relation_key_arrays(monkeypatch):
+    service = TwinRuntimeService()
+    snapshot_json = {"version": 1, "domain": {"datasource_id": 8}}
+    semantic_hash = twin_runtime_service.canonical_sha256(snapshot_json)
+    legacy_bundle = {
+        "format": "wenqu-ontology",
+        "version": 1,
+        "domain": {"domain_key": "loan_risk"},
+        "object_types": [],
+        "link_types": [
+            {
+                "link_key": "customer_has_application",
+                "source_object_key": "Customer",
+                "target_object_key": "LoanApplication",
+                "source_property": "tenant_id,customer_id",
+                "target_property": "tenant_id,customer_id",
+            }
+        ],
+        "action_types": [],
+    }
+    live_bundle = copy.deepcopy(legacy_bundle)
+    live_bundle["link_types"][0].update(
+        {
+            "source_property": "tenant_id",
+            "target_property": "tenant_id",
+            "source_property_keys": ["tenant_id", "customer_id"],
+            "target_property_keys": ["tenant_id", "customer_id"],
+        }
+    )
+    ontology_hash = twin_runtime_service._content_hash(
+        twin_runtime_service._stable_release_definition(legacy_bundle)
+    )
+    release = {
+        "id": 3,
+        "version": 2,
+        "semantic_snapshot_id": 8,
+        "ontology_release_id": 9,
+        "semantic_snapshot_hash": semantic_hash,
+        "ontology_definition_hash": ontology_hash,
+        "model_hash": twin_runtime_service.canonical_sha256(
+            {
+                "format": "wenqu-enterprise-model-release/v1",
+                "semantic_snapshot_hash": semantic_hash,
+                "ontology_definition_hash": ontology_hash,
+            }
+        ),
+    }
+    model_release_service = AsyncMock()
+    model_release_service.get_active_release.return_value = release
+    monkeypatch.setattr(
+        twin_runtime_service,
+        "get_model_release_service",
+        lambda: model_release_service,
+    )
+    runtime_service = AsyncMock()
+    runtime_service.get_snapshot.return_value = {"snapshot_json": snapshot_json}
+    monkeypatch.setattr(
+        twin_runtime_service,
+        "get_semantic_runtime_service",
+        lambda: runtime_service,
+    )
+    ontology = AsyncMock()
+    ontology.export_bundle.return_value = live_bundle
+    monkeypatch.setattr(twin_runtime_service, "get_ontology_service", lambda: ontology)
+    db = FakeDB()
+    db.rows = [
+        {
+            "id": 9,
+            "definition_json": json.dumps(legacy_bundle, ensure_ascii=False),
+            "definition_hash": ontology_hash,
+        }
+    ]
+    monkeypatch.setattr(twin_runtime_service, "get_management_db", lambda: db)
+
+    result = await service._validated_active_release(4, datasource_id=8)
+
+    assert result["ontology_definition_hash"] == ontology_hash
+    assert result["definition_mode"] == "verified_live_ontology"
 
 
 @pytest.mark.asyncio

@@ -39,7 +39,7 @@ from app.config import get_settings
 from app.db.migrations import run_management_migrations
 from app.db.mysql import close_database_clients, get_management_db
 from app.logging_config import configure_file_logging
-from app.models.user import PublicUser
+from app.models.user import PublicUser, is_technical_role
 from app.security import auth_and_rate_limit_middleware
 from app.services.datasource_service import get_datasource_service
 from app.services.task_checkpoint_service import get_task_checkpoint_service
@@ -1872,7 +1872,7 @@ async def delete_session(
         params,
     )
     await get_task_checkpoint_service().delete(
-        None if current_user.role == "admin" else current_user.id,
+        None if is_technical_role(current_user.role) else current_user.id,
         agent_id,
         session_id,
     )
@@ -1881,7 +1881,7 @@ async def delete_session(
 
 def scoped_session_filter(user: PublicUser, agent_id: int) -> tuple[str, dict[str, Any]]:
     params: dict[str, Any] = {"aid": agent_id}
-    if user.role == "admin":
+    if is_technical_role(user.role):
         return "agent_id = :aid", params
     params["user_id"] = user.id
     return "agent_id = :aid AND user_id = :user_id", params

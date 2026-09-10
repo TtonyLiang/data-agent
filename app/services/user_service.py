@@ -12,7 +12,14 @@ import jwt
 
 from app.config import get_settings
 from app.db.mysql import get_management_db
-from app.models.user import PublicUser, UserCreate, UserUpdate
+from app.models.user import (
+    PublicUser,
+    UserCreate,
+    UserUpdate,
+    is_technical_role,
+    role_capabilities,
+    role_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +57,8 @@ def public_user_from_row(row: dict[str, Any]) -> PublicUser:
         username=str(row["username"]),
         display_name=row.get("display_name"),
         role=row.get("role") or "user",
+        role_label=role_label(row.get("role")),
+        capabilities=role_capabilities(row.get("role")),
         status=row.get("status") or "active",
         must_change_password=bool(row.get("must_change_password")),
         created_at=row.get("created_at"),
@@ -88,7 +97,7 @@ class UserService:
                 username=username,
                 password=password,
                 display_name=display_name or username,
-                role="user",
+                role="business",
                 status="active",
             )
         )
@@ -237,7 +246,7 @@ class UserService:
         return await self.get_user_agent_ids(user_id)
 
     async def can_access_agent(self, user: PublicUser, agent_id: int) -> bool:
-        if user.role == "admin":
+        if is_technical_role(user.role):
             return True
         rows = await get_management_db().execute_query(
             "SELECT 1 FROM user_agent_permission WHERE user_id = :user_id AND agent_id = :agent_id",

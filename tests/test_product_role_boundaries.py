@@ -17,6 +17,8 @@ from app.models.user import PublicUser
 from app.services import semantic_runtime as semantic_runtime_module
 
 USER = PublicUser(id=31, username="operator", role="user", status="active")
+BUSINESS = PublicUser(id=32, username="business", role="business", status="active")
+TECHNICAL = PublicUser(id=33, username="technical", role="technical", status="active")
 
 
 def _route_dependency_names(method: str, path: str) -> set[str]:
@@ -104,6 +106,19 @@ def test_external_capability_uses_client_credentials_instead_of_user_role():
     assert "get_capability_client" in dependencies
     assert "get_current_user" not in dependencies
     assert "require_admin" not in dependencies
+
+
+@pytest.mark.asyncio
+async def test_product_roles_split_model_editing_from_data_and_publish():
+    assert await deps.require_model_editor(BUSINESS) is BUSINESS
+    assert await deps.require_model_editor(TECHNICAL) is TECHNICAL
+    assert await deps.require_data_engineer(TECHNICAL) is TECHNICAL
+    assert await deps.require_model_publisher(TECHNICAL) is TECHNICAL
+
+    with pytest.raises(HTTPException, match="技术工程师"):
+        await deps.require_data_engineer(BUSINESS)
+    with pytest.raises(HTTPException, match="技术工程师"):
+        await deps.require_model_publisher(BUSINESS)
 
 
 @pytest.mark.asyncio
@@ -422,6 +437,7 @@ async def test_regular_user_is_rejected_from_administrative_surfaces(regular_use
         ("POST", "/api/semantic/logic-form/validate", {}),
         ("POST", "/api/semantic/sync-vector/4", None),
         ("POST", "/api/ontology/domains/4/object-types", {}),
+        ("POST", "/api/ontology/domains/4/object-types/mapping-preview", {}),
         ("DELETE", "/api/ontology/domains/4/object-types/11", None),
         ("POST", "/api/ontology/domains/4/link-types", {}),
         ("POST", "/api/ontology/domains/4/action-types", {}),

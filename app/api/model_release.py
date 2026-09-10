@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import require_admin
+from app.api.deps import require_model_editor, require_model_publisher
 from app.models.model_release import (
     EnterpriseModelReleaseCreatePayload,
     EnterpriseModelValidationPayload,
@@ -26,7 +26,7 @@ def _conflict(exc: ModelReleaseConflict) -> HTTPException:
 
 
 @router.get("/domains/{domain_id}/releases")
-async def list_releases(domain_id: int, _: PublicUser = Depends(require_admin)):
+async def list_releases(domain_id: int, _: PublicUser = Depends(require_model_editor)):
     try:
         releases = await get_model_release_service().list_releases(domain_id)
     except ModelReleaseNotFound as exc:
@@ -38,7 +38,7 @@ async def list_releases(domain_id: int, _: PublicUser = Depends(require_admin)):
 async def get_release(
     domain_id: int,
     release_id: int,
-    _: PublicUser = Depends(require_admin),
+    _: PublicUser = Depends(require_model_editor),
 ):
     try:
         return {"release": await get_model_release_service().get_release(domain_id, release_id)}
@@ -50,7 +50,7 @@ async def get_release(
 async def create_release(
     domain_id: int,
     payload: EnterpriseModelReleaseCreatePayload,
-    current_user: PublicUser = Depends(require_admin),
+    current_user: PublicUser = Depends(require_model_editor),
 ):
     try:
         release = await get_model_release_service().create_draft(
@@ -68,7 +68,7 @@ async def validate_release(
     domain_id: int,
     release_id: int,
     payload: EnterpriseModelValidationPayload,
-    current_user: PublicUser = Depends(require_admin),
+    current_user: PublicUser = Depends(require_model_editor),
 ):
     try:
         release = await get_model_release_service().validate_release(
@@ -85,7 +85,7 @@ async def validate_release(
 async def activate_release(
     domain_id: int,
     release_id: int,
-    current_user: PublicUser = Depends(require_admin),
+    current_user: PublicUser = Depends(require_model_publisher),
 ):
     try:
         release = await get_model_release_service().activate_release(
@@ -102,7 +102,7 @@ async def activate_release(
 async def deactivate_release(
     domain_id: int,
     release_id: int,
-    current_user: PublicUser = Depends(require_admin),
+    current_user: PublicUser = Depends(require_model_publisher),
 ):
     try:
         release = await get_model_release_service().deactivate_release(
@@ -119,7 +119,7 @@ async def deactivate_release(
 async def rollback_release(
     domain_id: int,
     release_id: int,
-    current_user: PublicUser = Depends(require_admin),
+    current_user: PublicUser = Depends(require_model_publisher),
 ):
     try:
         release = await get_model_release_service().rollback_release(

@@ -277,6 +277,39 @@ def test_release_definition_ignores_storage_and_sync_runtime_fields():
     assert _content_hash(first) == _content_hash(second)
 
 
+def test_release_definition_normalizes_legacy_and_runtime_relation_keys():
+    legacy = {
+        "format": "wenqu-ontology",
+        "version": 1,
+        "domain": {"domain_key": "loan"},
+        "object_types": [],
+        "link_types": [
+            {
+                "link_key": "customer_has_application",
+                "source_object_key": "Customer",
+                "target_object_key": "LoanApplication",
+                "source_property": "tenant_id,customer_id",
+                "target_property": "tenant_id,customer_id",
+            }
+        ],
+        "action_types": [],
+    }
+    runtime = copy.deepcopy(legacy)
+    runtime["link_types"][0].update(
+        {
+            "source_property": "tenant_id",
+            "target_property": "tenant_id",
+            "source_property_keys": ["tenant_id", "customer_id"],
+            "target_property_keys": ["tenant_id", "customer_id"],
+        }
+    )
+
+    assert _stable_release_definition(legacy) == _stable_release_definition(runtime)
+    legacy_hash = _content_hash(_stable_release_definition(legacy))
+    runtime_hash = _content_hash(_stable_release_definition(runtime))
+    assert legacy_hash == runtime_hash
+
+
 def test_numeric_primary_values_accept_string_api_input():
     definition = {"property_key": "id", "name": "编号", "data_type": "integer"}
     assert coerce_primary_value(definition, "0042") == 42
@@ -818,6 +851,116 @@ async def test_upsert_object_is_idempotent_for_same_primary_value(monkeypatch):
     assert item_id == 11
     assert not db.inserts
     assert any("version = version + 1" in sql for sql, _ in db.queries)
+
+
+@pytest.mark.asyncio
+async def test_upsert_object_rejects_primary_identity_change(monkeypatch):
+    db = RecordingDB()
+    monkeypatch.setattr(ontology_service, "get_management_db", lambda: db)
+    service = OntologyService()
+
+    async def fake_object_type(_domain_id, **_kwargs):
+        return {
+            "id": 2,
+            "object_key": "Material",
+            "primary_property": "material_id",
+            "display_property": None,
+            "properties": PROPERTY_DEFINITIONS,
+        }
+
+    async def fake_object(_domain_id, _object_id):
+        return {
+            "id": 11,
+            "object_type_id": 2,
+            "primary_value": "MAT-001",
+            "source_kind": "database",
+            "source_properties": {
+                "material_id": "MAT-001",
+                "available_qty": 10,
+                "allocation_status": "available",
+            },
+            "overlay_properties": {},
+        }
+
+    monkeypatch.setattr(service, "get_object_type", fake_object_type)
+    monkeypatch.setattr(service, "get_object", fake_object)
+
+    with pytest.raises(ValueError, match="对象主标识不可修改"):
+        await service.upsert_object(
+            OntologyObjectPayload(
+                id=11,
+                domain_id=4,
+                object_type_id=2,
+                primary_value="MAT-002",
+                properties={
+                    "material_id": "MAT-002",
+                    "available_qty": 10,
+                    "allocation_status": "available",
+                },
+            )
+        )
+
+    assert not any(sql.startswith("UPDATE ontology_object") for sql, _ in db.queries)
+
+
+@pytest.mark.asyncio
+async def test_upsert_object_normalizes_numeric_identity_and_never_overlays_primary(monkeypatch):
+    db = RecordingDB()
+    monkeypatch.setattr(ontology_service, "get_management_db", lambda: db)
+    service = OntologyService()
+    definitions = [
+        {
+            "property_key": "entity_id",
+            "name": "实体编号",
+            "data_type": "number",
+            "required": True,
+            "default_value": None,
+        },
+        {
+            "property_key": "name",
+            "name": "名称",
+            "data_type": "string",
+            "required": True,
+            "default_value": None,
+        },
+    ]
+
+    async def fake_object_type(_domain_id, **_kwargs):
+        return {
+            "id": 2,
+            "object_key": "Entity",
+            "primary_property": "entity_id",
+            "display_property": "name",
+            "properties": definitions,
+        }
+
+    async def fake_object(_domain_id, _object_id):
+        return {
+            "id": 11,
+            "object_type_id": 2,
+            "primary_value": "1.0",
+            "source_kind": "database",
+            "source_properties": {"entity_id": 1.0, "name": "原名称"},
+            "overlay_properties": {},
+        }
+
+    monkeypatch.setattr(service, "get_object_type", fake_object_type)
+    monkeypatch.setattr(service, "get_object", fake_object)
+
+    item_id = await service.upsert_object(
+        OntologyObjectPayload(
+            id=11,
+            domain_id=4,
+            object_type_id=2,
+            primary_value=1,
+            properties={"entity_id": 1, "name": "新名称"},
+        )
+    )
+
+    update = next(params for sql, params in db.queries if sql.startswith("UPDATE ontology_object"))
+    assert item_id == 11
+    assert json.loads(update["overlay_properties"]) == {"name": "新名称"}
+    assert json.loads(update["properties"])["entity_id"] == 1.0
 
 
 @pytest.mark.asyncio

@@ -202,7 +202,9 @@ export interface CurrentUser {
   id: number
   username: string
   display_name?: string | null
-  role: 'admin' | 'user'
+  role: 'admin' | 'user' | 'business' | 'technical'
+  role_label?: string | null
+  capabilities?: string[]
   status: 'active' | 'disabled'
   must_change_password?: boolean
   created_at?: string | null
@@ -214,13 +216,13 @@ export interface UserCreateRequest {
   username: string
   password: string
   display_name?: string | null
-  role?: 'admin' | 'user'
+  role?: 'admin' | 'user' | 'business' | 'technical'
   status?: 'active' | 'disabled'
 }
 
 export interface UserUpdateRequest {
   display_name?: string | null
-  role: 'admin' | 'user'
+  role: 'admin' | 'user' | 'business' | 'technical'
   status: 'active' | 'disabled'
   must_change_password?: boolean
 }
@@ -1202,6 +1204,59 @@ export async function fetchOntologyObjectTypes(domainId: number): Promise<Ontolo
 
 export async function saveOntologyObjectType(domainId: number, payload: Record<string, unknown>) {
   const { data } = await api.post(`/ontology/domains/${domainId}/object-types`, payload)
+  return data
+}
+
+export interface OntologyMappingPreviewProperty {
+  property_key: string
+  name: string
+  data_type: string
+  required: boolean
+  has_default: boolean
+}
+
+export interface OntologyMappingPreviewResult {
+  valid: boolean
+  domain_id: number
+  datasource_id: number
+  object_type_id?: number | null
+  object_key: string
+  name: string
+  permission?: Record<string, unknown> | null
+  query: {
+    tables: string[]
+    columns: string[]
+    sample_limit: number
+  }
+  mapping: {
+    mapped: OntologyMappingPreviewProperty[]
+    missing: OntologyMappingPreviewProperty[]
+    unmapped_columns: string[]
+  }
+  statistics: {
+    available: boolean
+    total_rows: number | null
+    empty_primary_rows: number
+    distinct_primary_rows: number | null
+    duplicate_primary_rows: number | null
+    sample_rows: number
+    valid_sample_rows: number
+    sample_errors: number
+  }
+  sample_rows: Array<Record<string, unknown>>
+  masked_columns?: Record<string, string>
+  errors: Array<Record<string, unknown>>
+  warnings: Array<Record<string, unknown>>
+}
+
+export async function previewOntologyObjectMapping(
+  domainId: number,
+  payload: Record<string, unknown>,
+): Promise<OntologyMappingPreviewResult> {
+  const { data } = await api.post<OntologyMappingPreviewResult>(
+    `/ontology/domains/${domainId}/object-types/mapping-preview`,
+    payload,
+  )
   return data
 }
 

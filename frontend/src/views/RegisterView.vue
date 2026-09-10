@@ -14,12 +14,12 @@
 
         <div class="brand-copy">
           <h2>创建公司内部账号。</h2>
-          <p>账号注册后，由管理员分配验证客户端和业务数据访问范围。</p>
+          <p>账号注册后，由管理员确认业务人员或技术工程师角色、验证客户端和业务数据访问范围。</p>
         </div>
 
         <div class="access-note">
           <el-icon aria-hidden="true"><Lock /></el-icon>
-          <span>权限由平台管理员分配</span>
+          <span>角色由平台管理员确认</span>
         </div>
       </aside>
 
@@ -36,7 +36,7 @@
 
         <header class="form-heading">
           <h1 id="register-title">注册账号</h1>
-          <p>创建普通用户账号，管理员会分配访问权限</p>
+          <p>创建公司内部账号，管理员会分配业务人员或技术工程师角色</p>
         </header>
 
         <el-alert

@@ -22,6 +22,7 @@ from app.models.ontology import (
     OntologyObjectPayload,
     OntologyObjectTypePayload,
 )
+from app.models.user import ontology_action_role
 from app.services.datasource_service import get_datasource_service
 from app.services.decision_audit_service import get_decision_audit_service
 from app.services.model_release_service import get_model_release_service
@@ -114,7 +115,12 @@ _VOLATILE_DEFINITION_FIELDS = {
 
 
 def _stable_release_definition(bundle: dict[str, Any]) -> dict[str, Any]:
-    """Remove storage/runtime fields before hashing an Ontology definition."""
+    """Remove storage/runtime fields before hashing an Ontology definition.
+
+    Relationship key arrays are derived fields returned by the runtime.  The
+    canonical representation stores the ordered compound key in the legacy
+    ``*_property`` value so old and new runtime rows hash identically.
+    """
 
     def clean_record(value: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -123,12 +129,26 @@ def _stable_release_definition(bundle: dict[str, Any]) -> dict[str, Any]:
             if key not in _VOLATILE_DEFINITION_FIELDS
         }
 
+    def clean_link_type(value: dict[str, Any]) -> dict[str, Any]:
+        link_type = clean_record(value)
+        for side in ("source", "target"):
+            plural_key = f"{side}_property_keys"
+            singular_key = f"{side}_property"
+            property_keys = link_type.pop(plural_key, None)
+            if isinstance(property_keys, list) and property_keys:
+                normalized_keys = [str(key).strip() for key in property_keys]
+                if all(normalized_keys):
+                    link_type[singular_key] = _RELATION_PROPERTY_SEPARATOR.join(
+                        normalized_keys
+                    )
+        return link_type
+
     definition = {
         "format": bundle.get("format"),
         "version": bundle.get("version"),
         "domain": clean_record(bundle.get("domain") or {}),
         "object_types": [],
-        "link_types": [clean_record(item) for item in bundle.get("link_types") or []],
+        "link_types": [clean_link_type(item) for item in bundle.get("link_types") or []],
         "action_types": [clean_record(item) for item in bundle.get("action_types") or []],
     }
     for item in bundle.get("object_types") or []:
@@ -727,7 +747,7 @@ class OntologyService:
             if isinstance(item, dict)
             if item.get("status") == "active"
             and item.get("target_object_key") in object_keys
-            and role in (item.get("allowed_roles") or [])
+            and ontology_action_role(role) in (item.get("allowed_roles") or [])
         ]
 
         # Keep only fields useful to query/action planning.  In particular,
@@ -2081,6 +2101,11 @@ class OntologyService:
                 raise ValueError("对象实例不存在")
             if int(existing["object_type_id"]) != payload.object_type_id:
                 raise ValueError("对象实例不能更改对象类型")
+            existing_primary_value = coerce_primary_value(
+                primary_definition, existing.get("primary_value")
+            )
+            if existing_primary_value != primary_value:
+                raise ValueError("对象主标识不可修改；如需修正身份，请重新同步或执行身份治理")
             duplicate = await db.execute_query(
                 "SELECT id FROM ontology_object WHERE object_type_id = :object_type_id "
                 "AND primary_value = :primary_value AND id <> :id",
@@ -2097,7 +2122,8 @@ class OntologyService:
                 overlay_properties = {
                     key: value
                     for key, value in values.items()
-                    if source_properties.get(key) != value
+                    if key != object_type["primary_property"]
+                    and source_properties.get(key) != value
                 }
                 values = validate_property_values(
                     object_type["properties"], {**source_properties, **overlay_properties}
@@ -2132,7 +2158,8 @@ class OntologyService:
                 overlay_properties = {
                     key: value
                     for key, value in values.items()
-                    if source_properties.get(key) != value
+                    if key != object_type["primary_property"]
+                    and source_properties.get(key) != value
                 }
                 values = validate_property_values(
                     object_type["properties"], {**source_properties, **overlay_properties}
@@ -2377,7 +2404,7 @@ class OntologyService:
         for definition_key in ("parameters", "preconditions", "effects"):
             if not isinstance(action.get(definition_key), list):
                 raise ValueError(f"动作{definition_key}配置无效")
-        if roles and user.get("role") not in roles:
+        if roles and ontology_action_role(user.get("role")) not in roles:
             raise PermissionError("当前角色无权执行此动作")
         if action.get("requires_approval") and not payload.approval_reference:
             raise ValueError("该动作需要提供审批单号")

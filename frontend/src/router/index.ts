@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { chatRunState } from '../stores/chatRun'
-import { adminOnlyPaths, initAuth, isAdmin, isLoggedIn } from '../stores/auth'
+import { initAuth, isLoggedIn, isTechnicalUser, technicalOnlyPaths } from '../stores/auth'
 
 const routes = [
   { path: '/', name: 'Chat', component: () => import('../views/ChatView.vue') },
@@ -32,9 +32,9 @@ router.beforeEach(async (to, from) => {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
   if (to.meta.public && isLoggedIn()) return { path: '/' }
-  if (adminOnlyPaths.has(to.path) && !isAdmin()) {
-    ElMessage.warning('无权访问该页面')
-    return { path: '/' }
+  if (technicalOnlyPaths.has(to.path) && !isTechnicalUser()) {
+    ElMessage.warning('该页面仅供技术工程师使用')
+    return { path: '/enterprise-model' }
   }
   if (chatRunState.busy && to.path !== from.path) {
     ElMessage.warning('当前对话正在生成，请等待完成后再切换页面')

@@ -133,7 +133,7 @@
             :rows="4"
             placeholder="每行一个默认问题，会显示在对话输入框上方"
           />
-          <div class="form-help">建议配置 3-6 个高频问题，普通用户进入该智能体后会优先看到这些问题。</div>
+          <div class="form-help">建议配置 3-6 个高频问题，调试人员进入该验证客户端后会优先看到这些问题。</div>
         </el-form-item>
       </el-form>
       <template #footer>

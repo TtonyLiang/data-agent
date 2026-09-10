@@ -3,11 +3,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.agent.prompts import default_prompt_templates
-from app.api.deps import require_admin
+from app.api.deps import require_data_engineer
 from app.models.prompt import PromptTemplateCreate, prompt_allows_agent_scope
 from app.services.prompt_service import get_prompt_service
 
-router = APIRouter(dependencies=[Depends(require_admin)])
+router = APIRouter(dependencies=[Depends(require_data_engineer)])
 
 
 @router.get("/list")

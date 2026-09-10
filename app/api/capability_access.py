@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query
 
-from app.api.deps import require_admin
+from app.api.deps import require_data_engineer
 from app.models.capability_access import (
     CapabilityClientCreatePayload,
     CapabilityClientStatusPayload,
@@ -47,7 +47,7 @@ async def get_capability_client(
 @router.post("/capability-clients", status_code=201)
 async def create_client(
     payload: CapabilityClientCreatePayload,
-    current_user: PublicUser = Depends(require_admin),
+    current_user: PublicUser = Depends(require_data_engineer),
 ):
     credential = await get_capability_access_service().create_client(
         payload, created_by=current_user.id
@@ -56,7 +56,7 @@ async def create_client(
 
 
 @router.get("/capability-clients")
-async def list_clients(_: PublicUser = Depends(require_admin)):
+async def list_clients(_: PublicUser = Depends(require_data_engineer)):
     return {"clients": await get_capability_access_service().list_clients()}
 
 
@@ -64,7 +64,7 @@ async def list_clients(_: PublicUser = Depends(require_admin)):
 async def update_client_status(
     client_id: int,
     payload: CapabilityClientStatusPayload,
-    _: PublicUser = Depends(require_admin),
+    _: PublicUser = Depends(require_data_engineer),
 ):
     try:
         client = await get_capability_access_service().set_client_status(
@@ -79,7 +79,7 @@ async def update_client_status(
 async def upsert_grant(
     client_id: int,
     payload: CapabilityGrantUpsertPayload,
-    current_user: PublicUser = Depends(require_admin),
+    current_user: PublicUser = Depends(require_data_engineer),
 ):
     try:
         grant = await get_capability_access_service().upsert_grant(
@@ -93,7 +93,7 @@ async def upsert_grant(
 
 
 @router.get("/capability-clients/{client_id}/grants")
-async def list_grants(client_id: int, _: PublicUser = Depends(require_admin)):
+async def list_grants(client_id: int, _: PublicUser = Depends(require_data_engineer)):
     try:
         grants = await get_capability_access_service().list_grants(client_id)
     except CapabilityClientNotFound as exc:
@@ -106,7 +106,7 @@ async def list_invocation_audits(
     client_id: int | None = Query(default=None, gt=0),
     domain_id: int | None = Query(default=None, gt=0),
     limit: int = Query(default=100, ge=1, le=500),
-    _: PublicUser = Depends(require_admin),
+    _: PublicUser = Depends(require_data_engineer),
 ):
     audits = await get_capability_access_service().list_invocation_audits(
         client_id=client_id,

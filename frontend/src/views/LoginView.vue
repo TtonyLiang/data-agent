@@ -78,7 +78,7 @@
           </el-button>
           <div class="auth-links">
             <span>还没有账号？</span>
-            <router-link to="/register">注册普通用户</router-link>
+            <router-link to="/register">注册公司内部账号</router-link>
           </div>
         </el-form>
       </section>

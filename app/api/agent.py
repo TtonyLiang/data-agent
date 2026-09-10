@@ -10,10 +10,10 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 
-from app.api.deps import get_current_user, require_admin
+from app.api.deps import require_data_engineer
 from app.db.mysql import get_management_db
 from app.models.agent import AgentCreate, AgentDomainBindingUpdate
-from app.models.user import PublicUser
+from app.models.user import PublicUser, is_technical_role
 from app.services.datasource_service import get_datasource_service
 from app.services.semantic_runtime import get_semantic_runtime_service
 from app.services.user_service import get_user_service
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/create", dependencies=[Depends(require_admin)])
+@router.post("/create", dependencies=[Depends(require_data_engineer)])
 async def create_agent(agent: AgentCreate):
     """创建智能体,可选一次性绑定数据源。"""
     db = get_management_db()
@@ -61,10 +61,10 @@ async def create_agent(agent: AgentCreate):
 
 
 @router.get("/list")
-async def list_agents(current_user: PublicUser = Depends(get_current_user)):
+async def list_agents(current_user: PublicUser = Depends(require_data_engineer)):
     """列出所有智能体(含绑定的模型配置和语义层名称)。"""
     db = get_management_db()
-    if current_user.role == "admin":
+    if is_technical_role(current_user.role):
         rows = await db.execute_query(_agent_select_sql("ORDER BY a.id DESC"))
     else:
         rows = await db.execute_query(
@@ -77,7 +77,7 @@ async def list_agents(current_user: PublicUser = Depends(get_current_user)):
     return {"agents": [_public_agent(row) for row in rows]}
 
 
-@router.put("/{agent_id}", dependencies=[Depends(require_admin)])
+@router.put("/{agent_id}", dependencies=[Depends(require_data_engineer)])
 async def update_agent(agent_id: int, agent: AgentCreate):
     """更新智能体配置。"""
     db = get_management_db()
@@ -122,7 +122,7 @@ async def update_agent(agent_id: int, agent: AgentCreate):
 
 
 @router.get("/{agent_id}")
-async def get_agent(agent_id: int, current_user: PublicUser = Depends(get_current_user)):
+async def get_agent(agent_id: int, current_user: PublicUser = Depends(require_data_engineer)):
     """获取单个智能体详情。"""
     if not await get_user_service().can_access_agent(current_user, agent_id):
         raise HTTPException(status_code=403, detail="无权访问该智能体")
@@ -139,7 +139,7 @@ async def get_agent(agent_id: int, current_user: PublicUser = Depends(get_curren
 @router.get("/{agent_id}/domain-ids")
 async def get_agent_domain_ids(
     agent_id: int,
-    current_user: PublicUser = Depends(get_current_user),
+    current_user: PublicUser = Depends(require_data_engineer),
 ):
     """获取智能体可消费的全部企业业务领域及默认领域。"""
     if not await get_user_service().can_access_agent(current_user, agent_id):
@@ -150,7 +150,7 @@ async def get_agent_domain_ids(
     return binding
 
 
-@router.put("/{agent_id}/domain-ids", dependencies=[Depends(require_admin)])
+@router.put("/{agent_id}/domain-ids", dependencies=[Depends(require_data_engineer)])
 async def update_agent_domain_ids(agent_id: int, payload: AgentDomainBindingUpdate):
     """替换智能体消费的领域集合，并同步默认领域指针。"""
     try:
@@ -164,7 +164,7 @@ async def update_agent_domain_ids(agent_id: int, payload: AgentDomainBindingUpda
     return {**result, "message": "企业业务领域绑定已保存"}
 
 
-@router.delete("/{agent_id}", dependencies=[Depends(require_admin)])
+@router.delete("/{agent_id}", dependencies=[Depends(require_data_engineer)])
 async def delete_agent(agent_id: int):
     """删除智能体运行配置，但保留企业领域、本体和决策资产。"""
     db = get_management_db()

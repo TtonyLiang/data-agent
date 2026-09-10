@@ -86,7 +86,7 @@
             </el-menu-item>
           </el-sub-menu>
           <el-sub-menu
-            v-if="isAdminUser"
+            v-if="isTechnicalUserRole"
             index="platform-management"
             tabindex="0"
             aria-label="平台管理"
@@ -162,14 +162,14 @@ import { useRoute, useRouter } from 'vue-router'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { chatRunState } from './stores/chatRun'
 import { Bell, Setting, SwitchButton } from '@element-plus/icons-vue'
-import { authState, isAdmin, isLoggedIn, logout } from './stores/auth'
+import { authState, isLoggedIn, isTechnicalUser, logout } from './stores/auth'
 
 const route = useRoute()
 const router = useRouter()
 const appMode = import.meta.env.MODE
 const envLabel = appMode === 'production' ? '生产环境' : appMode === 'development' ? '开发环境' : `${appMode} 环境`
 const envTagType = appMode === 'production' ? 'success' : 'warning'
-const isAdminUser = computed(() => isAdmin())
+const isTechnicalUserRole = computed(() => isTechnicalUser())
 const isAuthenticatedUser = computed(() => isLoggedIn())
 const isAuthPage = computed(() => route.path === '/login' || route.path === '/register')
 const displayName = computed(() => authState.currentUser?.display_name || authState.currentUser?.username || '')

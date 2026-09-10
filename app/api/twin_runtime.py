@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_current_user, require_domain_access
 from app.models.twin_runtime import TwinSyncRequest
-from app.models.user import PublicUser
+from app.models.user import PublicUser, is_technical_role
 from app.services.permission_service import (
     domain_permission_not_configured_detail,
     get_permission_service,
@@ -44,8 +44,8 @@ async def create_sync_run(
     payload: TwinSyncRequest,
     current_user: PublicUser = Depends(get_current_user),
 ):
-    if not payload.dry_run and current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="只有管理员可以启动写入型孪生同步")
+    if not payload.dry_run and not is_technical_role(current_user.role):
+        raise HTTPException(status_code=403, detail="只有技术工程师可以启动写入型孪生同步")
     access_agent_id = await require_domain_access(domain_id, current_user)
     permission_agent_id = await _resolve_access_agent(domain_id, access_agent_id)
     try:

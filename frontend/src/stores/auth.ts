@@ -15,14 +15,14 @@ export const authState = reactive({
   initialized: false,
 })
 
-export const adminOnlyPaths = new Set([
+export const adminOnlyPaths = new Set<string>()
+
+export const technicalOnlyPaths = new Set([
   '/agent',
   '/model-config',
   '/datasource',
-  '/knowledge',
-  '/system-parameter',
   '/prompt-config',
-  '/users',
+  '/system-parameter',
 ])
 
 export function isLoggedIn() {
@@ -31,6 +31,30 @@ export function isLoggedIn() {
 
 export function isAdmin() {
   return authState.currentUser?.role === 'admin'
+}
+
+export function hasCapability(capability: string) {
+  return Boolean(authState.currentUser?.capabilities?.includes(capability))
+}
+
+export function isBusinessUser() {
+  return authState.currentUser?.role === 'business'
+}
+
+export function isTechnicalUser() {
+  return authState.currentUser?.role === 'technical' || isAdmin()
+}
+
+export function canEditModel() {
+  return hasCapability('model_edit') || isAdmin()
+}
+
+export function canManageData() {
+  return hasCapability('data_source_manage') || isAdmin()
+}
+
+export function canPublishModel() {
+  return hasCapability('model_publish') || isAdmin()
 }
 
 export async function initAuth() {

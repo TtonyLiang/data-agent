@@ -13,7 +13,13 @@ from app.agent.ontology_tools import (
     build_query_capability_definitions,
     invoke_ontology_tool,
 )
-from app.api.deps import get_current_user, require_admin, require_domain_access
+from app.api.deps import (
+    get_current_user,
+    require_data_engineer,
+    require_domain_access,
+    require_model_editor,
+    require_model_publisher,
+)
 from app.models.ontology import (
     OntologyActionExecutePayload,
     OntologyActionTypePayload,
@@ -26,8 +32,11 @@ from app.models.ontology import (
     OntologyPublishPayload,
     OntologySyncPayload,
 )
-from app.models.user import PublicUser
+from app.models.user import PublicUser, is_model_editor_role, is_technical_role
 from app.services.datasource_service import get_datasource_service
+from app.services.ontology_mapping_preview_service import (
+    get_ontology_mapping_preview_service,
+)
 from app.services.ontology_service import get_ontology_service
 from app.services.permission_service import (
     domain_permission_not_configured_detail,
@@ -44,11 +53,11 @@ router = APIRouter()
 async def list_accessible_domains(current_user: PublicUser = Depends(get_current_user)):
     """List Ontology domains visible to the current user.
 
-    Administrators see all domains; business users see domains consumable by
-    an Agent explicitly granted through ``user_agent_permission``.
+    Business and technical product roles see company domains directly.  The
+    legacy ``user`` role still resolves domains through validation-Agent grants.
     """
     svc = get_semantic_runtime_service()
-    if current_user.role == "admin":
+    if is_model_editor_role(current_user.role):
         domains = await svc.list_all_domains()
     else:
         domains = []
@@ -145,10 +154,30 @@ async def list_object_types(domain_id: int, current_user: PublicUser = Depends(g
 async def upsert_object_type(
     domain_id: int,
     payload: OntologyObjectTypePayload,
-    _: PublicUser = Depends(require_admin),
+    current_user: PublicUser = Depends(require_model_editor),
 ):
     if payload.domain_id != domain_id:
         raise HTTPException(status_code=400, detail="请求路径与领域 ID 不一致")
+    if not is_technical_role(current_user.role):
+        existing = (
+            await get_ontology_service().get_object_type(domain_id, object_type_id=payload.id)
+            if payload.id
+            else None
+        )
+        existing_query = str(existing.get("source_query") or "").strip() if existing else ""
+        existing_sync = bool(existing.get("sync_enabled")) if existing else False
+        existing_limit = int(existing.get("sync_limit") or 200) if existing else 200
+        requested_query = payload.source_query.strip()
+        if (
+            payload.sync_enabled != existing_sync
+            or requested_query != existing_query
+            or int(payload.sync_limit) != existing_limit
+            or (payload.sync_enabled and requested_query)
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="对象业务定义可以由业务人员维护，业务数据映射由技术工程师维护",
+            )
     try:
         item_id = await get_ontology_service().upsert_object_type(payload)
         return {"id": item_id, "message": "对象类型已保存"}
@@ -156,9 +185,32 @@ async def upsert_object_type(
         raise bad_request(exc) from exc
 
 
+@router.post("/domains/{domain_id}/object-types/mapping-preview")
+async def preview_object_type_mapping(
+    domain_id: int,
+    payload: OntologyObjectTypePayload,
+    current_user: PublicUser = Depends(require_data_engineer),
+):
+    """Test an object source mapping without publishing or writing instances."""
+    if payload.domain_id != domain_id:
+        raise HTTPException(status_code=400, detail="请求路径与领域 ID 不一致")
+    # Keep the domain access check here so the endpoint cannot be used for a
+    # foreign domain when the role model evolves.
+    access_agent_id = await require_domain_access(domain_id, current_user)
+    try:
+        return await get_ontology_mapping_preview_service().preview(
+            payload,
+            access_agent_id=access_agent_id,
+        )
+    except PermissionError as exc:
+        raise await _permission_http_error(domain_id, exc) from exc
+    except ValueError as exc:
+        raise bad_request(exc) from exc
+
+
 @router.delete("/domains/{domain_id}/object-types/{object_type_id}")
 async def delete_object_type(
-    domain_id: int, object_type_id: int, _: PublicUser = Depends(require_admin)
+    domain_id: int, object_type_id: int, _: PublicUser = Depends(require_model_editor)
 ):
     deleted = await get_ontology_service().delete_object_type(domain_id, object_type_id)
     if not deleted:
@@ -179,7 +231,7 @@ async def list_link_types(domain_id: int, current_user: PublicUser = Depends(get
 async def upsert_link_type(
     domain_id: int,
     payload: OntologyLinkTypePayload,
-    _: PublicUser = Depends(require_admin),
+    _: PublicUser = Depends(require_model_editor),
 ):
     if payload.domain_id != domain_id:
         raise HTTPException(status_code=400, detail="请求路径与领域 ID 不一致")
@@ -192,7 +244,7 @@ async def upsert_link_type(
 
 @router.delete("/domains/{domain_id}/link-types/{link_type_id}")
 async def delete_link_type(
-    domain_id: int, link_type_id: int, _: PublicUser = Depends(require_admin)
+    domain_id: int, link_type_id: int, _: PublicUser = Depends(require_model_editor)
 ):
     deleted = await get_ontology_service().delete_link_type(domain_id, link_type_id)
     if not deleted:
@@ -359,7 +411,7 @@ async def run_agent_tool(
 async def upsert_action_type(
     domain_id: int,
     payload: OntologyActionTypePayload,
-    _: PublicUser = Depends(require_admin),
+    _: PublicUser = Depends(require_model_editor),
 ):
     if payload.domain_id != domain_id:
         raise HTTPException(status_code=400, detail="请求路径与领域 ID 不一致")
@@ -372,7 +424,7 @@ async def upsert_action_type(
 
 @router.delete("/domains/{domain_id}/action-types/{action_type_id}")
 async def delete_action_type(
-    domain_id: int, action_type_id: int, _: PublicUser = Depends(require_admin)
+    domain_id: int, action_type_id: int, _: PublicUser = Depends(require_model_editor)
 ):
     deleted = await get_ontology_service().delete_action_type(domain_id, action_type_id)
     if not deleted:
@@ -381,7 +433,7 @@ async def delete_action_type(
 
 
 @router.post("/domains/{domain_id}/validate")
-async def validate_domain(domain_id: int, _: PublicUser = Depends(require_admin)):
+async def validate_domain(domain_id: int, _: PublicUser = Depends(require_model_editor)):
     try:
         return await get_ontology_service().validate_domain(domain_id)
     except ValueError as exc:
@@ -392,7 +444,7 @@ async def validate_domain(domain_id: int, _: PublicUser = Depends(require_admin)
 async def publish_domain(
     domain_id: int,
     payload: OntologyPublishPayload,
-    current_user: PublicUser = Depends(require_admin),
+    current_user: PublicUser = Depends(require_model_publisher),
 ):
     try:
         result = await get_ontology_service().publish_domain(
@@ -418,7 +470,7 @@ async def list_releases(domain_id: int, current_user: PublicUser = Depends(get_c
 async def export_bundle(
     domain_id: int,
     include_instances: bool = True,
-    _: PublicUser = Depends(require_admin),
+    _: PublicUser = Depends(require_model_editor),
 ):
     try:
         return await get_ontology_service().export_bundle(domain_id, include_instances)
@@ -430,7 +482,7 @@ async def export_bundle(
 async def import_bundle(
     domain_id: int,
     payload: OntologyImportPayload,
-    _: PublicUser = Depends(require_admin),
+    _: PublicUser = Depends(require_model_editor),
 ):
     try:
         counts = await get_ontology_service().import_bundle(
@@ -448,8 +500,8 @@ async def sync_objects_from_datasource(
     current_user: PublicUser = Depends(get_current_user),
 ):
     """Compatibility adapter for governed twin-runtime write synchronization."""
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="只有管理员可以启动写入型孪生同步")
+    if not is_technical_role(current_user.role):
+        raise HTTPException(status_code=403, detail="只有技术工程师可以启动写入型孪生同步")
     access_agent_id = await require_domain_access(domain_id, current_user)
     permission_agent_id = await _resolve_data_access_agent(domain_id, access_agent_id)
     try:
@@ -502,7 +554,7 @@ async def list_objects(
 async def upsert_object(
     domain_id: int,
     payload: OntologyObjectPayload,
-    _: PublicUser = Depends(require_admin),
+    _: PublicUser = Depends(require_data_engineer),
 ):
     if payload.domain_id != domain_id:
         raise HTTPException(status_code=400, detail="请求路径与领域 ID 不一致")
@@ -514,7 +566,11 @@ async def upsert_object(
 
 
 @router.delete("/domains/{domain_id}/objects/{object_id}")
-async def delete_object(domain_id: int, object_id: int, _: PublicUser = Depends(require_admin)):
+async def delete_object(
+    domain_id: int,
+    object_id: int,
+    _: PublicUser = Depends(require_data_engineer),
+):
     deleted = await get_ontology_service().delete_object(domain_id, object_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="对象实例不存在")
@@ -541,7 +597,7 @@ async def list_links(domain_id: int, current_user: PublicUser = Depends(get_curr
 async def create_link(
     domain_id: int,
     payload: OntologyLinkPayload,
-    _: PublicUser = Depends(require_admin),
+    _: PublicUser = Depends(require_data_engineer),
 ):
     if payload.domain_id != domain_id:
         raise HTTPException(status_code=400, detail="请求路径与领域 ID 不一致")
@@ -553,7 +609,7 @@ async def create_link(
 
 
 @router.delete("/domains/{domain_id}/links/{link_id}")
-async def delete_link(domain_id: int, link_id: int, _: PublicUser = Depends(require_admin)):
+async def delete_link(domain_id: int, link_id: int, _: PublicUser = Depends(require_data_engineer)):
     deleted = await get_ontology_service().delete_link(domain_id, link_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="关系实例不存在")
@@ -591,7 +647,7 @@ async def list_action_runs(
 ):
     access_agent_id = await require_domain_access(domain_id, current_user)
     permission_agent_id = await _resolve_data_access_agent(domain_id, access_agent_id)
-    user_id = None if current_user.role == "admin" else current_user.id
+    user_id = None if is_technical_role(current_user.role) else current_user.id
     try:
         runs = await get_ontology_service().list_action_runs(
             domain_id,

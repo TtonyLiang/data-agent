@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.deps import require_admin
+from app.api.deps import require_data_engineer
 from app.models.system_parameter import SystemParameterUpdate
 from app.services.system_parameter_service import get_system_parameter_service
 
-router = APIRouter(dependencies=[Depends(require_admin)])
+router = APIRouter(dependencies=[Depends(require_data_engineer)])
 
 
 @router.get("/parameters")

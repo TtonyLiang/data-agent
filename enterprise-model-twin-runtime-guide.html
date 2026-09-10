@@ -3,22 +3,25 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="用业务和数据人员都能理解的方式，说明问渠企业模型与孪生运行之间的业务顺序、职责边界和使用方法。" />
-  <title>企业模型与孪生运行：业务顺序与使用说明</title>
+  <meta name="description" content="问渠 WenQu 全平台功能模块、角色分工、业务流程和数据链路说明。" />
+  <title>问渠 WenQu：全平台功能与业务链路</title>
   <style>
     :root {
       --page: #f3f6fa;
-      --surface: #fbfcfe;
-      --surface-strong: #eef4ff;
-      --ink: #182235;
-      --muted: #5b687a;
-      --subtle: #788497;
-      --line: #d6deea;
+      --surface: #ffffff;
+      --surface-soft: #eef4ff;
+      --surface-muted: #f7f9fc;
+      --ink: #172235;
+      --muted: #5c697b;
+      --subtle: #788598;
+      --line: #d8e0eb;
       --accent: #245fdb;
       --accent-dark: #1748ad;
       --accent-soft: #e7efff;
-      --radius: 14px;
-      --shadow: 0 18px 45px rgba(47, 66, 101, 0.09);
+      --success: #19724b;
+      --warning: #9a6400;
+      --radius: 12px;
+      --shadow: 0 16px 40px rgba(47, 66, 101, 0.08);
     }
 
     * { box-sizing: border-box; }
@@ -35,11 +38,10 @@
     }
 
     button, a { font: inherit; }
-
     a { color: inherit; }
 
     .page-shell {
-      width: min(1180px, calc(100% - 48px));
+      width: min(1180px, calc(100% - 56px));
       margin: 0 auto;
     }
 
@@ -47,8 +49,8 @@
       position: sticky;
       top: 0;
       z-index: 10;
-      border-bottom: 1px solid rgba(214, 222, 234, 0.88);
-      background: rgba(251, 252, 254, 0.94);
+      border-bottom: 1px solid rgba(216, 224, 235, 0.9);
+      background: rgba(255, 255, 255, 0.95);
       backdrop-filter: blur(12px);
     }
 
@@ -73,9 +75,10 @@
       display: grid;
       place-items: center;
       flex: 0 0 auto;
-      border-radius: 10px;
+      border-radius: 9px;
       background: var(--accent);
       color: #f8fbff;
+      font-size: 13px;
       font-weight: 760;
       letter-spacing: -0.02em;
     }
@@ -100,9 +103,9 @@
 
     .print-button {
       min-height: 38px;
-      padding: 0 16px;
+      padding: 0 15px;
       border: 1px solid var(--accent);
-      border-radius: 9px;
+      border-radius: 8px;
       background: var(--accent);
       color: #f8fbff;
       cursor: pointer;
@@ -113,26 +116,26 @@
     .print-button:active { transform: translateY(1px); }
     .print-button:focus-visible { outline: 3px solid rgba(36, 95, 219, 0.28); outline-offset: 2px; }
 
-    main { padding: 54px 0 72px; }
+    main { padding: 48px 0 72px; }
 
     .hero {
       display: grid;
-      grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
-      align-items: end;
-      gap: 54px;
-      padding: 48px;
+      grid-template-columns: minmax(0, 1.16fr) minmax(300px, 0.84fr);
+      align-items: stretch;
+      gap: 42px;
+      padding: 44px;
       border: 1px solid var(--line);
       border-radius: var(--radius);
       background:
-        linear-gradient(135deg, rgba(36, 95, 219, 0.09), transparent 52%),
+        linear-gradient(135deg, rgba(36, 95, 219, 0.09), transparent 54%),
         var(--surface);
       box-shadow: var(--shadow);
     }
 
     .hero h1 {
-      max-width: 760px;
+      max-width: 700px;
       margin: 0;
-      font-size: clamp(34px, 5vw, 60px);
+      font-size: clamp(34px, 5vw, 58px);
       line-height: 1.08;
       letter-spacing: -0.045em;
     }
@@ -140,18 +143,19 @@
     .hero h1 span { color: var(--accent); }
 
     .hero-lead {
-      max-width: 680px;
-      margin: 22px 0 0;
+      max-width: 650px;
+      margin: 20px 0 0;
       color: var(--muted);
       font-size: clamp(17px, 2vw, 20px);
-      line-height: 1.75;
+      line-height: 1.72;
     }
 
     .hero-summary {
+      align-self: end;
       padding: 24px;
       border-left: 4px solid var(--accent);
-      background: rgba(231, 239, 255, 0.72);
-      border-radius: 0 12px 12px 0;
+      border-radius: 0 10px 10px 0;
+      background: rgba(231, 239, 255, 0.76);
     }
 
     .hero-summary strong {
@@ -166,19 +170,34 @@
       font-size: 14px;
     }
 
-    .hero-meta {
+    .hero-facts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
       margin-top: 16px;
+    }
+
+    .hero-facts span {
+      padding: 5px 9px;
+      border: 1px solid rgba(36, 95, 219, 0.25);
+      border-radius: 6px;
+      color: var(--accent-dark);
+      font-size: 12px;
+      font-weight: 680;
+      background: rgba(255, 255, 255, 0.56);
+    }
+
+    .hero-meta {
+      margin-top: 14px;
       color: var(--subtle);
       font-size: 12px;
     }
 
-    .section {
-      margin-top: 68px;
-    }
+    .section { margin-top: 64px; }
 
     .section-heading {
-      max-width: 780px;
-      margin-bottom: 26px;
+      max-width: 820px;
+      margin-bottom: 24px;
     }
 
     .section-heading h2 {
@@ -189,251 +208,431 @@
     }
 
     .section-heading p {
-      margin: 12px 0 0;
+      margin: 11px 0 0;
       color: var(--muted);
       font-size: 16px;
     }
 
-    .module-contrast {
+    .platform-map {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      overflow: hidden;
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      background: var(--surface);
-      box-shadow: var(--shadow);
-    }
-
-    .module-panel {
-      min-height: 290px;
-      padding: 34px;
-    }
-
-    .module-panel + .module-panel { border-left: 1px solid var(--line); }
-
-    .module-panel.model { background: var(--surface-strong); }
-
-    .module-index {
-      display: inline-flex;
-      min-width: 34px;
-      height: 28px;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 24px;
-      border: 1px solid rgba(36, 95, 219, 0.36);
-      border-radius: 7px;
-      color: var(--accent-dark);
-      font-size: 12px;
-      font-weight: 720;
-    }
-
-    .module-panel h3 {
-      margin: 0;
-      font-size: 27px;
-      letter-spacing: -0.025em;
-    }
-
-    .module-answer {
-      margin: 8px 0 24px;
-      color: var(--accent-dark);
-      font-size: 17px;
-      font-weight: 680;
-    }
-
-    .module-panel dl {
-      display: grid;
-      grid-template-columns: 76px 1fr;
-      gap: 13px 18px;
-      margin: 0;
-      font-size: 14px;
-    }
-
-    .module-panel dt { color: var(--subtle); }
-    .module-panel dd { margin: 0; color: var(--muted); }
-
-    .flow-wrap {
-      padding: 32px;
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      background: var(--surface);
-      box-shadow: var(--shadow);
-    }
-
-    .flow-groups {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 120px minmax(0, 0.72fr);
-      gap: 20px;
+      grid-template-columns: repeat(8, minmax(112px, 1fr));
+      gap: 0;
       align-items: stretch;
+      overflow-x: auto;
+      padding: 2px;
     }
 
-    .flow-side {
-      display: grid;
-      gap: 12px;
-    }
-
-    .flow-side-title {
-      margin: 0 0 2px;
-      color: var(--accent-dark);
-      font-size: 13px;
-      font-weight: 760;
-    }
-
-    .flow-step {
-      display: grid;
-      grid-template-columns: 38px 1fr;
-      gap: 14px;
-      padding: 18px;
+    .map-node {
+      position: relative;
+      min-width: 112px;
+      min-height: 148px;
+      padding: 18px 15px;
       border: 1px solid var(--line);
-      border-radius: 11px;
-      background: #f9fbfe;
+      background: var(--surface);
     }
 
-    .flow-step-number {
-      width: 38px;
-      height: 38px;
+    .map-node:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+    .map-node:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+    .map-node + .map-node { border-left: 0; }
+
+    .map-node.core { background: var(--surface-soft); }
+
+    .map-node::after {
+      content: "→";
+      position: absolute;
+      top: 50%;
+      right: -10px;
+      z-index: 1;
+      width: 19px;
+      height: 19px;
       display: grid;
       place-items: center;
-      border-radius: 9px;
-      background: var(--accent-soft);
+      transform: translateY(-50%);
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      background: var(--surface);
+      color: var(--accent);
+      font-size: 12px;
+    }
+
+    .map-node:last-child::after { display: none; }
+
+    .map-node-label {
+      display: inline-block;
+      margin-bottom: 18px;
       color: var(--accent-dark);
+      font-size: 12px;
       font-weight: 760;
     }
 
-    .flow-step h3 {
+    .map-node h3 {
       margin: 0;
       font-size: 16px;
+      line-height: 1.35;
     }
 
-    .flow-step p {
-      margin: 4px 0 0;
-      color: var(--muted);
-      font-size: 13px;
-    }
-
-    .release-gate {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100%;
-      padding: 22px 14px;
-      border: 1px solid rgba(36, 95, 219, 0.35);
-      border-radius: 12px;
-      background: var(--accent-soft);
-      text-align: center;
-    }
-
-    .release-gate strong {
-      color: var(--accent-dark);
-      font-size: 17px;
-    }
-
-    .release-gate p {
+    .map-node p {
       margin: 8px 0 0;
       color: var(--muted);
       font-size: 12px;
+      line-height: 1.5;
     }
 
-    .release-arrow {
-      margin: 18px 0;
-      color: var(--accent);
-      font-size: 26px;
-      line-height: 1;
-    }
-
-    .handoff-note {
-      margin: 24px 0 0;
-      padding: 16px 18px;
+    .map-caption {
+      margin: 15px 0 0;
+      padding: 13px 16px;
       border-left: 4px solid var(--accent);
-      background: #f3f7ff;
+      background: var(--surface);
       color: var(--muted);
       font-size: 14px;
     }
 
     .role-grid {
       display: grid;
-      grid-template-columns: 0.85fr 1.15fr;
-      gap: 26px;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
     }
 
-    .role-intro {
-      padding: 30px;
+    .role-card {
+      padding: 28px;
+      border: 1px solid var(--line);
       border-radius: var(--radius);
-      background: var(--accent);
-      color: #f8fbff;
+      background: var(--surface);
+      box-shadow: var(--shadow);
     }
 
-    .role-intro h3 {
+    .role-card.technical { background: var(--surface-soft); }
+
+    .role-card h3 {
       margin: 0;
-      font-size: 26px;
-      line-height: 1.3;
+      font-size: 24px;
+      letter-spacing: -0.025em;
     }
 
-    .role-intro p {
-      margin: 14px 0 0;
-      color: rgba(248, 251, 255, 0.86);
-      font-size: 15px;
+    .role-card > p {
+      margin: 9px 0 20px;
+      color: var(--muted);
+      font-size: 14px;
     }
 
     .role-list {
       display: grid;
-      gap: 12px;
+      gap: 11px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
     }
 
-    .role-item {
+    .role-list li {
       display: grid;
-      grid-template-columns: 116px 1fr;
-      gap: 20px;
-      padding: 20px 22px;
+      grid-template-columns: 9px 1fr;
+      gap: 11px;
+      align-items: start;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .role-list li::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      margin-top: 8px;
+      border-radius: 2px;
+      background: var(--accent);
+    }
+
+    .role-note {
+      margin: 18px 0 0;
+      color: var(--subtle);
+      font-size: 13px;
+    }
+
+    .module-group + .module-group { margin-top: 28px; }
+
+    .group-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 13px;
+    }
+
+    .group-header h3 {
+      margin: 0;
+      font-size: 21px;
+    }
+
+    .group-header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .module-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .module-card {
+      min-height: 190px;
+      padding: 21px;
       border: 1px solid var(--line);
-      border-radius: 11px;
+      border-radius: 10px;
       background: var(--surface);
     }
 
-    .role-item strong { color: var(--accent-dark); }
-    .role-item p { margin: 0; color: var(--muted); font-size: 14px; }
+    .module-card.core { background: var(--surface-soft); }
 
-    .example-board {
+    .module-card .module-kind {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 0 7px;
+      border: 1px solid rgba(36, 95, 219, 0.28);
+      border-radius: 5px;
+      color: var(--accent-dark);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .module-card h4 {
+      margin: 13px 0 7px;
+      font-size: 18px;
+    }
+
+    .module-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .module-card small {
+      display: block;
+      margin-top: 12px;
+      color: var(--subtle);
+      font-size: 11px;
+    }
+
+    .support-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .support-card {
+      min-height: 150px;
+      padding: 18px;
+      border-top: 3px solid var(--line);
+      background: var(--surface-muted);
+    }
+
+    .support-card h4 { margin: 0 0 7px; font-size: 16px; }
+    .support-card p { margin: 0; color: var(--muted); font-size: 13px; }
+
+    .timeline {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(280px, 0.72fr);
-      gap: 24px;
+      gap: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .timeline-row {
+      display: grid;
+      grid-template-columns: 52px 190px minmax(0, 1fr) 240px;
+      gap: 18px;
+      align-items: center;
+      min-height: 88px;
+      padding: 17px 21px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .timeline-row:last-child { border-bottom: 0; }
+
+    .timeline-index {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--accent-soft);
+      color: var(--accent-dark);
+      font-weight: 760;
+    }
+
+    .timeline-module {
+      color: var(--accent-dark);
+      font-size: 14px;
+      font-weight: 720;
+    }
+
+    .timeline-row strong { font-size: 15px; }
+
+    .timeline-row p {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .timeline-output {
+      color: var(--subtle);
+      font-size: 12px;
+    }
+
+    .handoff-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .handoff-card {
+      padding: 21px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+    }
+
+    .handoff-card h3 {
+      margin: 0;
+      font-size: 17px;
+    }
+
+    .handoff-card h3 span {
+      color: var(--accent);
+      padding: 0 5px;
+    }
+
+    .handoff-card p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .capability-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .capability-card {
+      padding: 23px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+    }
+
+    .capability-card h3 { margin: 0; font-size: 20px; }
+    .capability-card p { margin: 9px 0 0; color: var(--muted); font-size: 13px; }
+
+    .capability-status {
+      display: inline-block;
+      margin-top: 16px;
+      color: var(--success);
+      font-size: 12px;
+      font-weight: 720;
+    }
+
+    .capability-status.planned { color: var(--warning); }
+
+    .callout {
+      margin: 18px 0 0;
+      padding: 16px 18px;
+      border-left: 4px solid var(--accent);
+      background: var(--surface-soft);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .storage-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .storage-card {
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+    }
+
+    .storage-card h3 { margin: 0; font-size: 18px; }
+    .storage-card p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+
+    .data-chain {
+      margin-top: 16px;
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+    }
+
+    .data-chain strong { font-size: 15px; }
+
+    .data-chain p {
+      margin: 8px 0 0;
+      color: var(--accent-dark);
+      font-size: 14px;
+      line-height: 1.85;
+    }
+
+    .two-paths {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .path-card {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface-muted);
+    }
+
+    .path-card strong { display: block; font-size: 15px; }
+    .path-card p { margin: 7px 0 0; color: var(--muted); font-size: 13px; }
+
+    .example-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(300px, 0.9fr);
+      gap: 18px;
     }
 
     .example-story,
-    .result-panel {
-      padding: 30px;
+    .example-result {
+      padding: 25px;
       border: 1px solid var(--line);
       border-radius: var(--radius);
       background: var(--surface);
     }
 
     .example-story h3,
-    .result-panel h3 { margin: 0 0 18px; font-size: 21px; }
+    .example-result h3 { margin: 0 0 15px; font-size: 20px; }
 
     .story-line {
       display: grid;
-      grid-template-columns: 104px 1fr;
-      gap: 18px;
-      padding: 15px 0;
+      grid-template-columns: 112px 1fr;
+      gap: 16px;
+      padding: 13px 0;
       border-bottom: 1px solid var(--line);
     }
 
     .story-line:last-child { border-bottom: 0; }
     .story-line strong { color: var(--accent-dark); font-size: 13px; }
-    .story-line p { margin: 0; color: var(--muted); font-size: 14px; }
+    .story-line p { margin: 0; color: var(--muted); font-size: 13px; }
 
     .result-chain {
       display: grid;
-      gap: 10px;
+      gap: 9px;
     }
 
     .result-chain div {
-      padding: 14px 16px;
-      border-radius: 9px;
+      padding: 13px 15px;
+      border-radius: 8px;
       background: var(--accent-soft);
       color: var(--accent-dark);
-      font-size: 14px;
-      font-weight: 680;
+      font-size: 13px;
+      font-weight: 700;
       text-align: center;
     }
 
@@ -446,88 +645,128 @@
       line-height: 1.45;
     }
 
-    code {
-      padding: 2px 5px;
-      border-radius: 5px;
-      background: #edf2f9;
-      color: var(--accent-dark);
-      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-      font-size: 0.92em;
-    }
-
     .result-chain span {
       color: var(--accent);
       text-align: center;
       line-height: 1;
     }
 
-    .why-grid {
-      display: grid;
-      grid-template-columns: 1.15fr 0.85fr;
-      gap: 24px;
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #edf2f9;
+      color: var(--accent-dark);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.92em;
     }
 
-    .why-main {
-      padding: 32px;
-      border-radius: var(--radius);
-      background: var(--ink);
-      color: #f4f7fb;
+    .usage-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px 18px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
     }
 
-    .why-main h3 { margin: 0; font-size: 27px; }
-    .why-main p { margin: 14px 0 0; color: #cbd5e4; }
-
-    .why-points {
+    .usage-list li {
       display: grid;
+      grid-template-columns: 28px 1fr;
       gap: 12px;
-    }
-
-    .why-point {
-      padding: 19px 20px;
+      align-items: start;
+      padding: 16px;
       border: 1px solid var(--line);
-      border-radius: 11px;
+      border-radius: 9px;
       background: var(--surface);
     }
 
-    .why-point strong { display: block; color: var(--accent-dark); }
-    .why-point span { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; }
+    .usage-list b {
+      width: 26px;
+      height: 26px;
+      display: grid;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--accent-soft);
+      color: var(--accent-dark);
+      font-size: 12px;
+    }
+
+    .usage-list strong { display: block; font-size: 14px; }
+    .usage-list span { display: block; margin-top: 3px; color: var(--muted); font-size: 13px; }
+
+    .progress-table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .progress-table th,
+    .progress-table td {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 13px;
+    }
+
+    .progress-table tr:last-child td { border-bottom: 0; }
+    .progress-table th { color: var(--subtle); font-size: 12px; font-weight: 700; background: var(--surface-muted); }
+    .progress-table td:first-child { width: 22%; color: var(--accent-dark); font-weight: 720; }
+    .progress-table td:nth-child(2) { width: 24%; color: var(--muted); }
+    .progress-table td:last-child { color: var(--muted); }
+
+    .status {
+      display: inline-block;
+      padding: 3px 7px;
+      border-radius: 5px;
+      font-size: 11px;
+      font-weight: 720;
+    }
+
+    .status.done { background: #e7f5ed; color: var(--success); }
+    .status.partial { background: #fff3d8; color: var(--warning); }
+    .status.next { background: #edf0f5; color: var(--muted); }
 
     .boundary {
-      padding: 30px;
+      padding: 23px;
       border: 1px solid var(--line);
       border-radius: var(--radius);
       background: var(--surface);
     }
 
-    .boundary h3 { margin: 0 0 20px; font-size: 21px; }
+    .boundary h3 { margin: 0 0 15px; font-size: 20px; }
 
     .boundary-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 18px 30px;
+      gap: 12px 24px;
     }
 
     .boundary-item {
       display: grid;
-      grid-template-columns: 16px 1fr;
-      gap: 12px;
+      grid-template-columns: 10px 1fr;
+      gap: 10px;
       align-items: start;
       color: var(--muted);
-      font-size: 14px;
+      font-size: 13px;
     }
 
     .boundary-item::before {
       content: "";
-      width: 10px;
-      height: 10px;
+      width: 8px;
+      height: 8px;
       margin-top: 7px;
       border: 2px solid var(--accent);
-      border-radius: 3px;
+      border-radius: 2px;
     }
 
     .takeaway {
-      margin-top: 68px;
-      padding: 42px;
+      margin-top: 64px;
+      padding: 38px 32px;
       border-radius: var(--radius);
       background: var(--accent);
       color: #f8fbff;
@@ -536,56 +775,79 @@
     }
 
     .takeaway h2 {
-      max-width: 920px;
+      max-width: 900px;
       margin: 0 auto;
-      font-size: clamp(27px, 4vw, 42px);
+      font-size: clamp(26px, 4vw, 40px);
       line-height: 1.3;
       letter-spacing: -0.025em;
     }
 
     .takeaway p {
       max-width: 760px;
-      margin: 16px auto 0;
-      color: rgba(248, 251, 255, 0.88);
-      font-size: 15px;
+      margin: 14px auto 0;
+      color: rgba(248, 251, 255, 0.9);
+      font-size: 14px;
     }
 
     footer {
-      padding: 28px 0 40px;
+      padding: 26px 0 38px;
       color: var(--subtle);
       font-size: 12px;
       text-align: center;
     }
 
-    @media (max-width: 860px) {
-      .page-shell { width: min(100% - 28px, 720px); }
+    @media (max-width: 980px) {
+      .page-shell { width: min(100% - 36px, 760px); }
+      .hero { grid-template-columns: 1fr; gap: 25px; padding: 32px 26px; }
+      .hero-summary { align-self: start; }
+      .module-grid,
+      .support-grid,
+      .capability-grid,
+      .storage-grid { grid-template-columns: 1fr 1fr; }
+      .timeline-row { grid-template-columns: 46px 160px minmax(0, 1fr); }
+      .timeline-output { grid-column: 3; }
+    }
+
+    @media (max-width: 700px) {
+      .page-shell { width: min(100% - 28px, 560px); }
       .topbar-inner { min-height: 62px; }
       .topbar-actions span { display: none; }
       main { padding-top: 24px; }
-      .hero { grid-template-columns: 1fr; gap: 28px; padding: 30px 24px; }
-      .module-contrast,
+      .brand-copy span { display: none; }
+      .hero h1 { font-size: 35px; }
+      .section { margin-top: 48px; }
       .role-grid,
-      .example-board,
-      .why-grid,
+      .module-grid,
+      .support-grid,
+      .capability-grid,
+      .storage-grid,
+      .handoff-grid,
+      .example-grid,
+      .two-paths,
+      .usage-list,
       .boundary-grid { grid-template-columns: 1fr; }
-      .module-panel + .module-panel { border-left: 0; border-top: 1px solid var(--line); }
-      .flow-groups { grid-template-columns: 1fr; }
-      .release-gate { min-height: auto; }
-      .release-arrow { transform: rotate(90deg); }
-      .role-item { grid-template-columns: 1fr; gap: 6px; }
+      .group-header { display: block; }
+      .group-header p { margin-top: 4px; }
+      .timeline-row { grid-template-columns: 40px 1fr; gap: 7px 13px; }
+      .timeline-module { grid-column: 2; }
+      .timeline-row strong,
+      .timeline-row p,
+      .timeline-output { grid-column: 2; }
+      .story-line { grid-template-columns: 1fr; gap: 3px; }
+      .progress-table { display: block; overflow-x: auto; white-space: nowrap; }
+      .progress-table td { white-space: normal; min-width: 170px; }
+      .progress-table td:first-child { min-width: 145px; }
+      .map-caption { font-size: 13px; }
     }
 
     @media (max-width: 520px) {
-      .brand-copy span { display: none; }
-      .hero h1 { font-size: 34px; }
-      .section { margin-top: 48px; }
-      .flow-wrap,
-      .module-panel,
+      .print-button { padding: 0 11px; font-size: 12px; }
+      .hero { padding: 25px 21px; }
+      .role-card,
       .example-story,
-      .result-panel,
-      .why-main,
-      .boundary { padding: 22px; }
-      .takeaway { padding: 30px 22px; }
+      .example-result,
+      .boundary { padding: 21px; }
+      .takeaway { padding: 30px 21px; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -598,10 +860,13 @@
       .topbar { position: static; }
       .print-button { display: none; }
       .page-shell { width: 100%; max-width: none; }
-      main { padding: 20px 0; }
-      .hero, .flow-wrap, .module-contrast, .takeaway { box-shadow: none; }
-      .section { break-inside: avoid; margin-top: 36px; }
-      .takeaway { background: #e7efff; color: var(--ink); }
+      main { padding: 18px 0; }
+      .hero,
+      .timeline,
+      .progress-table,
+      .takeaway { box-shadow: none; }
+      .section { break-inside: avoid; margin-top: 34px; }
+      .takeaway { background: var(--surface-soft); color: var(--ink); }
       .takeaway p { color: var(--muted); }
     }
   </style>
@@ -617,7 +882,7 @@
         </div>
       </div>
       <div class="topbar-actions">
-        <span>企业模型与孪生运行使用说明</span>
+        <span>全平台功能与业务链路</span>
         <button class="print-button" type="button" onclick="window.print()">打印或导出 PDF</button>
       </div>
     </div>
@@ -626,232 +891,415 @@
   <main class="page-shell">
     <section class="hero" aria-labelledby="page-title">
       <div>
-        <h1 id="page-title">先把业务讲清楚，<span>再让数据运行起来</span></h1>
-        <p class="hero-lead">企业模型负责定义业务，孪生运行负责把数据库记录变成可识别、可关联、可追踪的业务对象。</p>
+        <h1 id="page-title">让企业业务成为 <span>AI 能用的共同语言</span></h1>
+        <p class="hero-lead">问渠把业务定义、真实数据和可调用能力串成一条链，供不同 Agent 和业务应用使用同一套企业模型。</p>
       </div>
       <aside class="hero-summary">
-        <strong>一句话理解</strong>
-        <p>业务人员说明数据代表什么，数据库人员说明数据在哪里，平台把两者组成可供 Agent 使用的企业数字孪生。</p>
-        <div class="hero-meta">更新日期：2026年9月8日</div>
+        <strong>先记住三个判断</strong>
+        <p>平台服务公司内部的业务和技术协作。业务语义是企业资产，数据库是数据来源，Agent 是能力消费者。</p>
+        <div class="hero-facts" aria-label="平台基本信息">
+          <span>两个平台角色</span>
+          <span>六个底座节点</span>
+          <span>单公司部署</span>
+        </div>
+        <div class="hero-meta">内容基准：2026年9月9日</div>
       </aside>
     </section>
 
-    <section class="section" aria-labelledby="modules-title">
+    <section class="section" id="platform-map" aria-labelledby="map-title">
       <div class="section-heading">
-        <h2 id="modules-title">两个模块分别回答什么问题</h2>
-        <p>它们不是两个互相独立的功能。企业模型是定义，孪生运行是定义落到真实数据后的运行结果。</p>
+        <h2 id="map-title">一张图看懂全平台</h2>
+        <p>平台不是两个孤立页面，而是从业务范围到能力消费的连续链路。下面八个节点把所有主要功能放在同一张图里。</p>
       </div>
-      <div class="module-contrast">
-        <article class="module-panel model">
-          <span class="module-index">定义</span>
-          <h3>企业模型</h3>
-          <p class="module-answer">回答：企业业务应该怎样理解？</p>
-          <dl>
-            <dt>定义</dt>
-            <dd>客户、贷款申请、账户、关系、状态、动作、指标和规则。</dd>
-            <dt>连接</dt>
-            <dd>把业务术语映射到数据库表、字段、关联路径和只读查询。</dd>
-            <dt>产出</dt>
-            <dd>经过校验并可激活的统一企业模型版本。</dd>
-          </dl>
+      <div class="platform-map" aria-label="平台完整业务链路">
+        <article class="map-node core">
+          <span class="map-node-label">范围</span>
+          <h3>治理与业务领域</h3>
+          <p>定业务边界、职责和访问范围。</p>
         </article>
-        <article class="module-panel">
-          <span class="module-index">运行</span>
-          <h3>孪生运行</h3>
-          <p class="module-answer">回答：企业当前实际发生了什么？</p>
-          <dl>
-            <dt>读取</dt>
-            <dd>按照已激活模型和领域权限，读取业务数据库中的真实记录。</dd>
-            <dt>组织</dt>
-            <dd>形成对象实例、关系实例、当前状态、来源和动作记录。</dd>
-            <dt>产出</dt>
-            <dd>可查询、可追踪、可供 Agent 和业务应用消费的当前业务视图。</dd>
-          </dl>
+        <article class="map-node core">
+          <span class="map-node-label">来源</span>
+          <h3>数据源与权限</h3>
+          <p>连接数据库，采集 Schema，配置白名单和脱敏。</p>
+        </article>
+        <article class="map-node core">
+          <span class="map-node-label">理解</span>
+          <h3>企业模型中心</h3>
+          <p>统一维护 Ontology、查询语义和数据映射。</p>
+        </article>
+        <article class="map-node core">
+          <span class="map-node-label">固定</span>
+          <h3>版本发布</h3>
+          <p>校验并激活一套可运行的企业模型版本。</p>
+        </article>
+        <article class="map-node core">
+          <span class="map-node-label">运行</span>
+          <h3>孪生运行时</h3>
+          <p>同步对象、关系、当前状态和来源。</p>
+        </article>
+        <article class="map-node core">
+          <span class="map-node-label">出口</span>
+          <h3>能力发布中心</h3>
+          <p>发布 Query、Decision、Action 能力合同。</p>
+        </article>
+        <article class="map-node">
+          <span class="map-node-label">消费</span>
+          <h3>Agent 与业务应用</h3>
+          <p>按授权调用能力，服务具体业务场景。</p>
+        </article>
+        <article class="map-node">
+          <span class="map-node-label">闭环</span>
+          <h3>反馈与审计</h3>
+          <p>复核结果、保留证据，推动模型持续修正。</p>
         </article>
       </div>
+      <p class="map-caption"><strong>贯穿全程：</strong>权限决定谁能看、谁能做；版本决定依据哪套定义；追踪记录决定结果能否解释和复盘。</p>
     </section>
 
-    <section class="section" aria-labelledby="flow-title">
+    <section class="section" id="roles" aria-labelledby="roles-title">
       <div class="section-heading">
-        <h2 id="flow-title">正确的业务顺序</h2>
-        <p>不能先同步数据库，再回头猜数据代表什么。必须先形成业务定义和发布版本，运行时才知道如何读取、关联和保护数据。</p>
-      </div>
-      <div class="flow-wrap">
-        <div class="flow-groups">
-          <div class="flow-side">
-            <p class="flow-side-title">企业模型：先完成业务和数据定义</p>
-            <article class="flow-step">
-              <div class="flow-step-number">1</div>
-              <div>
-                <h3>确定业务领域</h3>
-                <p>明确本次要梳理的是贷款、财税、供应链，还是其他业务范围。</p>
-              </div>
-            </article>
-            <article class="flow-step">
-              <div class="flow-step-number">2</div>
-              <div>
-                <h3>定义业务本体</h3>
-                <p>业务人员确认对象、关系、状态和动作，不从表名反推业务。</p>
-              </div>
-            </article>
-            <article class="flow-step">
-              <div class="flow-step-number">3</div>
-              <div>
-                <h3>配置语义与数据</h3>
-                <p>确认指标和规则，再由数据库人员绑定表、字段、关联条件和权限。</p>
-              </div>
-            </article>
-          </div>
-
-          <div class="release-gate" aria-label="统一企业模型版本是两个模块之间的运行门槛">
-            <strong>校验并发布</strong>
-            <p>语义快照与 Ontology 发布绑定成统一版本。只有激活版本进入运行时。</p>
-            <div class="release-arrow" aria-hidden="true">→</div>
-            <strong>运行门槛</strong>
-            <p>草稿修改不会直接改变正在使用的模型。</p>
-          </div>
-
-          <div class="flow-side">
-            <p class="flow-side-title">孪生运行：再把真实数据变成业务对象</p>
-            <article class="flow-step">
-              <div class="flow-step-number">4</div>
-              <div>
-                <h3>预览映射结果</h3>
-                <p>先抽取少量数据核对主键、字段含义、类型和权限，不写入对象实例。</p>
-              </div>
-            </article>
-            <article class="flow-step">
-              <div class="flow-step-number">5</div>
-              <div>
-                <h3>同步业务对象</h3>
-                <p>将数据库记录按模型转换为对象实例，并建立可确认的业务关系。</p>
-              </div>
-            </article>
-            <article class="flow-step">
-              <div class="flow-step-number">6</div>
-              <div>
-                <h3>查看当前孪生</h3>
-                <p>查看对象状态、数据来源、版本、关系和动作记录，供后续能力调用。</p>
-              </div>
-            </article>
-          </div>
-        </div>
-        <p class="handoff-note"><strong>关键交接物：</strong>两个模块之间传递的不是一段 SQL，而是一个已校验、已激活、可追踪的统一企业模型版本。</p>
-      </div>
-    </section>
-
-    <section class="section" aria-labelledby="roles-title">
-      <div class="section-heading">
-        <h2 id="roles-title">业务人员和数据库人员怎么配合</h2>
-        <p>业务人员负责判断业务含义是否正确，数据库人员负责证明数据确实能支撑这些定义。</p>
+        <h2 id="roles-title">平台只有两个使用角色</h2>
+        <p>数据库工程师属于技术人员的专业分工。外部 Agent 和业务应用是调用方，不是本平台的第三类角色。</p>
       </div>
       <div class="role-grid">
-        <div class="role-intro">
-          <h3>先确认业务，再确认数据，最后由平台发布运行。</h3>
-          <p>任何一方都不需要独自完成全部配置。业务口径和物理数据绑定必须共同确认。</p>
+        <article class="role-card">
+          <h3>业务人员</h3>
+          <p>负责确认业务到底是什么意思，以及结果是否符合实际工作。</p>
+          <ul class="role-list">
+            <li>明确业务范围、核心问题和验收口径。</li>
+            <li>定义并确认对象、关系、状态、指标、规则和动作。</li>
+            <li>核对映射预览、对象实例、查询结果和风险结论。</li>
+            <li>参与风险事项复核，确认业务结果是否可以使用。</li>
+          </ul>
+        </article>
+        <article class="role-card technical">
+          <h3>技术人员（包含数据库工程师）</h3>
+          <p>负责把业务定义接到真实数据，并保证模型可以安全运行。</p>
+          <ul class="role-list">
+            <li>配置数据源、Schema、表列权限和脱敏规则。</li>
+            <li>完成字段映射、模型校验、版本发布和回滚。</li>
+            <li>执行孪生预览与同步，维护能力授权和调用审计。</li>
+            <li>维护模型、Prompt、系统参数、用户配置和运行环境。</li>
+          </ul>
+        </article>
+      </div>
+      <p class="role-note">历史账号字段或内部验证 Agent 绑定只是兼容实现，不改变平台只有这两个使用角色的产品定义。</p>
+    </section>
+
+    <section class="section" id="modules" aria-labelledby="modules-title">
+      <div class="section-heading">
+        <h2 id="modules-title">全部功能模块，分成三组</h2>
+        <p>主链负责沉淀和运行企业能力，验证与应用负责使用能力，横向支撑负责配置、权限和追踪。</p>
+      </div>
+
+      <div class="module-group">
+        <div class="group-header">
+          <h3>底座主链</h3>
+          <p>这是平台长期建设的核心部分</p>
         </div>
-        <div class="role-list">
-          <div class="role-item">
-            <strong>业务人员</strong>
-            <p>说明“客户、申请、审批状态、申请数量”分别是什么，确认对象、关系、指标和规则是否符合实际业务。</p>
-          </div>
-          <div class="role-item">
-            <strong>数据库人员</strong>
-            <p>确认数据在哪张表、使用哪个主键、字段如何关联、枚举值代表什么，并配置只读映射和数据权限。</p>
-          </div>
-          <div class="role-item">
-            <strong>平台管理员</strong>
-            <p>组织校验、创建统一版本、激活模型、执行预览和同步，并检查错误、版本和运行记录。</p>
-          </div>
+        <div class="module-grid">
+          <article class="module-card core">
+            <span class="module-kind">/enterprise-model</span>
+            <h4>治理与业务领域</h4>
+            <p>确定业务范围、负责人和数据访问边界。业务领域是公司内部的模型管理范围，不是多租户空间。</p>
+            <small>输出：可管理、可验收的业务范围</small>
+          </article>
+          <article class="module-card core">
+            <span class="module-kind">/datasource</span>
+            <h4>数据源与元数据</h4>
+            <p>测试只读连接，选择需要的表，采集字段结构，并配置领域表白名单、列权限和脱敏。</p>
+            <small>输出：可安全使用的数据来源</small>
+          </article>
+          <article class="module-card core">
+            <span class="module-kind">/enterprise-model</span>
+            <h4>企业模型中心</h4>
+            <p>把业务本体和查询语义放在同一入口。对象、关系、状态、动作、指标、规则和映射共同组成企业模型。</p>
+            <small>输出：模型草稿、映射和校验结果</small>
+          </article>
+          <article class="module-card core">
+            <span class="module-kind">企业模型子区</span>
+            <h4>版本发布</h4>
+            <p>将语义快照与 Ontology 发布绑定，联合校验后激活。运行、查询和审计都记录实际使用的版本。</p>
+            <small>输出：统一企业模型版本</small>
+          </article>
+          <article class="module-card core">
+            <span class="module-kind">/twin-runtime</span>
+            <h4>数据处理与孪生运行时</h4>
+            <p>先预览，后同步，把数据库记录转换为有身份、有状态、有来源的对象和关系实例。</p>
+            <small>输出：对象、关系、状态和运行记录</small>
+          </article>
+          <article class="module-card core">
+            <span class="module-kind">/capability-center</span>
+            <h4>能力发布中心</h4>
+            <p>将模型和运行结果发布为稳定的 Query、Decision、Action 能力合同，管理调用方、授权和审计。</p>
+            <small>输出：外部可调用的能力入口</small>
+          </article>
+        </div>
+      </div>
+
+      <div class="module-group">
+        <div class="group-header">
+          <h3>验证与应用</h3>
+          <p>用于证明底座能力在真实场景中有用</p>
+        </div>
+        <div class="module-grid">
+          <article class="module-card">
+            <span class="module-kind">Agent / 对话页</span>
+            <h4>内置 Agent 与对话验证</h4>
+            <p>用自然语言验证模型、查询和结果。它是调试、回归和验收客户端，不拥有企业模型。</p>
+            <small>定位：平台内置参考调用方</small>
+          </article>
+          <article class="module-card">
+            <span class="module-kind">/risk-delivery</span>
+            <h4>风险交付</h4>
+            <p>将问题转成风险事项，固化证据，完成复核、报告和决策审计。贷款、财税只是垂直验证场景。</p>
+            <small>定位：底座之上的业务应用切片</small>
+          </article>
+          <article class="module-card">
+            <span class="module-kind">外部调用方</span>
+            <h4>第三方 Agent 与业务应用</h4>
+            <p>不需要先创建本项目 Agent，直接按能力合同、业务领域、模型版本和调用权限使用平台能力。</p>
+            <small>定位：平台外部消费者，不计入平台角色</small>
+          </article>
+        </div>
+      </div>
+
+      <div class="module-group">
+        <div class="group-header">
+          <h3>横向支撑</h3>
+          <p>不改变业务口径，但保障整条链稳定运行</p>
+        </div>
+        <div class="module-grid support-grid">
+          <article class="support-card">
+            <h4>模型配置</h4>
+            <p>配置大语言模型和向量模型，支撑理解、生成和语义召回。</p>
+          </article>
+          <article class="support-card">
+            <h4>Prompt</h4>
+            <p>管理节点提示词。业务口径以企业模型为准，不由 Prompt 私自改写。</p>
+          </article>
+          <article class="support-card">
+            <h4>系统参数</h4>
+            <p>调整召回阈值、候选表数量等运行参数，不定义业务指标。</p>
+          </article>
+          <article class="support-card">
+            <h4>用户、权限与审计</h4>
+            <p>控制可见范围、可执行动作和调用追踪，贯穿所有模块。</p>
+          </article>
         </div>
       </div>
     </section>
 
-    <section class="section" aria-labelledby="example-title">
+    <section class="section" id="business-flow" aria-labelledby="flow-title">
       <div class="section-heading">
-        <h2 id="example-title">以贷款业务为例</h2>
-        <p>下面这条链路展示一条数据库记录如何变成 Agent 能理解的业务对象。</p>
+        <h2 id="flow-title">一条业务从定义到使用</h2>
+        <p>顺序不是先做 Agent，再反推数据库。正确顺序是先把业务和数据沉淀为资产，再开放给调用方。</p>
       </div>
-      <div class="example-board">
-        <article class="example-story">
-          <h3>三方共同完成的配置</h3>
-          <div class="story-line">
-            <strong>业务定义</strong>
-            <p>“贷款申请”是一笔有独立编号、状态和生命周期的业务对象，不是一张数据库表的别名。</p>
-          </div>
-          <div class="story-line">
-            <strong>数据确认</strong>
-            <p><code>loan_application_indicator</code> 中每行是一笔申请，<code>application_id</code> 是主键，<code>channel</code> 是申请渠道。</p>
-          </div>
-          <div class="story-line">
-            <strong>语义口径</strong>
-            <p>“按渠道统计申请数量”对应申请对象、申请数量指标和申请渠道维度。</p>
-          </div>
-          <div class="story-line">
-            <strong>运行结果</strong>
-            <p>同步后形成贷款申请对象实例，保留来源、属性、当前状态和模型版本。</p>
-          </div>
+      <div class="timeline">
+        <div class="timeline-row">
+          <span class="timeline-index">1</span>
+          <span class="timeline-module">治理与业务领域</span>
+          <div><strong>确定范围</strong><p>明确要解决的业务问题、对象范围、负责人和验收人。</p></div>
+          <span class="timeline-output">产出：一个可管理的业务领域</span>
+        </div>
+        <div class="timeline-row">
+          <span class="timeline-index">2</span>
+          <span class="timeline-module">数据源与权限</span>
+          <div><strong>接入来源</strong><p>连接只读业务库，采集需要的表和字段，配置允许范围及脱敏。</p></div>
+          <span class="timeline-output">产出：受控 Schema 和数据边界</span>
+        </div>
+        <div class="timeline-row">
+          <span class="timeline-index">3</span>
+          <span class="timeline-module">企业模型中心</span>
+          <div><strong>讲清业务</strong><p>业务人员确认对象、关系、状态、指标、规则和动作；技术人员完成物理映射。</p></div>
+          <span class="timeline-output">产出：业务模型草稿和映射</span>
+        </div>
+        <div class="timeline-row">
+          <span class="timeline-index">4</span>
+          <span class="timeline-module">版本发布</span>
+          <div><strong>固定口径</strong><p>创建语义快照和 Ontology 发布，联合校验后激活统一模型版本。</p></div>
+          <span class="timeline-output">产出：运行时唯一依据</span>
+        </div>
+        <div class="timeline-row">
+          <span class="timeline-index">5</span>
+          <span class="timeline-module">孪生运行时</span>
+          <div><strong>组织状态</strong><p>先预览，再同步对象和关系，检查实例数量、主属性、状态和来源。</p></div>
+          <span class="timeline-output">产出：当前业务对象视图</span>
+        </div>
+        <div class="timeline-row">
+          <span class="timeline-index">6</span>
+          <span class="timeline-module">能力发布中心</span>
+          <div><strong>形成出口</strong><p>把查询、判断和动作整理为有输入、输出、权限和版本的能力合同。</p></div>
+          <span class="timeline-output">产出：可复用的能力接口</span>
+        </div>
+        <div class="timeline-row">
+          <span class="timeline-index">7</span>
+          <span class="timeline-module">Agent 与业务应用</span>
+          <div><strong>消费能力</strong><p>内置 Agent 用于验证，外部 Agent 和应用按授权调用同一能力。</p></div>
+          <span class="timeline-output">产出：咨询、分析或受控处理结果</span>
+        </div>
+        <div class="timeline-row">
+          <span class="timeline-index">8</span>
+          <span class="timeline-module">风险与审计</span>
+          <div><strong>形成闭环</strong><p>保留查询、对象、证据、复核、报告和动作记录，问题回到模型或映射修正。</p></div>
+          <span class="timeline-output">产出：可解释、可复盘的业务结果</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="handoffs" aria-labelledby="handoff-title">
+      <div class="section-heading">
+        <h2 id="handoff-title">模块之间到底交接什么</h2>
+        <p>模块不是简单跳转页面，每一步都向下一步交付一份明确的业务或技术产物。</p>
+      </div>
+      <div class="handoff-grid">
+        <article class="handoff-card"><h3>业务领域 <span>→</span> 数据源治理</h3><p>交接业务范围和数据使用边界，决定哪些表可以进入本次建模。</p></article>
+        <article class="handoff-card"><h3>数据源治理 <span>→</span> 企业模型</h3><p>交接可用的表、字段、类型、主键和权限，不替业务人员定义指标含义。</p></article>
+        <article class="handoff-card"><h3>企业模型 <span>→</span> 版本发布</h3><p>交接对象、关系、指标、规则、映射和动作的完整定义，校验失败不能激活。</p></article>
+        <article class="handoff-card"><h3>版本发布 <span>→</span> 孪生运行</h3><p>交接唯一运行版本，运行时发现定义或数据源漂移会阻断执行。</p></article>
+        <article class="handoff-card"><h3>孪生运行 <span>→</span> 能力发布</h3><p>交接对象状态、关系、来源和动作记录，形成可被调用的稳定能力契约。</p></article>
+        <article class="handoff-card"><h3>能力发布 <span>→</span> Agent / 应用</h3><p>交接能力名称、参数、权限、版本和追踪规则，调用方不复制企业模型。</p></article>
+        <article class="handoff-card"><h3>应用结果 <span>→</span> 风险交付</h3><p>将值得跟进的问题转成事项，自动固化查询和对象证据，进入复核与报告。</p></article>
+        <article class="handoff-card"><h3>审计反馈 <span>→</span> 企业模型</h3><p>定位是业务口径、字段映射、权限还是数据质量问题，再校验、发布和验证。</p></article>
+      </div>
+    </section>
+
+    <section class="section" id="capability" aria-labelledby="capability-title">
+      <div class="section-heading">
+        <h2 id="capability-title">能力发布中心是平台的对外出口</h2>
+        <p>发布企业模型解决“定义完成”，发布能力解决“别人可以稳定使用”。两者不是同一个动作。</p>
+      </div>
+      <div class="capability-grid">
+        <article class="capability-card">
+          <h3>Query</h3>
+          <p>只读查询、过滤、关联、聚合、排名和指标计算。当前已有第一版外部调用能力。</p>
+          <span class="capability-status">当前：已实现第一版</span>
         </article>
-        <aside class="result-panel">
-          <h3>最终形成的链路</h3>
-          <div class="result-chain" aria-label="贷款业务数据流转链路">
-            <div>业务表和字段<small>业务数据库，只读访问</small></div>
+        <article class="capability-card">
+          <h3>Decision</h3>
+          <p>基于规则或模型输出判断、原因和建议，后续形成通用决策能力。</p>
+          <span class="capability-status planned">状态：规划中</span>
+        </article>
+        <article class="capability-card">
+          <h3>Action</h3>
+          <p>创建、修改、审批和状态变化等受控操作。当前已有内部动作原型，正式外部出口后续建设。</p>
+          <span class="capability-status planned">状态：内部验证为主</span>
+        </article>
+      </div>
+      <p class="callout"><strong>调用关系：</strong>外部 Agent 提交能力名称和结构化参数，平台校验调用方、领域权限、模型版本和数据边界，再返回结果与追踪编号。调用方不需要先创建本项目 Agent。</p>
+    </section>
+
+    <section class="section" id="data-chain" aria-labelledby="data-title">
+      <div class="section-heading">
+        <h2 id="data-title">数据库和平台数据如何串起来</h2>
+        <p>业务库保存源系统事实，管理库保存模型和运行记录，向量存储帮助召回语义。三者分工不同。</p>
+      </div>
+      <div class="storage-grid">
+        <article class="storage-card"><h3>业务数据库</h3><p>保存客户、申请、账户、凭证等真实业务记录。平台以只读方式查询和同步。</p></article>
+        <article class="storage-card"><h3>平台管理数据库</h3><p>保存用户、领域、数据源、模型、对象实例、会话、风险、报告和审计记录。</p></article>
+        <article class="storage-card"><h3>向量存储</h3><p>保存业务语义的 embedding，用于检索相关概念、指标、规则和映射。</p></article>
+      </div>
+      <div class="data-chain">
+        <strong>核心数据链路</strong>
+        <p><code>datasource</code> → <code>meta_table / meta_column</code> → 企业模型映射 → 统一模型版本 → 孪生对象与关系 → 能力合同 → Agent 或业务应用 → 结果、证据与审计</p>
+      </div>
+      <div class="two-paths">
+        <article class="path-card"><strong>指标问数路径</strong><p>已发布模型 → 编译只读 SQL → 读取业务库最新数据。结果重点是指标、维度和统计口径。</p></article>
+        <article class="path-card"><strong>对象浏览路径</strong><p>业务库 → 手动同步 → 读取孪生对象当前状态。结果重点是对象、关系、来源和状态。</p></article>
+      </div>
+      <p class="callout"><strong>三个数字不要混用：</strong>源表记录总量、已同步对象实例数、本次查询返回条数分别属于数据源、运行时和查询结果。</p>
+    </section>
+
+    <section class="section" id="loan-example" aria-labelledby="example-title">
+      <div class="section-heading">
+        <h2 id="example-title">用贷款申请举例，完整走一遍</h2>
+        <p>贷款只是技术验证场景，例子用来说明平台链路，不代表已经确认的授信或风险规则。</p>
+      </div>
+      <div class="example-grid">
+        <article class="example-story">
+          <h3>两类人员共同确认</h3>
+          <div class="story-line"><strong>业务人员说清楚</strong><p>“贷款申请”是一笔有编号、状态和生命周期的业务对象；“按渠道统计”是申请数量按渠道分组。</p></div>
+          <div class="story-line"><strong>技术人员接数据</strong><p><code>loan_application_indicator</code> 每行代表一笔申请，<code>application_id</code> 是主属性，<code>channel</code> 是申请渠道字段。</p></div>
+          <div class="story-line"><strong>平台固定口径</strong><p>企业模型同时保存申请对象、申请数量指标、渠道维度和字段映射，再通过版本发布固定这套定义。</p></div>
+          <div class="story-line"><strong>应用消费结果</strong><p>内置 Agent 或第三方 Agent 调用同一 Query 能力，得到可解释的分组结果；异常时进入风险交付。</p></div>
+        </article>
+        <aside class="example-result">
+          <h3>从一行数据到一次调用</h3>
+          <div class="result-chain" aria-label="贷款申请数据链路">
+            <div>业务表字段<small>业务库，只读来源</small></div>
             <span aria-hidden="true">↓</span>
-            <div>业务对象与指标<small>semantic_* 与 ontology_* 定义</small></div>
+            <div>申请对象与申请指标<small>企业模型中的业务定义</small></div>
             <span aria-hidden="true">↓</span>
-            <div>统一企业模型版本<small>semantic snapshot + ontology release</small></div>
+            <div>统一模型版本<small>语义快照 + Ontology 发布</small></div>
             <span aria-hidden="true">↓</span>
-            <div>对象实例与当前状态<small>ontology_object 与 ontology_link</small></div>
+            <div>Query 能力<small>按申请渠道统计数量</small></div>
             <span aria-hidden="true">↓</span>
-            <div>运行记录与能力消费<small>twin_sync_run、Agent 和业务应用</small></div>
+            <div>Agent / 业务应用结果<small>结果、来源和 trace 可回查</small></div>
           </div>
         </aside>
       </div>
     </section>
 
-    <section class="section" aria-labelledby="why-title">
+    <section class="section" id="usage" aria-labelledby="usage-title">
       <div class="section-heading">
-        <h2 id="why-title">为什么不直接让 Agent 查数据库</h2>
-        <p>数据库只说明数据怎么存，不完整说明业务怎么理解、怎么算、谁能用，以及结果依据哪个版本。</p>
+        <h2 id="usage-title">第一次使用，按这个顺序</h2>
+        <p>先用一个业务领域、一个只读数据源和 3-5 条真实问题做小闭环，再逐步扩大范围。</p>
       </div>
-      <div class="why-grid">
-        <div class="why-main">
-          <h3>核心价值是把业务理解从个人经验和临时 SQL，变成可以持续复用的企业资产。</h3>
-          <p>数据库结构变化时，主要调整数据映射。Agent 或业务应用变化时，企业模型仍然保留并可继续复用。</p>
-        </div>
-        <div class="why-points">
-          <div class="why-point"><strong>统一口径</strong><span>同一个指标和对象由企业模型统一定义。</span></div>
-          <div class="why-point"><strong>减少重复</strong><span>不同 Agent 不需要各自重新理解数据库。</span></div>
-          <div class="why-point"><strong>安全可控</strong><span>数据访问受领域表和字段权限约束。</span></div>
-          <div class="why-point"><strong>全程可追踪</strong><span>结果可关联模型版本、数据来源和运行记录。</span></div>
-        </div>
-      </div>
+      <ol class="usage-list">
+        <li><b>1</b><div><strong>业务人员提出问题</strong><span>列出要解决的业务问题，说明对象、指标和预期结果。</span></div></li>
+        <li><b>2</b><div><strong>技术人员建立来源</strong><span>连接数据库，采集相关表，设置表列权限和脱敏。</span></div></li>
+        <li><b>3</b><div><strong>共同完成企业模型</strong><span>确认对象、关系、状态、指标、规则和映射。</span></div></li>
+        <li><b>4</b><div><strong>校验并激活版本</strong><span>先校验语义和本体，再生成统一企业模型版本。</span></div></li>
+        <li><b>5</b><div><strong>预览并运行孪生</strong><span>核对主键、属性、关系、来源和实例数量，再执行同步。</span></div></li>
+        <li><b>6</b><div><strong>发布并验证能力</strong><span>授权 Query 能力，用内置验证客户端和外部调用方做同题验收。</span></div></li>
+        <li><b>7</b><div><strong>处理异常并留痕</strong><span>进入风险交付或审计记录，定位问题后回到模型、映射或权限修正。</span></div></li>
+        <li><b>8</b><div><strong>形成可复用资产</strong><span>保留版本、结果和追踪编号，让下一次调用不必重新解释数据库。</span></div></li>
+      </ol>
     </section>
 
-    <section class="section" aria-labelledby="boundary-title">
+    <section class="section" id="progress" aria-labelledby="progress-title">
       <div class="section-heading">
-        <h2 id="boundary-title">当前阶段需要知道的边界</h2>
-        <p>下面这些限制必须讲清楚，避免把当前原型理解成已经完成的生产级自动运行平台。</p>
+        <h2 id="progress-title">当前进度，按平台主线看</h2>
+        <p>截至 2026年9月9日，第一轮代码闭环已经完成，真实业务接入和生产级能力仍需验收。</p>
+      </div>
+      <table class="progress-table">
+        <thead><tr><th>功能块</th><th>当前状态</th><th>已具备与下一步</th></tr></thead>
+        <tbody>
+          <tr><td>企业模型中心</td><td><span class="status done">第一版已实现</span></td><td>已支持本体、查询语义、映射、校验和统一版本；真实领域验收、版本 diff 和影响分析待完成。</td></tr>
+          <tr><td>数据接入与权限</td><td><span class="status partial">第一版已实现</span></td><td>已支持表白名单、列权限、脱敏和安全只读；真实测试库的允许、拒绝和脱敏用例待验收。</td></tr>
+          <tr><td>孪生运行时</td><td><span class="status partial">第一版已实现</span></td><td>已支持预览、手动分页同步、对象关系实例和运行记录；增量调度、CDC、身份合并和状态历史待建设。</td></tr>
+          <tr><td>能力发布中心</td><td><span class="status partial">第一版已实现</span></td><td>已支持外部 Query、调用凭据、授权和审计；Decision、Action 外部调用、SDK、限流和灰度待建设。</td></tr>
+          <tr><td>验证与垂直应用</td><td><span class="status partial">技术验证阶段</span></td><td>内置 Agent 和贷款风险交付可用于演示与回归；真实业务问题集和业务签字验收尚未开始。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section" id="boundary" aria-labelledby="boundary-title">
+      <div class="section-heading">
+        <h2 id="boundary-title">当前边界必须讲清楚</h2>
+        <p>这些边界帮助业务人员和技术人员正确理解当前版本，不把原型当成已经完成的生产平台。</p>
       </div>
       <div class="boundary">
-        <h3>现在已经能做什么，暂时还不能做什么</h3>
+        <h3>现在可以做什么，暂时不做什么</h3>
         <div class="boundary-grid">
-          <div class="boundary-item">已支持企业模型草稿、校验、统一版本激活和回滚。</div>
-          <div class="boundary-item">已支持按领域权限预览和手动分页同步业务对象。</div>
-          <div class="boundary-item">手工创建的对象可直接查看，业务库同步对象继续继承来源权限。</div>
-          <div class="boundary-item">尚未实现 CDC、后台定时增量同步和跨系统自动身份合并。</div>
-          <div class="boundary-item">Ontology 动作目前更新平台对象或叠加状态，不代表已写回业务数据库。</div>
-          <div class="boundary-item">内置 Agent 只用于调试和验收，企业模型不属于某个 Agent。</div>
+          <div class="boundary-item">可以在一个公司环境中按业务领域维护企业模型，不建设多租户和多企业空间。</div>
+          <div class="boundary-item">可以把业务本体和查询语义统一维护，不把它们当成两套互相独立的产品。</div>
+          <div class="boundary-item">可以预览和手动同步数据库对象，写入型同步由技术人员执行。</div>
+          <div class="boundary-item">暂不提供后台 CDC、定时增量同步、跨系统身份合并和完整状态历史。</div>
+          <div class="boundary-item">当前动作主要更新平台对象状态，不代表已经写回 ERP 或业务数据库。</div>
+          <div class="boundary-item">内置 Agent 只做调试、回归和验收，企业模型不属于任何一个 Agent。</div>
+          <div class="boundary-item">风险交付是贷款、财税等垂直验证场景，不是平台主线的唯一入口。</div>
+          <div class="boundary-item">当前外部能力以 Query 为主，通用 Decision、外部 Action 和生产级治理仍在后续阶段。</div>
         </div>
       </div>
     </section>
 
     <section class="takeaway" aria-labelledby="takeaway-title">
       <h2 id="takeaway-title">业务语义成为企业资产，数据库成为数据来源，Agent 成为能力消费者。</h2>
-      <p>企业模型负责把业务讲清楚，孪生运行负责让真实数据按照这套业务定义持续形成当前企业状态。</p>
+      <p>治理划定范围，数据源提供事实，企业模型负责理解，孪生运行组织状态，能力发布提供出口，应用和审计形成闭环。</p>
     </section>
   </main>
 
-  <footer class="page-shell">问渠 WenQu 企业模型与孪生运行使用说明</footer>
+  <footer class="page-shell">问渠 WenQu 全平台功能与业务链路说明。正式方向、阶段状态和验收口径以 docs/ontology-product-roadmap.md 为准。</footer>
 </body>
 </html>

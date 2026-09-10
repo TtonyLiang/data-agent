@@ -16,7 +16,7 @@ for (const [path, expected] of [
   ['../views/AgentList.vue', 'formatDateTime(row.created_at)'],
   ['../views/UserManagement.vue', 'formatDateTime(row.last_login_at)'],
   ['../views/ModelConfig.vue', 'formatDateTime(detailConfig.api_key_expires_at)'],
-  ['../views/KnowledgeConfig.vue', 'formatDateTime(item.created_at)'],
+  ['../views/ModelReleaseCenter.vue', 'formatDateTime(item.created_at)'],
   ['../views/OntologyWorkbench.vue', 'formatDateTime(row.last_synced_at)'],
   ['../views/TwinRuntimeCenter.vue', 'formatDateTime(row.created_at)'],
   ['../views/ChatView.vue', 'formatDateTime(report.generated_at)'],

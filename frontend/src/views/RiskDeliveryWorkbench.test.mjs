@@ -133,9 +133,9 @@ assert.ok(
     source.includes('canReviewIssue(row)') &&
     source.includes('风险事项创建人不能') === false &&
     source.includes("numberField(row, 'created_by') === user.id") &&
-    source.includes('const canFinalize = computed(() => isAdmin())') &&
+    source.includes('const canFinalize = computed(() => isTechnicalUser())') &&
     source.includes('v-if="canFinalize"'),
-  'review controls should expose a reachable in-review state, assigned-reviewer gating, and admin-only finalization',
+  'review controls should expose a reachable in-review state, assigned-reviewer gating, and technical-role finalization',
 )
 
 assert.ok(
@@ -380,6 +380,6 @@ assert.ok(
 assert.ok(
   source.includes('垂直验证场景') &&
     source.includes('贷款/财税垂直验证场景') &&
-    source.includes('暂无可访问业务领域，请联系管理员分配验证客户端权限'),
+    source.includes('暂无可访问业务领域，请联系技术工程师完成领域配置'),
   'risk delivery should present itself as a vertical validation scenario with role-appropriate empty guidance',
 )

@@ -19,12 +19,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import (
     get_current_user,
-    require_admin,
     require_agent_access,
+    require_data_engineer,
     require_domain_access,
+    require_model_editor,
+    require_model_publisher,
 )
 from app.models.knowledge import LogicForm, SemanticAssetPayload, SemanticDomain
-from app.models.user import PublicUser
+from app.models.user import PublicUser, is_technical_role
 from app.services.embedding_service import get_embedding_service
 from app.services.model_release_service import get_model_release_service
 from app.services.ontology_semantic_bridge import validate_semantic_relation_bindings
@@ -65,7 +67,7 @@ async def list_domains(agent_id: int, current_user: PublicUser = Depends(get_cur
 
 
 @router.get("/domains/all")
-async def list_all_domains(_: PublicUser = Depends(require_admin)):
+async def list_all_domains(_: PublicUser = Depends(require_data_engineer)):
     """列出所有语义领域(管理页面用)。"""
     svc = get_semantic_runtime_service()
     domains = await svc.list_all_domains()
@@ -73,7 +75,7 @@ async def list_all_domains(_: PublicUser = Depends(require_admin)):
 
 
 @router.post("/domains")
-async def upsert_domain(payload: SemanticDomain, _: PublicUser = Depends(require_admin)):
+async def upsert_domain(payload: SemanticDomain, _: PublicUser = Depends(require_model_editor)):
     """创建或更新公司内部业务领域；domain_key 在当前单公司模型库内唯一。"""
     svc = get_semantic_runtime_service()
     try:
@@ -91,7 +93,7 @@ async def upsert_domain(payload: SemanticDomain, _: PublicUser = Depends(require
 
 
 @router.delete("/domains/{domain_id}")
-async def delete_domain(domain_id: int, _: PublicUser = Depends(require_admin)):
+async def delete_domain(domain_id: int, _: PublicUser = Depends(require_model_editor)):
     """删除尚未产生版本或运行历史的空闲业务领域。"""
     svc = get_semantic_runtime_service()
     try:
@@ -104,7 +106,7 @@ async def delete_domain(domain_id: int, _: PublicUser = Depends(require_admin)):
 
 
 @router.post("/domains/{domain_id}/copy")
-async def copy_domain(domain_id: int, request: dict, _: PublicUser = Depends(require_admin)):
+async def copy_domain(domain_id: int, request: dict, _: PublicUser = Depends(require_model_editor)):
     """复制语义领域(含全部资产)到新领域。"""
     svc = get_semantic_runtime_service()
     try:
@@ -120,7 +122,7 @@ async def copy_domain(domain_id: int, request: dict, _: PublicUser = Depends(req
 
 
 @router.get("/domains/{domain_id}/export")
-async def export_domain(domain_id: int, _: PublicUser = Depends(require_admin)):
+async def export_domain(domain_id: int, _: PublicUser = Depends(require_model_editor)):
     """导出语义领域为 JSON bundle。"""
     svc = get_semantic_runtime_service()
     try:
@@ -130,7 +132,7 @@ async def export_domain(domain_id: int, _: PublicUser = Depends(require_admin)):
 
 
 @router.post("/domains/import")
-async def import_domain(request: dict, _: PublicUser = Depends(require_admin)):
+async def import_domain(request: dict, _: PublicUser = Depends(require_model_editor)):
     """导入语义领域 bundle。domain_key 重复时报错。"""
     svc = get_semantic_runtime_service()
     try:
@@ -146,7 +148,7 @@ async def import_domain(request: dict, _: PublicUser = Depends(require_admin)):
 
 
 @router.post("/domains/{domain_id}/validate")
-async def validate_domain(domain_id: int, _: PublicUser = Depends(require_admin)):
+async def validate_domain(domain_id: int, _: PublicUser = Depends(require_model_editor)):
     """校验语义资产:物理表/字段是否已采集、引用是否完整。"""
     svc = get_semantic_runtime_service()
     try:
@@ -182,7 +184,7 @@ async def validate_domain(domain_id: int, _: PublicUser = Depends(require_admin)
 async def create_domain_snapshot(
     domain_id: int,
     request: dict | None = None,
-    _: PublicUser = Depends(require_admin),
+    _: PublicUser = Depends(require_model_editor),
 ):
     """创建语义层版本快照。"""
     svc = get_semantic_runtime_service()
@@ -199,7 +201,7 @@ async def create_domain_snapshot(
 
 
 @router.get("/domains/{domain_id}/snapshots")
-async def list_domain_snapshots(domain_id: int, _: PublicUser = Depends(require_admin)):
+async def list_domain_snapshots(domain_id: int, _: PublicUser = Depends(require_model_editor)):
     """列出语义层的版本快照。"""
     svc = get_semantic_runtime_service()
     if await svc.get_domain(domain_id) is None:
@@ -211,7 +213,7 @@ async def list_domain_snapshots(domain_id: int, _: PublicUser = Depends(require_
 async def get_domain_snapshot(
     domain_id: int,
     snapshot_id: int,
-    _: PublicUser = Depends(require_admin),
+    _: PublicUser = Depends(require_model_editor),
 ):
     """获取单个快照详情。"""
     svc = get_semantic_runtime_service()
@@ -225,7 +227,7 @@ async def get_domain_snapshot(
 async def diff_domain_snapshot(
     domain_id: int,
     snapshot_id: int,
-    _: PublicUser = Depends(require_admin),
+    _: PublicUser = Depends(require_model_editor),
 ):
     """对比当前语义层与快照的差异。"""
     svc = get_semantic_runtime_service()
@@ -239,7 +241,7 @@ async def diff_domain_snapshot(
 async def rollback_domain_snapshot(
     domain_id: int,
     snapshot_id: int,
-    _: PublicUser = Depends(require_admin),
+    _: PublicUser = Depends(require_model_publisher),
 ):
     """回滚语义层到快照版本(替换全部资产)。"""
     svc = get_semantic_runtime_service()
@@ -279,12 +281,19 @@ async def list_assets(
 async def upsert_asset(
     domain_id: int,
     payload: SemanticAssetPayload,
-    _: PublicUser = Depends(require_admin),
+    current_user: PublicUser = Depends(require_model_editor),
 ):
     """创建或更新语义资产。"""
     svc = get_semantic_runtime_service()
     if await svc.get_domain(domain_id) is None:
         raise HTTPException(status_code=404, detail="语义领域不存在")
+    if payload.asset_type in {"mapping", "relation"} and not is_technical_role(
+        current_user.role
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="关系查询路径和物理数据映射由技术工程师维护",
+        )
     try:
         if payload.asset_type == "relation":
             binding_errors = await _relation_binding_errors(
@@ -305,12 +314,17 @@ async def delete_asset(
     domain_id: int,
     asset_type: str,
     asset_id: int,
-    _: PublicUser = Depends(require_admin),
+    current_user: PublicUser = Depends(require_model_editor),
 ):
     """删除单个语义资产。"""
     svc = get_semantic_runtime_service()
     if await svc.get_domain(domain_id) is None:
         raise HTTPException(status_code=404, detail="语义领域不存在")
+    if asset_type in {"mapping", "relation"} and not is_technical_role(current_user.role):
+        raise HTTPException(
+            status_code=403,
+            detail="关系查询路径和物理数据映射由技术工程师维护",
+        )
     try:
         deleted = await svc.delete_asset(domain_id, asset_type, asset_id)
     except ValueError as exc:
@@ -339,7 +353,7 @@ async def resolve_runtime_agent_id(svc, request: dict) -> int:
 
 
 @router.post("/runtime/build")
-async def build_runtime(request: dict, _: PublicUser = Depends(require_admin)):
+async def build_runtime(request: dict, _: PublicUser = Depends(require_data_engineer)):
     """手动构建语义运行时(调试用)。"""
     svc = get_semantic_runtime_service()
     try:
@@ -360,7 +374,7 @@ async def build_runtime(request: dict, _: PublicUser = Depends(require_admin)):
 
 
 @router.post("/logic-form/validate")
-async def validate_logic_form(request: dict, _: PublicUser = Depends(require_admin)):
+async def validate_logic_form(request: dict, _: PublicUser = Depends(require_data_engineer)):
     """调试用:校验 LogicForm 并尝试编译 SQL。"""
     svc = get_semantic_runtime_service()
     logic_form = LogicForm(**request.get("logic_form", request))
@@ -395,7 +409,7 @@ async def validate_logic_form(request: dict, _: PublicUser = Depends(require_adm
 
 
 @router.post("/sync-vector/{domain_id}")
-async def sync_domain_to_vector(domain_id: int, _: PublicUser = Depends(require_admin)):
+async def sync_domain_to_vector(domain_id: int, _: PublicUser = Depends(require_data_engineer)):
     """把语义资产向量化并同步到 Milvus,供知识召回使用。
 
     流程:

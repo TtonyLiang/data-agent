@@ -2,11 +2,11 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.deps import require_admin
+from app.api.deps import require_data_engineer
 from app.models.model_config import ModelConfigCreate, ModelConfigType, ModelConfigUpdate
 from app.services.model_config_service import get_model_config_service
 
-router = APIRouter(dependencies=[Depends(require_admin)])
+router = APIRouter(dependencies=[Depends(require_data_engineer)])
 
 
 @router.post("/create")

@@ -11,7 +11,7 @@ router = APIRouter()
 
 @router.post("/register")
 async def register(payload: RegisterRequest):
-    """开放注册普通用户。新用户默认没有智能体权限。"""
+    """开放注册公司内部业务人员账号；技术工程师账号由管理员创建或调整。"""
     try:
         user = await get_user_service().register_user(
             payload.username,

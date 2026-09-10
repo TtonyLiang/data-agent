@@ -349,7 +349,9 @@ P0 preserves existing data through business-domain ownership and an internal Age
 - **Model releases** validate and publish immutable Ontology definitions, then bind them to query-semantic snapshots as one enterprise-model release.
 - **Twin runtime and audit** manage object/link instances, synchronization, action runs, and state-change history.
 
-#### Six Query Semantic Asset Types
+#### Six Compatibility-Level Query Semantic Asset Types
+
+The product UI no longer exposes these storage types as six peer tabs. Business modeling is organized around Ontology objects, metrics, and business rules; data binding follows object sources, metric calculations, relationship joins, and field mappings; LogicForm and rewrite rules remain under advanced configuration.
 
 | Asset Type | Description | Example |
 |------------|-------------|---------|
@@ -563,7 +565,7 @@ sequenceDiagram
 | Page | Route | Function |
 |------|-------|----------|
 | Chat Validation | `/` | Built-in validation Agent surface with query pipeline, SQL, result table, and reports |
-| Enterprise Model | `/enterprise-model` | Unified entry for query semantics and Ontology assets organized by company business domain |
+| Enterprise Model | `/enterprise-model` | Follow Business Model → Data Binding → Validate & Release; metrics and rules are object-centered and physical fields come from collected Schema |
 | Twin Runtime | `/twin-runtime` | View sync tasks, object/link instances, and action-run records; not a background scheduler |
 | Capability Center | `/capability-center` | Manage external Query callers, grants, and audits; object queries and Actions are labeled as internal validation tools |
 | Validation Agent | `/agent` | Configure the built-in debugging/validation client; third-party agents are not registered here |
