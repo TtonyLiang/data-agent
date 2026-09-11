@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="问渠 WenQu 全平台功能模块、角色分工、业务流程和数据链路说明。" />
-  <title>问渠 WenQu：全平台功能与业务链路</title>
+  <meta name="description" content="问渠 WenQu 内部 1.0 试点版的功能模块、角色分工、业务流程、数据链路和交付边界。" />
+  <title>问渠 WenQu：内部 1.0 试点版功能与业务链路</title>
   <style>
     :root {
       --page: #f3f6fa;
@@ -882,7 +882,7 @@
         </div>
       </div>
       <div class="topbar-actions">
-        <span>全平台功能与业务链路</span>
+        <span>内部 1.0 试点版说明</span>
         <button class="print-button" type="button" onclick="window.print()">打印或导出 PDF</button>
       </div>
     </div>
@@ -901,8 +901,9 @@
           <span>两个平台角色</span>
           <span>六个底座节点</span>
           <span>单公司部署</span>
+          <span>后端 615 项测试通过</span>
         </div>
-        <div class="hero-meta">内容基准：2026年9月9日</div>
+        <div class="hero-meta">内容基准：2026年9月11日 · 当前版本口径：内部 1.0 试点候选</div>
       </aside>
     </section>
 
@@ -940,7 +941,7 @@
         <article class="map-node core">
           <span class="map-node-label">出口</span>
           <h3>能力发布中心</h3>
-          <p>发布 Query、Decision、Action 能力合同。</p>
+          <p>当前对外以 Query 为主，Decision / Action 逐步建设。</p>
         </article>
         <article class="map-node">
           <span class="map-node-label">消费</span>
@@ -977,13 +978,13 @@
           <p>负责把业务定义接到真实数据，并保证模型可以安全运行。</p>
           <ul class="role-list">
             <li>配置数据源、Schema、表列权限和脱敏规则。</li>
-            <li>完成字段映射、模型校验、版本发布和回滚。</li>
+            <li>完成字段映射、模型校验、版本发布和受控回滚。</li>
             <li>执行孪生预览与同步，维护能力授权和调用审计。</li>
             <li>维护模型、Prompt、系统参数、用户配置和运行环境。</li>
           </ul>
         </article>
       </div>
-      <p class="role-note">历史账号字段或内部验证 Agent 绑定只是兼容实现，不改变平台只有这两个使用角色的产品定义。</p>
+      <p class="role-note">当前开发验证阶段由项目开发者使用 <code>admin</code> 账号同时完成业务和技术操作；业务人员与技术人员的联合验收安排在开发封板后。<code>admin/user</code> 和内部验证 Agent 绑定只是兼容实现，不是额外产品角色。</p>
     </section>
 
     <section class="section" id="modules" aria-labelledby="modules-title">
@@ -1031,8 +1032,8 @@
           <article class="module-card core">
             <span class="module-kind">/capability-center</span>
             <h4>能力发布中心</h4>
-            <p>将模型和运行结果发布为稳定的 Query、Decision、Action 能力合同，管理调用方、授权和审计。</p>
-            <small>输出：外部可调用的能力入口</small>
+            <p>将模型和运行结果整理为稳定能力合同。当前已支持外部只读 Query、独立调用凭据、授权和审计。</p>
+            <small>输出：外部 Query 入口；Decision / Action 外部出口后续建设</small>
           </article>
         </div>
       </div>
@@ -1129,8 +1130,8 @@
         <div class="timeline-row">
           <span class="timeline-index">6</span>
           <span class="timeline-module">能力发布中心</span>
-          <div><strong>形成出口</strong><p>把查询、判断和动作整理为有输入、输出、权限和版本的能力合同。</p></div>
-          <span class="timeline-output">产出：可复用的能力接口</span>
+          <div><strong>形成出口</strong><p>先发布可复用的只读 Query；判断和有副作用的 Action 按后续能力治理逐步开放。</p></div>
+          <span class="timeline-output">产出：当前可用的 Query 能力接口</span>
         </div>
         <div class="timeline-row">
           <span class="timeline-index">7</span>
@@ -1260,24 +1261,51 @@
     <section class="section" id="progress" aria-labelledby="progress-title">
       <div class="section-heading">
         <h2 id="progress-title">当前进度，按平台主线看</h2>
-        <p>截至 2026年9月9日，第一轮代码闭环已经完成，真实业务接入和生产级能力仍需验收。</p>
+        <p>截至 2026年9月11日，平台已经达到“内部 1.0 试点候选”阶段；真实业务人员、技术人员和真实测试库的联合验收安排在开发封板后进行。</p>
       </div>
       <table class="progress-table">
         <thead><tr><th>功能块</th><th>当前状态</th><th>已具备与下一步</th></tr></thead>
         <tbody>
-          <tr><td>企业模型中心</td><td><span class="status done">第一版已实现</span></td><td>已支持本体、查询语义、映射、校验和统一版本；真实领域验收、版本 diff 和影响分析待完成。</td></tr>
-          <tr><td>数据接入与权限</td><td><span class="status partial">第一版已实现</span></td><td>已支持表白名单、列权限、脱敏和安全只读；真实测试库的允许、拒绝和脱敏用例待验收。</td></tr>
-          <tr><td>孪生运行时</td><td><span class="status partial">第一版已实现</span></td><td>已支持预览、手动分页同步、对象关系实例和运行记录；增量调度、CDC、身份合并和状态历史待建设。</td></tr>
-          <tr><td>能力发布中心</td><td><span class="status partial">第一版已实现</span></td><td>已支持外部 Query、调用凭据、授权和审计；Decision、Action 外部调用、SDK、限流和灰度待建设。</td></tr>
-          <tr><td>验证与垂直应用</td><td><span class="status partial">技术验证阶段</span></td><td>内置 Agent 和贷款风险交付可用于演示与回归；真实业务问题集和业务签字验收尚未开始。</td></tr>
+          <tr><td>企业模型中心</td><td><span class="status done">第一版已实现</span></td><td>已支持本体、查询语义、映射、服务端校验、统一版本和 active release；真实领域验收、版本 diff、影响分析和完整回滚闭环仍待完成。</td></tr>
+          <tr><td>数据接入与权限</td><td><span class="status partial">本地回放已通过</span></td><td>表白名单默认拒绝、列权限、脱敏、参数绑定和对象/关系/Action 权限已通过本地业务库回放；真实公司业务库的允许、拒绝和脱敏用例安排在封板后联合验收。</td></tr>
+          <tr><td>孪生运行时</td><td><span class="status partial">第一版已实现</span></td><td>已支持预览、手动分页同步、对象/关系实例、运行记录，并按 active release 冻结定义执行和校验数据源/定义漂移；增量调度、CDC、身份合并和状态历史待建设。</td></tr>
+          <tr><td>能力发布中心</td><td><span class="status partial">Query 第一版可用</span></td><td>已支持外部 Query、独立调用凭据、领域授权和摘要审计；Decision、外部 Action、SDK、限流、配额和灰度待建设。</td></tr>
+          <tr><td>验证与垂直应用</td><td><span class="status partial">技术验证已通过</span></td><td>内置 Agent、贷款风险交付和外部 Query 可用于演示与技术回归；贷款合成数据全链路已回放（申请总数 30240、4 组审批状态、5 组渠道、120 个对象和 61 条关系），真实业务问题集和联合 UAT 尚未开始。</td></tr>
+          <tr><td>部署与交付</td><td><span class="status partial">部署包已加入</span></td><td>已提供后端/前端 Docker 镜像和独立部署 Compose，连接公司已有 MySQL；目标服务器首次构建、管理员初始化和备份恢复仍待执行。</td></tr>
         </tbody>
       </table>
+    </section>
+
+    <section class="section" id="delivery" aria-labelledby="delivery-title">
+      <div class="section-heading">
+        <h2 id="delivery-title">内部 1.0 怎么交付</h2>
+        <p>当前版本先交付一个可用、可验证的公司内部试点，不把后续平台能力提前包装成已完成能力。</p>
+      </div>
+      <div class="handoff-grid">
+        <article class="handoff-card">
+          <h3>部署方式</h3>
+          <p>使用 <code>docker-compose.deploy.yml</code> 启动 WenQu 后端和前端。部署包不会启动、初始化或覆盖公司已有业务 MySQL；平台管理库使用独立的 <code>dataquery_agent</code> 数据库。</p>
+        </article>
+        <article class="handoff-card">
+          <h3>管理员边界</h3>
+          <p>当前由项目开发者负责管理员账号，并用兼容的 <code>admin</code> 账号完成业务和技术两类操作。业务人员和技术人员的真实账号验收放到开发封板后进行。</p>
+        </article>
+        <article class="handoff-card">
+          <h3>首个真实验收</h3>
+          <p>封板后由业务人员和技术人员共同完成：范围确认、3–8 张核心表、表列权限、对象主键、关系键、指标口径、预览同步和 5–10 条标准问题。</p>
+        </article>
+        <article class="handoff-card">
+          <h3>当前开发测试领域</h3>
+          <p><code>Build_test</code> 是开发阶段留下的测试业务领域，不是正式业务领域。它目前没有 active release；切换到它时系统会提示先完成校验发布。本轮不删除、不擅自停用。</p>
+        </article>
+      </div>
+      <p class="callout"><strong>交付判断：</strong>现在可以准备内部试点部署；自动化验证为后端 615 passed，前端测试、Ruff 和生产构建均通过。正式引入业务人员和技术人员前，必须在目标服务器完成 Docker 首次构建，并在封板后完成真实角色和真实测试库联合验收。</p>
     </section>
 
     <section class="section" id="boundary" aria-labelledby="boundary-title">
       <div class="section-heading">
         <h2 id="boundary-title">当前边界必须讲清楚</h2>
-        <p>这些边界帮助业务人员和技术人员正确理解当前版本，不把原型当成已经完成的生产平台。</p>
+        <p>当前版本定位为公司内部 1.0 试点。下面的边界帮助业务人员和技术人员准确理解可用范围，不把后续平台能力提前当成已完成能力。</p>
       </div>
       <div class="boundary">
         <h3>现在可以做什么，暂时不做什么</h3>
@@ -1290,6 +1318,8 @@
           <div class="boundary-item">内置 Agent 只做调试、回归和验收，企业模型不属于任何一个 Agent。</div>
           <div class="boundary-item">风险交付是贷款、财税等垂直验证场景，不是平台主线的唯一入口。</div>
           <div class="boundary-item">当前外部能力以 Query 为主，通用 Decision、外部 Action 和生产级治理仍在后续阶段。</div>
+          <div class="boundary-item">严格运行页面没有 active release 时会返回明确的业务冲突提示，并引导先完成企业模型校验发布。</div>
+          <div class="boundary-item">Docker 部署连接公司已有 MySQL；本项目部署 Compose 不会启动或覆盖业务数据库。</div>
         </div>
       </div>
     </section>
@@ -1300,6 +1330,6 @@
     </section>
   </main>
 
-  <footer class="page-shell">问渠 WenQu 全平台功能与业务链路说明。正式方向、阶段状态和验收口径以 docs/ontology-product-roadmap.md 为准。</footer>
+  <footer class="page-shell">问渠 WenQu 内部 1.0 试点版功能与业务链路说明（内容基准：2026年9月11日）。正式方向、阶段状态和验收口径以 docs/ontology-product-roadmap.md 为准。</footer>
 </body>
 </html>

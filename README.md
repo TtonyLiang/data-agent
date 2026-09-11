@@ -163,6 +163,8 @@ The Enterprise Business Model puts two complementary asset types under the same 
 
 ## Quick Start
 
+> **Internal 1.0 deployment:** when the company already provides MySQL, use [the Docker deployment guide](docs/docker-deployment.md) with `docker-compose.deploy.yml`. The Compose file below is for local demo dependencies; the separate backend/frontend commands are for development.
+
 ### Prerequisites
 
 | Dependency | Version | Notes |
@@ -789,6 +791,8 @@ wenqu-dataquery-agent/
 │   │   ├── stores/               # State management
 │   │   ├── api/                  # API client
 │   │   └── router/               # Route configuration
+│   ├── Dockerfile                # Frontend production image
+│   ├── nginx.conf                # SPA and backend API proxy
 │   └── package.json
 ├── AGENTS.md                     # Project-wide development harness
 ├── docs/                         # Documentation (see docs/README.md)
@@ -808,7 +812,9 @@ wenqu-dataquery-agent/
 │   └── douyin_ecommerce/         # Douyin e-commerce domain
 ├── scripts/                      # Utility scripts
 ├── tests/                        # Test cases
-├── docker-compose.yml            # Dependency orchestration
+├── Dockerfile                    # Backend production image
+├── docker-compose.yml            # Local demo dependency orchestration
+├── docker-compose.deploy.yml     # Internal 1.0 platform deployment (external MySQL)
 ├── pyproject.toml                # Python project config
 ├── .env.example                  # Environment variable template
 └── uv.lock                       # Python dependency lock

@@ -77,12 +77,21 @@
       </section>
 
       <el-alert
-        v-if="!activeModelRelease"
+        v-if="!activeModelRelease && !runtimeError"
         class="runtime-release-alert"
         type="warning"
         :closable="false"
         title="当前领域没有激活的统一企业模型版本，预览和执行均会被阻断。"
       />
+      <el-alert
+        v-if="runtimeError"
+        class="runtime-release-alert"
+        type="warning"
+        :closable="false"
+        :title="runtimeError"
+      >
+        <el-button text type="primary" @click="openModelConfig">去企业模型校验发布</el-button>
+      </el-alert>
 
       <el-tabs v-model="activeView" class="runtime-tabs" @tab-change="handleRuntimeViewChange">
         <el-tab-pane label="同步运行" name="sync">
@@ -564,6 +573,7 @@ const domainId = ref<number | null>(null)
 const context = ref<OntologyAgentContext | null>(null)
 const objectTypes = ref<OntologyObjectType[]>([])
 const mappingCount = ref(0)
+const runtimeError = ref('')
 const loading = ref(true)
 const syncingTypeId = ref<number | null>(null)
 const previewingTypeId = ref<number | null>(null)
@@ -651,6 +661,7 @@ watch(domainId, () => {
   instancePage.value = 1
   instanceTotal.value = 0
   objects.value = []
+  runtimeError.value = ''
   void loadRuntime()
 })
 
@@ -670,6 +681,7 @@ async function loadRuntime() {
     return
   }
   loading.value = true
+  runtimeError.value = ''
   try {
     const [nextContext, nextTypes, nextLinkTypes, nextActionTypes, assets, nextRuns, nextObjectCount] = await Promise.all([
       fetchOntologyAgentContext(domainId.value, { strictRelease: true }),
@@ -712,6 +724,18 @@ async function loadRuntime() {
     syncRuns.value = nextRuns
     await loadActiveRuntimeView()
   } catch (error) {
+    context.value = null
+    objectTypes.value = []
+    linkTypes.value = []
+    actionTypes.value = []
+    objects.value = []
+    instanceTotal.value = 0
+    runtimeObjectCount.value = 0
+    links.value = []
+    actionRuns.value = []
+    syncRuns.value = []
+    mappingCount.value = 0
+    runtimeError.value = errorMessage(error)
     ElMessage.error(errorMessage(error))
   } finally {
     loading.value = false

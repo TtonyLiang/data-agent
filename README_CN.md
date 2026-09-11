@@ -165,6 +165,8 @@ Ontology / OSDK 的稳定术语和技术边界见 [Ontology / OSDK 对齐技术�
 
 ## 快速开始
 
+> **内部 1.0 部署**：公司已有业务 MySQL 时，请使用 [Docker 部署说明](docs/docker-deployment.md) 的 `docker-compose.deploy.yml`。本节下面的 Compose 命令用于本地演示依赖，开发环境才按后端/前端命令分别启动。
+
 ### 环境要求
 
 | 依赖 | 版本 | 说明 |
@@ -801,6 +803,8 @@ wenqu-dataquery-agent/
 │   │   ├── stores/               # 状态管理
 │   │   ├── api/                  # API 客户端
 │   │   └── router/               # 路由配置
+│   ├── Dockerfile                # 前端生产镜像
+│   ├── nginx.conf                # SPA 与后端 API 反向代理
 │   └── package.json
 ├── AGENTS.md                     # 项目级开发与文档维护规范
 ├── docs/                         # 文档（入口见 docs/README.md）
@@ -820,7 +824,9 @@ wenqu-dataquery-agent/
 │   └── douyin_ecommerce/         # 抖音电商域
 ├── scripts/                      # 工具脚本
 ├── tests/                        # 测试用例
-├── docker-compose.yml            # 依赖服务编排
+├── Dockerfile                    # 后端生产镜像
+├── docker-compose.yml            # 本地演示依赖服务编排
+├── docker-compose.deploy.yml     # 内部 1.0 平台部署编排（连接外部 MySQL）
 ├── pyproject.toml                # Python 项目配置
 ├── .env.example                  # 环境变量示例
 └── uv.lock                       # Python 依赖锁文件

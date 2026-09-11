@@ -619,12 +619,18 @@ async def get_agent_context(
     and published Action definitions.
     """
     await require_domain_access(domain_id, current_user)
-    context, runtime = await _load_query_runtime_context(
-        get_ontology_service(),
-        domain_id,
-        current_user.model_dump(),
-        require_active_release=strict_release,
-    )
+    try:
+        context, runtime = await _load_query_runtime_context(
+            get_ontology_service(),
+            domain_id,
+            current_user.model_dump(),
+            require_active_release=strict_release,
+        )
+    except ValueError as exc:
+        # A strict runtime without an active release is a domain state conflict,
+        # not an unhandled server error.  The UI can use this to guide the user
+        # back to model validation and activation.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {
         **context,
         "query_capabilities": build_query_capability_definitions(runtime, context),

@@ -124,6 +124,8 @@ assert.ok(
     twinSource.includes('预览不会写入对象') &&
     twinSource.includes(':scrollbar-tabindex="-1"') &&
     twinSource.includes('activeModelRelease') &&
+    twinSource.includes('runtimeError') &&
+    twinSource.includes('去企业模型校验发布') &&
     twinSource.includes('只有技术人员可以执行写入型同步') &&
     twinSource.includes('当前领域没有激活的统一企业模型版本') &&
     twinSource.includes('当前页面是手动运行入口，不表示已经接入 CDC 或自动调度') &&

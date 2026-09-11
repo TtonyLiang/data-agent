@@ -1,6 +1,6 @@
 # 问渠 WenQu 项目结构与功能边界
 
-> 基准日期：2026-09-10
+> 基准日期：2026-09-11
 > 文档用途：给开发、业务、数据和测试人员提供一张“项目地图”。本文按**公司内部单一部署**描述项目，不设计多租户、多企业空间或企业间隔离。
 
 ## 1. 先记住一条主线
@@ -91,6 +91,7 @@
 | `/api/model-releases` | 统一企业模型版本的创建、校验、激活、停用和回滚 | `app/api/model_release.py`、`model_release_service.py` |
 | `/api/twin` | 孪生预览/同步运行与运行记录 | `app/api/twin_runtime.py`、`twin_runtime_service.py` |
 | `/api/capability-clients`、`/api/v1/capabilities/*:invoke` | 第三方调用身份、Query 授权、调用和审计 | `app/api/capability_access.py`、`capability_access_service.py` |
+| Docker 交付 | 后端与前端容器、外部 MySQL 连接、Lite/外部 Milvus 配置 | `Dockerfile`、`frontend/Dockerfile`、`docker-compose.deploy.yml`、`docs/docker-deployment.md` |
 | `/api/chat`（主入口在 `app/main.py`） | 内置验证 Agent 的流式问数和持久任务 | `app/agent/graph.py`、`react.py`、`nodes/` |
 | `/api/risk` | 风险事项、证据、复核、报告、审计 | `app/api/risk_workflow.py`、`risk_workflow_service.py` |
 | `/api/model-config`、`/api/prompt`、`/api/system` | 横向运行配置 | 对应 API 和 service |

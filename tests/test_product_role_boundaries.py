@@ -251,6 +251,26 @@ async def test_regular_user_can_read_enterprise_model_and_invoke_capability(
 
 
 @pytest.mark.asyncio
+async def test_strict_agent_context_maps_missing_active_release_to_conflict(monkeypatch):
+    monkeypatch.setattr(ontology_api, "require_domain_access", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        ontology_api,
+        "_load_query_runtime_context",
+        AsyncMock(side_effect=ValueError("当前业务领域尚未激活统一企业模型版本")),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await ontology_api.get_agent_context(
+            17,
+            current_user=TECHNICAL,
+            strict_release=True,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "尚未激活统一企业模型版本" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
 async def test_regular_user_can_preview_twin_but_cannot_start_write_sync(
     monkeypatch,
     regular_user_app,

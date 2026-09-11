@@ -1,6 +1,6 @@
 # 问渠 WenQu 企业本体数字孪生平台产品路线图（公司内部版）
 
-> 基准日期：2026-09-10
+> 基准日期：2026-09-11
 
 > **维护准绳：本文件是平台唯一的方向、优先级、阶段状态和验收口径。**
 
@@ -79,13 +79,13 @@ V1 定位为“可验证的本地运营本体闭环”，用于业务试点和�
 | ONT-003 | 关系建模 | 定义 1:1、1:N、N:1、N:N 元数据；创建匹配类型的关系实例 | `app/services/ontology_service.py`、工作台图谱视图、关系基数回归测试 | 已验证；批量同步中的冲突处理仍列 P2 |
 | ONT-004 | 动作建模 | 配置目标对象、参数、前置条件、状态效果、角色和审批标记 | `app/models/ontology.py`、工作台动作编辑器 | 已开发；正式审批流列入 P3 |
 | ONT-005 | 本体校验 | 检查主属性、对象/属性引用、动作效果和参数引用 | validate API、校验抽屉、`tests/test_ontology_service.py` | 已验证 |
-| ONT-006 | 发布快照 | 校验通过后生成递增发布快照 | `ontology_release`、publish/releases API、发布阻断测试 | 原型完成；运行版本隔离/回滚列入 P1 |
+| ONT-006 | 发布快照 | 校验通过后生成递增发布快照 | `ontology_release`、publish/releases API、发布阻断测试 | 已验证；active release 运行隔离已完成，对象实例数据自动回滚仍未实现 |
 | ONT-007 | 对象实例运行时 | 手工或 bundle 创建、更新、查询实例；校验类型和必填项 | object API、实例动态表单、幂等导入测试 | 已开发；批量同步/身份解析列入 P2 |
 | ONT-008 | 动作执行 | 校验角色、审批引用、参数和前置条件；更新对象并保留前后状态 | execute API、动作弹窗、`tests/test_ontology_service.py` | 原型完成；事务/幂等/补偿列入 P3 |
 | ONT-009 | 动作运行审计 | 查看执行人、参数、上下文、前后状态、结果和时间 | action-runs API、孪生运行“动作执行记录”、E2E 回放 | 已开发；通用 Decision Capability 与完整 release/trace 血缘列入 P3 |
 | ONT-010 | Ontology 工作台 | 企业模型保留图谱、对象类型、关系类型和动作类型；实例、关系实例与动作记录进入孪生运行 | `frontend/src/views/OntologyWorkbench.vue`、`TwinRuntimeCenter.vue`、前端测试与构建 | 已验证（桌面端） |
 | ONT-011 | 导入导出与示例 | UI 导入/导出 bundle；供应链样例覆盖对象、关系、动作和实例 | `scripts/verify_ontology_e2e.py` 已完成 API 导入、校验、发布、动作、审计和导出回放；UI 导入/导出及关系实例完整计数仍需浏览器验收 | API 回放已验证；UI 验收待补 |
-| ONT-012 | 自动化验证 | 后端单测、API 路由、前端契约、类型检查、生产构建和全项目 Ruff 通过 | `uv run pytest -q`（614 passed）、`uv run ruff check app tests scripts`、`npm test`、`npm run build`、`git diff --check` | 已验证 |
+| ONT-012 | 自动化验证 | 后端单测、API 路由、前端契约、类型检查、生产构建和全项目 Ruff 通过 | `uv run pytest -q`（615 passed）、`uv run ruff check app tests scripts`、`npm test`、`npm run build`、`git diff --check` | 已验证 |
 | ONT-013 | Agent/应用上下文 | 为应用和 Agent 提供已发布对象定义、对象查询和受控动作工具 | `app/agent/ontology_tools.py`、`/agent-context` 和 `/agent-tools` API、`tests/test_ontology_tools.py` | 已验证 |
 
 ### 3.1 P0 平台兼容骨架
@@ -197,6 +197,7 @@ GitHub 调研结论是保留现有 FastAPI/MySQL 运营运行时，按边界引�
 
 | 日期 | 迭代 | 状态 | 验证依据 |
 |---|---|---|---|
+| 2026-09-11 | 1.0 交付收口：修复无 active release 的严格运行上下文 500，新增 Docker 后端/前端部署包；部署连接公司已有 MySQL，不启动或覆盖业务库；补充管理员初始化和部署说明 | 代码与部署文件已完成；真实业务 UAT、目标服务器镜像构建和现场验收安排在开发封板后，由业务人员和技术人员共同执行 | 后端全量 `615 passed`，前端测试、Ruff 和构建通过；Dockerfile、Compose、Nginx 配置已静态核对；目标环境需执行 `docker compose -f docker-compose.deploy.yml up -d --build` 验证；当前管理员仍由项目开发者负责 |
 | 2026-09-10 | 版本边界二次收口：正式语义向量索引必须校验 active release 的语义快照、Ontology 定义和整体模型哈希；外部 Query Capability 加载上下文显式强制 active release；孪生同步读取 active release 冻结定义，草稿可继续编辑且不影响当前同步；运行页对象统计和数据权限也按 active release 读取 | 代码和自动化验证已完成；继续禁止 NL2SQL 兜底和物理 SQL 外泄 | 后端全量 `611 passed`；`uv run ruff check app tests scripts` 通过；`npm test`、`npm run build`、`git diff --check` 通过；前端构建仅有既有 chunk size 和 VueUse 注释警告 |
 | 2026-09-10 | 权限与版本边界收口：落实业务/技术字段边界、Bundle 导入保护、删除/复制等绕过口收口；孪生运行页面按激活运行上下文过滤对象、关系和动作；业务人员可进入数据绑定/校验发布做只读核对；对象查询错误改为业务错误返回 | 第一版代码已完成；当前仍由 `admin` 兼容账号贯穿开发与验收，真实人员账号和真实业务数据验收未开始；孪生同步使用 release 定义的并发一致性仍列 P2 | 后端全量 `607 passed`；`uv run ruff check app tests scripts` 通过；`npm test`、`npm run build`、`git diff --check` 通过；前端构建仅有既有 chunk size 和 VueUse 注释警告 |
 | 2026-09-10 | 第一轮代码同步：统一“技术人员”产品称谓；风险流程改用技术人员角色判断；企业模型页面将数据绑定、校验发布和默认数据源收口到技术人员入口；业务领域接口阻止业务人员修改数据源与验证客户端兼容绑定 | 该迭代第一版代码与页面边界已完成；真实人员账号分配和真实业务验收未开始；当时遗留的 Ruff 问题已在同日后续收口，见上一行 | 当时后端全量 `602 passed`；前端测试、类型检查与生产构建通过；Markdown 链接和 diff 检查通过；后续同日补跑全项目 Ruff 通过 |
