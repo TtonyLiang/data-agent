@@ -184,9 +184,14 @@ def field_aliases(runtime: dict[str, Any] | None) -> dict[str, str]:
         expression = rule.get("expression") or {}
         if not isinstance(expression, dict):
             continue
-        for source, target in (expression.get("field_aliases") or {}).items():
-            if source and target:
-                aliases[str(source)] = str(target)
+        nested = expression.get("logic_form")
+        blobs = [expression]
+        if isinstance(nested, dict):
+            blobs.append(nested)
+        for blob in blobs:
+            for source, target in (blob.get("field_aliases") or {}).items():
+                if source and target:
+                    aliases[str(source)] = str(target)
     return aliases
 
 

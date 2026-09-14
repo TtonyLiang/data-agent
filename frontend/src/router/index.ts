@@ -4,9 +4,10 @@ import { chatRunState } from '../stores/chatRun'
 import { initAuth, isLoggedIn, isTechnicalUser, technicalOnlyPaths } from '../stores/auth'
 
 const routes = [
-  { path: '/', name: 'Chat', component: () => import('../views/ChatView.vue') },
+  { path: '/', redirect: '/enterprise-model' },
+  { path: '/chat', name: 'Chat', component: () => import('../views/ChatView.vue') },
   { path: '/login', name: 'Login', component: () => import('../views/LoginView.vue'), meta: { public: true } },
-  { path: '/register', name: 'Register', component: () => import('../views/RegisterView.vue'), meta: { public: true } },
+  { path: '/register', redirect: '/login' },
   { path: '/agent', name: 'Agent', component: () => import('../views/AgentList.vue') },
   { path: '/model-config', name: 'ModelConfig', component: () => import('../views/ModelConfig.vue') },
   { path: '/prompt-config', redirect: { path: '/system-parameter', query: { tab: 'prompt' } } },
@@ -31,7 +32,7 @@ router.beforeEach(async (to, from) => {
   if (!to.meta.public && !isLoggedIn()) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
-  if (to.meta.public && isLoggedIn()) return { path: '/' }
+  if (to.meta.public && isLoggedIn()) return { path: '/enterprise-model' }
   if (technicalOnlyPaths.has(to.path) && !isTechnicalUser()) {
     ElMessage.warning('该页面仅供技术人员使用')
     return { path: '/enterprise-model' }

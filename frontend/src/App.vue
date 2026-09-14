@@ -66,10 +66,10 @@
             </template>
             <el-menu-item
               class="validation-menu-item"
-              index="/"
-              :disabled="isNavigationDisabled('/')"
-              :tabindex="isNavigationDisabled('/') ? -1 : 0"
-              @keydown.enter.prevent.stop="activateRoute('/')" @keydown.space.prevent.stop="activateRoute('/')"
+              index="/chat"
+              :disabled="isNavigationDisabled('/chat')"
+              :tabindex="isNavigationDisabled('/chat') ? -1 : 0"
+              @keydown.enter.prevent.stop="activateRoute('/chat')" @keydown.space.prevent.stop="activateRoute('/chat')"
             >
               <el-icon><ChatDotRound /></el-icon>
               <span>对话验证</span>
@@ -140,7 +140,6 @@
         </el-menu>
         <div class="header-tools" aria-label="用户工具">
           <el-tag class="env-tag" :type="envTagType" effect="light" round :title="envLabel">{{ envLabel }}</el-tag>
-          <el-button :icon="Bell" circle disabled aria-label="通知功能暂未开放" title="通知功能暂未开放" />
           <div class="user-pill" :title="displayName">
             <span class="avatar">{{ userInitial }}</span>
             <span>{{ displayName }}</span>
@@ -161,7 +160,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { chatRunState } from './stores/chatRun'
-import { Bell, Setting, SwitchButton } from '@element-plus/icons-vue'
+import { Setting, SwitchButton } from '@element-plus/icons-vue'
 import { authState, isLoggedIn, isTechnicalUser, logout } from './stores/auth'
 
 const route = useRoute()
@@ -353,10 +352,14 @@ html, body, #app {
 
 .brand span {
   display: block;
+  max-width: 168px;
   margin-top: 1px;
+  overflow: hidden;
   color: var(--wq-muted);
   font-size: 12px;
   line-height: 1.2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .top-nav {

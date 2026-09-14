@@ -8,28 +8,54 @@
       <el-button type="primary" @click="openCreate">新增用户</el-button>
     </header>
 
-    <el-table :data="users" border class="admin-table" v-loading="loading">
-      <el-table-column prop="id" label="ID" width="80" sortable />
-      <el-table-column prop="username" label="用户名" min-width="140" />
-      <el-table-column prop="display_name" label="展示名" min-width="160" />
-      <el-table-column label="角色" width="100">
+    <el-table
+      :data="users"
+      border
+      class="admin-table user-management-table"
+      table-layout="fixed"
+      scrollbar-always-on
+      v-loading="loading"
+    >
+      <el-table-column prop="id" label="ID" width="64" sortable />
+      <el-table-column
+        prop="username"
+        label="用户名"
+        width="160"
+        class-name="username-column"
+        show-overflow-tooltip
+      />
+      <el-table-column prop="display_name" label="展示名" min-width="145" show-overflow-tooltip />
+      <el-table-column
+        label="角色"
+        width="180"
+        align="center"
+        header-align="center"
+        class-name="role-column"
+      >
         <template #default="{ row }">
-          <el-tag :type="productRole(row.role) === 'technical' ? 'danger' : 'info'">
+          <el-tag class="role-tag" :type="productRole(row.role) === 'technical' ? 'danger' : 'info'">
             {{ row.role_label || (productRole(row.role) === 'technical' ? '技术人员' : '业务人员') }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="100">
+      <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="row.status === 'active' ? 'success' : 'warning'">
             {{ row.status === 'active' ? '启用' : '禁用' }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="最近登录" min-width="180">
+      <el-table-column label="最近登录" width="175">
         <template #default="{ row }">{{ formatDateTime(row.last_login_at) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="420" fixed="right">
+      <el-table-column
+        label="操作"
+        width="360"
+        fixed="right"
+        align="center"
+        header-align="center"
+        class-name="user-action-column"
+      >
         <template #default="{ row }">
           <div class="action-row">
             <el-button text type="primary" @click="openEdit(row)">编辑</el-button>
@@ -276,6 +302,7 @@ async function toggleStatus(user: CurrentUser) {
 <style scoped>
 .management-page {
   height: 100%;
+  min-width: 0;
   padding: 22px;
   overflow: auto;
 }
@@ -304,6 +331,8 @@ async function toggleStatus(user: CurrentUser) {
 }
 
 .admin-table {
+  width: 100%;
+  min-width: 0;
   background: #fff;
 }
 
@@ -311,10 +340,46 @@ async function toggleStatus(user: CurrentUser) {
   vertical-align: middle;
 }
 
+.user-management-table :deep(.el-table__inner-wrapper) {
+  min-width: 0;
+}
+
+.user-management-table :deep(.username-column .cell) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
+}
+
+.user-management-table :deep(.role-column .cell),
+.user-management-table :deep(.user-action-column .cell) {
+  overflow: visible;
+}
+
+.user-management-table :deep(.role-column .cell) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.role-tag {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  max-width: none;
+  white-space: nowrap;
+}
+
+.role-tag :deep(.el-tag__content) {
+  white-space: nowrap;
+}
+
 .action-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  min-width: max-content;
   flex-wrap: nowrap;
   white-space: nowrap;
 }
@@ -324,6 +389,8 @@ async function toggleStatus(user: CurrentUser) {
   padding: 0;
   min-height: 0;
   line-height: 1.3;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .agent-checks {

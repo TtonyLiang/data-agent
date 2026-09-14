@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -710,6 +711,7 @@ def test_capability_access_schema_and_routes_are_registered():
     assert "/api/capability-clients" in paths
     assert "/api/capability-clients/{client_id}/grants" in paths
     assert "/api/capability-invocations" in paths
+    assert "/api/v1/capabilities" in paths
     assert "/api/v1/capabilities/{capability_key}:invoke" in paths
 
 
@@ -960,3 +962,229 @@ async def test_database_error_is_sanitized_for_external_caller(monkeypatch):
     serialized = json.dumps(response, ensure_ascii=False)
     assert "customer_secret" not in serialized
     assert "请联系技术人员并提供 trace_id" in serialized
+
+
+
+@pytest.mark.asyncio
+async def test_list_granted_capabilities_returns_frozen_glossary_only_for_authorized_domain(
+    monkeypatch,
+):
+    frozen = deepcopy(_contract_binding()["contract_json"])
+    frozen["capability"]["glossary"] = {
+        "metrics": [{"key": "application_count", "name": "申请笔数"}],
+        "dimensions": [],
+        "field_aliases": {"channel": "application_channel"},
+        "examples": [],
+    }
+    grant = _bound_grant(contract_json=frozen)
+    other = _bound_grant(domain_id=99, capability_key="query_other")
+    service = CapabilityAccessService()
+    monkeypatch.setattr(service, "list_grants", AsyncMock(return_value=[grant, other]))
+    monkeypatch.setattr(
+        service,
+        "_load_execution_context",
+        AsyncMock(return_value=({"model_release": {"id": 12}}, object())),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "build_query_capability_definitions",
+        Mock(
+            return_value=[
+                {
+                    "key": "query_loan_application",
+                    "glossary": {"metrics": [{"key": "live_metric"}]},
+                }
+            ]
+        ),
+    )
+
+    result = await service.list_granted_capabilities({"id": 8}, 9)
+
+    assert result["domain_id"] == 9
+    assert len(result["capabilities"]) == 1
+    assert result["capabilities"][0]["glossary"]["metrics"][0]["key"] == "application_count"
+    assert result["capabilities"][0]["glossary"]["field_aliases"]["channel"] == (
+        "application_channel"
+    )
+    assert result["capabilities"][0]["contract_hash"] == grant["contract_hash"]
+
+
+@pytest.mark.asyncio
+async def test_list_granted_capabilities_fills_missing_glossary_from_live(monkeypatch):
+    grant = _bound_grant()
+    live_glossary = {
+        "metrics": [{"key": "application_count", "name": "申请笔数"}],
+        "dimensions": [],
+        "field_aliases": {},
+        "examples": [{"title": "按指标汇总", "logic_form": {"metrics": ["application_count"]}}],
+    }
+    service = CapabilityAccessService()
+    monkeypatch.setattr(service, "list_grants", AsyncMock(return_value=[grant]))
+    monkeypatch.setattr(
+        service,
+        "_load_execution_context",
+        AsyncMock(return_value=({"model_release": {"id": 12}}, object())),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "build_query_capability_definitions",
+        Mock(
+            return_value=[
+                {
+                    "key": "query_loan_application",
+                    "name": "live name",
+                    "glossary": live_glossary,
+                }
+            ]
+        ),
+    )
+
+    result = await service.list_granted_capabilities({"id": 8}, 9)
+
+    assert result["capabilities"][0]["name"] == "贷款申请查询"
+    assert result["capabilities"][0]["glossary"] == live_glossary
+
+
+@pytest.mark.asyncio
+async def test_list_granted_capabilities_rejects_ungranted_domain(monkeypatch):
+    service = CapabilityAccessService()
+    monkeypatch.setattr(
+        service, "list_grants", AsyncMock(return_value=[_bound_grant(domain_id=99)])
+    )
+
+    with pytest.raises(CapabilityAuthorizationError, match="未获得该业务领域"):
+        await service.list_granted_capabilities({"id": 8}, 9)
+
+
+@pytest.mark.asyncio
+async def test_ensure_grant_contract_upgrades_glossary_only_change(monkeypatch):
+    current_snapshot = deepcopy(_contract_binding()["contract_json"])
+    current_snapshot["capability"]["glossary"] = {
+        "metrics": [{"key": "application_count", "name": "申请笔数"}],
+        "dimensions": [],
+        "field_aliases": {},
+        "examples": [],
+    }
+    current = {
+        "model_release_id": 12,
+        "contract_hash": service_module.canonical_sha256(current_snapshot),
+        "contract_json": current_snapshot,
+    }
+    db = FakeDB()
+    monkeypatch.setattr(service_module, "get_management_db", lambda: db)
+    service = CapabilityAccessService()
+
+    updated = await service._ensure_grant_contract(_bound_grant(), current)
+
+    assert updated["contract_hash"] == current["contract_hash"]
+    assert db.queries[0][1]["contract_hash"] == current["contract_hash"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_grant_contract_rejects_non_glossary_change(monkeypatch):
+    current_snapshot = deepcopy(_contract_binding()["contract_json"])
+    current_snapshot["capability"]["key"] = "query_other"
+    current = {
+        "model_release_id": 12,
+        "contract_hash": service_module.canonical_sha256(current_snapshot),
+        "contract_json": current_snapshot,
+    }
+    db = FakeDB()
+    monkeypatch.setattr(service_module, "get_management_db", lambda: db)
+    service = CapabilityAccessService()
+
+    with pytest.raises(service_module.CapabilityConfigurationError, match="请重新授权"):
+        await service._ensure_grant_contract(_bound_grant(), current)
+
+    assert db.queries == []
+
+
+@pytest.mark.asyncio
+async def test_external_capability_api_lists_granted_contracts(monkeypatch):
+    class FakeCapabilityService:
+        def __init__(self):
+            self.listed = None
+
+        async def authenticate_client(self, client_key, client_secret):
+            if client_key != "client-key" or client_secret != "client-secret":
+                raise CapabilityAuthenticationError("凭据无效")
+            return {"id": 8, "client_key": client_key, "status": "active"}
+
+        async def list_granted_capabilities(self, client, domain_id):
+            self.listed = (client, domain_id)
+            return {
+                "domain_id": domain_id,
+                "model_release_id": 12,
+                "capabilities": [
+                    {
+                        "key": "query_loan_application",
+                        "glossary": {
+                            "metrics": [{"key": "application_count", "name": "申请笔数"}],
+                            "field_aliases": {"channel": "application_channel"},
+                        },
+                    }
+                ],
+            }
+
+    service = FakeCapabilityService()
+    monkeypatch.setattr(capability_api, "get_capability_access_service", lambda: service)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.get(
+            "/api/v1/capabilities",
+            params={"domain_id": 9},
+            headers={
+                "X-Capability-Key": "client-key",
+                "X-Capability-Secret": "client-secret",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["domain_id"] == 9
+    assert body["capabilities"][0]["glossary"]["metrics"][0]["key"] == "application_count"
+    assert service.listed[0]["id"] == 8
+    assert service.listed[1] == 9
+
+
+@pytest.mark.asyncio
+async def test_external_capability_list_api_returns_auth_and_authorization_failures(
+    monkeypatch,
+):
+    class FakeCapabilityService:
+        async def authenticate_client(self, client_key, client_secret):
+            if client_secret != "client-secret":
+                raise CapabilityAuthenticationError("凭据无效")
+            return {"id": 8, "client_key": client_key, "status": "active"}
+
+        async def list_granted_capabilities(self, client, domain_id):
+            raise CapabilityAuthorizationError("调用方未获得该业务领域的能力授权")
+
+    monkeypatch.setattr(
+        capability_api, "get_capability_access_service", lambda: FakeCapabilityService()
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        unauthorized = await client.get(
+            "/api/v1/capabilities",
+            params={"domain_id": 9},
+            headers={
+                "X-Capability-Key": "client-key",
+                "X-Capability-Secret": "wrong-secret",
+            },
+        )
+        forbidden = await client.get(
+            "/api/v1/capabilities",
+            params={"domain_id": 9},
+            headers={
+                "X-Capability-Key": "client-key",
+                "X-Capability-Secret": "client-secret",
+            },
+        )
+
+    assert unauthorized.status_code == 401
+    assert forbidden.status_code == 403
+    assert forbidden.json()["detail"] == "调用方未获得该业务领域的能力授权"

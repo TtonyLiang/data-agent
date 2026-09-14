@@ -26,12 +26,12 @@ from app.agent.domain_rules import (
 from app.agent.domain_rules import (
     extract_top_limit as extract_configured_top_limit,
 )
+from app.agent.domain_rules import (
+    field_aliases as configured_field_aliases,
+)
 from app.agent.ontology_evidence import select_ontology_context
 from app.agent.prompts import load_prompt
-from app.agent.query_capability import (
-    query_capability_prompt_payload,
-    resolve_query_capability_key,
-)
+from app.agent.query_capability import resolve_query_capability_key
 from app.models.knowledge import LogicFilter, LogicForm, LogicSort
 from app.services.llm_service import get_llm_service
 from app.services.prompt_service import get_prompt_service
@@ -530,7 +530,12 @@ def build_runtime_context(
     likely_joins: list[dict] | None = None,
     schema_scope: dict | None = None,
 ) -> str:
-    """Serialize the semantic runtime subset used by the NL2LF prompt."""
+    """Serialize canonical metric/dimension keys for the NL2LF prompt.
+
+    Query capability contracts stay out of the prompt; they are matched after
+    LogicForm compilation. Schema scores are recall traces, not LogicForm keys.
+    """
+    _ = (query_context, schema_scope)
     metrics = [
         {
             "metric_key": item.get("metric_key"),
@@ -539,71 +544,116 @@ def build_runtime_context(
             "dimensions": item.get("dimensions", []),
         }
         for item in runtime.get("metrics", [])
+        if isinstance(item, dict) and item.get("metric_key")
     ]
     dimensions = [
         {
             "asset_key": item.get("asset_key"),
             "role": item.get("role"),
-            "table": item.get("table_name"),
-            "column": item.get("column_name"),
         }
         for item in runtime.get("mappings", [])
-        if item.get("role") in {"dimension", "filter", "time"}
+        if isinstance(item, dict)
+        and item.get("role") in {"dimension", "filter", "time"}
+        and item.get("asset_key")
     ]
     rules = [
         {
             "rule_key": item.get("rule_key"),
             "name": item.get("name"),
-            "description": item.get("description"),
         }
         for item in runtime.get("rules", [])
+        if isinstance(item, dict) and item.get("rule_key")
     ]
     physical_schema = {
-        "scope": schema_scope or {},
         "tables": [
             {
                 "table_name": item.get("table_name") or item.get("table"),
                 "table_comment": item.get("table_comment") or item.get("comment"),
-                "score": item.get("score"),
-                "reason": item.get("reason"),
-                "column_count": item.get("column_count"),
             }
             for item in (relevant_tables or [])
+            if isinstance(item, dict)
         ],
         "columns": [
             {
                 "table_name": item.get("table_name") or item.get("table"),
                 "column_name": item.get("column_name") or item.get("column"),
                 "column_comment": item.get("column_comment") or item.get("comment"),
-                "data_type": item.get("data_type"),
-                "score": item.get("score"),
-                "reason": item.get("reason"),
             }
             for item in (relevant_columns or [])
+            if isinstance(item, dict)
         ],
         "joins": [
             {
                 "left": item.get("left"),
                 "right": item.get("right"),
-                "reason": item.get("reason"),
             }
             for item in (likely_joins or [])
+            if isinstance(item, dict)
         ],
     }
-    ontology_payload = select_ontology_context(ontology_context, ontology_evidence)
     payload = {
-            "metrics": metrics,
-            "dimensions_and_filters": dimensions,
-            "rules": rules,
-            "physical_schema": physical_schema,
-            "ontology": ontology_payload,
+        "metrics": metrics,
+        "dimensions_and_filters": dimensions,
+        "rules": rules,
+        "physical_schema": physical_schema,
+        "ontology": _compact_ontology_for_logic_form(
+            select_ontology_context(ontology_context, ontology_evidence)
+        ),
     }
-    if query_context:
-        payload["query_capabilities"] = query_capability_prompt_payload(query_context)
-    return json.dumps(
-        payload,
-        ensure_ascii=False,
-    )
+    aliases = configured_field_aliases(runtime)
+    if aliases:
+        payload["field_aliases"] = aliases
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _compact_ontology_for_logic_form(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep object/link/action keys for disambiguation; drop SQL and full property bags."""
+    domain = payload.get("domain") if isinstance(payload.get("domain"), dict) else {}
+    release = payload.get("release")
+    compact_release = None
+    if isinstance(release, dict):
+        compact_release = {
+            key: release.get(key)
+            for key in ("id", "version", "name")
+            if release.get(key) not in (None, "")
+        } or None
+    elif release not in (None, ""):
+        compact_release = release
+    return {
+        "domain": {
+            key: domain.get(key)
+            for key in ("id", "domain_key", "name")
+            if domain.get(key) not in (None, "")
+        },
+        "release": compact_release,
+        "object_types": [
+            {
+                "object_key": item.get("object_key"),
+                "name": item.get("name"),
+            }
+            for item in payload.get("object_types") or []
+            if isinstance(item, dict) and item.get("object_key")
+        ],
+        "link_types": [
+            {
+                "link_key": item.get("link_key"),
+                "name": item.get("name"),
+                "source_object_key": item.get("source_object_key"),
+                "target_object_key": item.get("target_object_key"),
+            }
+            for item in payload.get("link_types") or []
+            if isinstance(item, dict) and item.get("link_key")
+        ],
+        "actions": [
+            {
+                "action_key": item.get("action_key"),
+                "name": item.get("name"),
+                "target_object_key": item.get("target_object_key"),
+            }
+            for item in payload.get("actions") or []
+            if isinstance(item, dict) and item.get("action_key")
+        ],
+    }
 
 
 def build_user_prompt(

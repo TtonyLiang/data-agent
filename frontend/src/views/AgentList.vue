@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h2>调试与验证智能体</h2>
-        <p>用于调试、回归和验收企业模型能力；第三方 Agent 通过能力合同接入。</p>
+        <p>只用于验收平台能力是否达标。标准是同一企业模型版本和 Query 约定下，第三方 Agent 应得到同样的业务结果。</p>
       </div>
       <div class="header-actions">
         <el-tag effect="plain">共 {{ agents.length }} 个验证智能体</el-tag>
@@ -14,7 +14,7 @@
     </div>
 
     <div class="table-surface">
-      <el-table :data="agents" border stripe>
+      <el-table :data="agents" border stripe height="100%">
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="name" label="名称" min-width="150" />
         <el-table-column prop="description" label="描述" min-width="220" show-overflow-tooltip />
@@ -489,7 +489,9 @@ async function handleDelete(agent: AgentItem) {
 .page-shell {
   height: 100%;
   min-height: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 28px;
   background: var(--wq-bg);
 }
@@ -523,11 +525,19 @@ async function handleDelete(agent: AgentItem) {
 }
 
 .table-surface {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   background: #fff;
   border: 1px solid var(--wq-border);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: var(--wq-shadow);
+}
+
+.table-surface :deep(.el-table) {
+  flex: 1;
 }
 
 .inline-code {

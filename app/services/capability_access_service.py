@@ -100,6 +100,36 @@ def _new_trace_id() -> str:
     return f"trc_{uuid4().hex[:12]}"
 
 
+def _capability_glossary(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    glossary = payload.get("glossary")
+    if not isinstance(glossary, dict):
+        return None
+    if (
+        glossary.get("metrics")
+        or glossary.get("dimensions")
+        or glossary.get("field_aliases")
+        or glossary.get("examples")
+    ):
+        return glossary
+    return None
+
+
+def _contract_without_glossary(snapshot: dict[str, Any]) -> dict[str, Any]:
+    cloned = deepcopy(snapshot)
+    capability = cloned.get("capability")
+    if isinstance(capability, dict):
+        capability.pop("glossary", None)
+    return cloned
+
+
+def _same_contract_except_glossary(stored: dict[str, Any], current: dict[str, Any]) -> bool:
+    return canonical_sha256(_contract_without_glossary(stored)) == canonical_sha256(
+        _contract_without_glossary(current)
+    )
+
+
 class CapabilityAccessService:
     async def create_client(
         self,
@@ -330,6 +360,63 @@ class CapabilityAccessService:
             {"client_id": client_id},
         )
         return [_normalize_grant(row) for row in rows]
+
+    async def list_granted_capabilities(
+        self, client: dict[str, Any], domain_id: int
+    ) -> dict[str, Any]:
+        """Return frozen business dictionaries for capabilities this caller may invoke."""
+        client_id = int(client["id"])
+        grants = [
+            item
+            for item in await self.list_grants(client_id)
+            if int(item.get("domain_id") or 0) == int(domain_id)
+            and str(item.get("status") or "") == "active"
+        ]
+        if not grants:
+            raise CapabilityAuthorizationError("调用方未获得该业务领域的能力授权")
+        first = grants[0]
+        context, runtime = await self._load_execution_context(
+            domain_id,
+            first.get("execution_agent_id"),
+            str(first.get("capability_key") or ""),
+        )
+        definitions = {
+            item.get("key"): item
+            for item in build_query_capability_definitions(runtime, context)
+        }
+        capabilities = []
+        for grant in grants:
+            stored = grant.get("contract_json")
+            frozen = (
+                stored.get("capability")
+                if isinstance(stored, dict) and isinstance(stored.get("capability"), dict)
+                else None
+            )
+            live = definitions.get(grant.get("capability_key"))
+            contract = frozen or live
+            if not isinstance(contract, dict):
+                continue
+            payload = dict(contract)
+            if _capability_glossary(payload) is None:
+                live_glossary = _capability_glossary(live if isinstance(live, dict) else None)
+                if live_glossary is not None:
+                    payload["glossary"] = live_glossary
+            capabilities.append(
+                {
+                    **payload,
+                    "model_release_id": grant.get("model_release_id"),
+                    "contract_hash": grant.get("contract_hash"),
+                }
+            )
+        release = context.get("model_release") or {}
+        return {
+            "domain_id": domain_id,
+            "model_release_id": (
+                first.get("model_release_id")
+                or (release.get("id") if isinstance(release, dict) else None)
+            ),
+            "capabilities": capabilities,
+        }
 
     async def invoke(
         self,
@@ -625,6 +712,20 @@ class CapabilityAccessService:
         if canonical_sha256(stored_contract) != stored_hash:
             raise CapabilityConfigurationError("能力授权合同快照校验失败")
         if stored_hash != current_binding["contract_hash"]:
+            current_contract = current_binding.get("contract_json")
+            if isinstance(current_contract, dict) and _same_contract_except_glossary(
+                stored_contract, current_contract
+            ):
+                await get_management_db().execute_query(
+                    "UPDATE capability_grant SET contract_hash = :contract_hash, "
+                    "contract_json = :contract_json WHERE id = :id",
+                    {
+                        "id": grant["id"],
+                        "contract_hash": current_binding["contract_hash"],
+                        "contract_json": canonical_json(current_contract),
+                    },
+                )
+                return {**grant, **current_binding}
             raise CapabilityConfigurationError(
                 "当前 Query Capability 合同与授权快照不一致，请重新授权"
             )

@@ -1156,6 +1156,27 @@ export interface OntologyAgentContext {
   tools: OntologyAgentToolDefinition[]
 }
 
+export interface OntologyQueryCapabilityGlossary {
+  metrics: Array<{
+    key: string
+    name?: string
+    synonyms?: string[]
+    description?: string
+    dimensions?: string[]
+  }>
+  dimensions: Array<{
+    key: string
+    name?: string
+    synonyms?: string[]
+    role?: string
+  }>
+  field_aliases?: Record<string, string>
+  examples?: Array<{
+    title?: string
+    logic_form?: Record<string, unknown>
+  } & Record<string, unknown>>
+}
+
 export interface OntologyQueryCapability {
   key: string
   name: string
@@ -1164,6 +1185,7 @@ export interface OntologyQueryCapability {
   domain_key?: string | null
   supported_metrics: string[]
   supported_dimensions: string[]
+  glossary?: OntologyQueryCapabilityGlossary
   input_slots: Array<{
     slot_key: string
     data_type: string

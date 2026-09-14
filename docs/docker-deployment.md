@@ -25,7 +25,7 @@ cp .env.example .env
 - `JWT_SECRET_KEY`（至少 32 字节）
 - `SECRET_ENCRYPTION_KEY`
 
-生产或共享环境将 `DEBUG=false`，不要把密码、API Key 提交到 Git。
+部署包会把 `DEBUG=false` 写入 Compose，覆盖 `.env` 里的开发值。账号由技术人员在系统参数中创建，不开放自助注册。不要把密码、API Key 提交到 Git。
 
 ## 2. 启动平台
 

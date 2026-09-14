@@ -19,6 +19,7 @@
         row-key="id"
         border
         stripe
+        height="100%"
         @expand-change="handleExpandChange"
       >
         <el-table-column type="expand" width="48">
@@ -1104,7 +1105,9 @@ async function handleDelete(ds: DatasourceItem) {
 .page-shell {
   height: 100%;
   min-height: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 18px var(--wq-page-gutter) 24px !important;
   background: var(--wq-bg);
 }
@@ -1138,11 +1141,19 @@ async function handleDelete(ds: DatasourceItem) {
 }
 
 .table-surface {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   background: #fff;
   border: 1px solid var(--wq-border);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: var(--wq-shadow);
+}
+
+.table-surface :deep(.el-table) {
+  flex: 1;
 }
 
 .schema-workbench {

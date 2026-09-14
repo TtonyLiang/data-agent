@@ -47,3 +47,36 @@ assert.ok(
   source.includes('format="YYYY-MM-DD HH:mm:ss"') && source.includes('formatDateTime(detailConfig.api_key_expires_at)'),
   'ModelConfig should display API key expiration timestamps only to seconds',
 )
+
+assert.ok(
+  source.includes('class="model-config-table"') &&
+    source.includes('table-layout="fixed"') &&
+    source.includes('scrollbar-always-on'),
+  'ModelConfig table should keep a stable fixed layout and scrollbar gutter',
+)
+
+assert.ok(
+  source.includes('width="118"') &&
+    source.includes('class-name="api-key-column"') &&
+    source.includes('class="api-key-status"') &&
+    source.includes('white-space: nowrap'),
+  'ModelConfig should keep the complete API key status visible',
+)
+
+assert.ok(
+  source.includes('class="model-action-row"') &&
+    source.includes('class="model-action-button"') &&
+    source.includes('class-name="model-action-column"') &&
+    source.includes('width="196"') &&
+    source.includes('link type="primary"') &&
+    source.includes('flex-wrap: nowrap'),
+  'ModelConfig actions should remain compact and on one line',
+)
+
+assert.ok(
+  source.includes('@click="handleTest(row)"') &&
+    source.includes('@click="openDetail(row)"') &&
+    source.includes('@click="openEdit(row)"') &&
+    source.includes('@click="handleDelete(row)"'),
+  'ModelConfig action events should remain unchanged',
+)

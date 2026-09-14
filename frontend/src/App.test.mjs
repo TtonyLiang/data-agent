@@ -117,8 +117,9 @@ assert.ok(
   source.includes('aria-label="验证应用"') &&
     source.includes('aria-label="平台管理"') &&
     source.includes(':aria-current="route.path === \'/enterprise-model\' ? \'page\' : undefined"') &&
-    source.includes('disabled aria-label="通知功能暂未开放"'),
-  'navigation and unavailable header controls should expose their state to assistive technology',
+    source.includes('aria-label="用户工具"') &&
+    !source.includes('通知功能暂未开放'),
+  'navigation should expose landmarks and current page without a disabled placeholder control',
 )
 
 assert.ok(
@@ -138,6 +139,18 @@ for (const authSource of [loginSource, registerSource]) {
     'authentication pages should expose loading state and focus the username field',
   )
 }
+
+assert.ok(
+  loginSource.includes("route.query.redirect || '/enterprise-model'") &&
+    loginSource.includes("redirect === '/' ? '/enterprise-model' : redirect"),
+  'login should open the enterprise model unless a deeper redirect was requested',
+)
+
+assert.ok(
+  !loginSource.includes('/register') &&
+    !loginSource.includes('注册公司内部账号'),
+  'login should not offer self-service registration',
+)
 
 const palette = {
   background: tokenHex('wq-bg'),

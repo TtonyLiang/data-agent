@@ -13,35 +13,57 @@
       </div>
     </div>
 
-    <div class="table-surface">
-      <el-table :data="filteredConfigs" border stripe>
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="name" label="名称" min-width="150" />
-        <el-table-column label="类型" width="120">
+    <div class="table-surface model-table-surface">
+      <el-table
+        class="model-config-table"
+        :data="filteredConfigs"
+        border
+        stripe
+        table-layout="fixed"
+        scrollbar-always-on
+      >
+        <el-table-column prop="id" label="ID" width="64" />
+        <el-table-column prop="name" label="名称" min-width="130" show-overflow-tooltip />
+        <el-table-column label="类型" width="112">
           <template #default="{ row }">
             <el-tag :type="row.model_type === 'chat' ? 'primary' : 'success'" round>
               {{ row.model_type === 'chat' ? '大语言模型' : '向量模型' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="provider" label="提供商" width="140" />
-        <el-table-column prop="model_name" label="模型" min-width="180" />
-        <el-table-column prop="base_url" label="Base URL" min-width="240" show-overflow-tooltip />
-        <el-table-column label="API Key" width="110">
+        <el-table-column prop="provider" label="提供商" min-width="110" show-overflow-tooltip />
+        <el-table-column prop="model_name" label="模型" min-width="145" show-overflow-tooltip />
+        <el-table-column prop="base_url" label="Base URL" min-width="190" show-overflow-tooltip />
+        <el-table-column
+          label="API Key"
+          width="118"
+          align="center"
+          header-align="center"
+          class-name="api-key-column"
+        >
           <template #default="{ row }">
-            <el-tag :type="apiKeyTagType(row)" size="small" round>
+            <el-tag class="api-key-status" :type="apiKeyTagType(row)" size="small" round>
               {{ apiKeyTagText(row) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="embedding_dimension" label="维度" width="100" />
-        <el-table-column prop="status" label="状态" width="100" />
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column prop="embedding_dimension" label="维度" width="76" />
+        <el-table-column prop="status" label="状态" width="82" />
+        <el-table-column
+          label="操作"
+          width="196"
+          fixed="right"
+          align="center"
+          header-align="center"
+          class-name="model-action-column"
+        >
           <template #default="{ row }">
-            <el-button size="small" :loading="testingConfigId === row.id" @click="handleTest(row)">测试</el-button>
-            <el-button size="small" @click="openDetail(row)">详情</el-button>
-            <el-button size="small" @click="openEdit(row)">编辑</el-button>
-            <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
+            <div class="model-action-row">
+              <el-button class="model-action-button" link type="primary" size="small" :loading="testingConfigId === row.id" @click="handleTest(row)">测试</el-button>
+              <el-button class="model-action-button" link type="primary" size="small" @click="openDetail(row)">详情</el-button>
+              <el-button class="model-action-button" link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
+              <el-button class="model-action-button" link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -306,6 +328,7 @@ async function handleDelete(config: ModelConfigItem) {
 .page-shell {
   height: 100%;
   min-height: 0;
+  min-width: 0;
   overflow: auto;
   padding: 28px;
   background: var(--wq-bg);
@@ -345,6 +368,55 @@ async function handleDelete(config: ModelConfigItem) {
   border-radius: 8px;
   overflow: hidden;
   box-shadow: var(--wq-shadow);
+}
+
+.model-table-surface {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.model-config-table {
+  width: 100%;
+  min-width: 0;
+}
+
+.model-config-table :deep(.el-table__inner-wrapper) {
+  min-width: 0;
+}
+
+.model-config-table :deep(.el-table__cell) {
+  vertical-align: middle;
+}
+
+.model-config-table :deep(.api-key-column .cell),
+.model-config-table :deep(.model-action-column .cell) {
+  overflow: visible;
+}
+
+.api-key-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 76px;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.model-action-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: max-content;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.model-action-button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  margin: 0 !important;
+  padding: 3px 6px;
+  white-space: nowrap;
 }
 
 .form-hint {

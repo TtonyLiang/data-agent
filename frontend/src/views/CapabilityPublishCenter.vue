@@ -3,7 +3,7 @@
     <header class="page-header">
       <div>
         <h2>能力发布中心</h2>
-        <p>当前对外发布只读 Query Capability；对象查询和 Action 工具仅用于本项目内部验证。</p>
+        <p>正式出口是第三方调用已发布 Query 约定。本项目验证智能体只用来核对同一约定能否复现同样的业务结果。</p>
       </div>
       <div class="header-actions">
         <el-select v-model="domainId" class="domain-select" placeholder="选择业务领域" aria-label="选择业务领域">
@@ -38,7 +38,7 @@
       :description="canManage ? '暂无业务领域，请先在企业模型中创建并发布' : '暂无可访问业务领域，请联系技术人员配置业务领域或验证客户端权限'"
     />
 
-    <template v-else-if="currentDomain">
+    <div v-else-if="currentDomain" class="capability-content">
       <details class="publish-chain-disclosure">
         <summary>能力发布链路</summary>
       <section class="publish-chain" aria-label="能力发布链路">
@@ -48,7 +48,7 @@
         </div>
         <i aria-hidden="true">→</i>
         <div>
-          <span>能力合同</span>
+          <span>能力约定</span>
           <strong>外部 Query / 内部验证工具</strong>
         </div>
         <i aria-hidden="true">→</i>
@@ -71,7 +71,7 @@
           <small>确定性编译与受控执行</small>
         </div>
         <div>
-          <span>内部动作合同</span>
+          <span>内部动作约定</span>
           <strong>{{ actions.length }}</strong>
           <small>按当前角色过滤</small>
         </div>
@@ -87,7 +87,7 @@
         class="publish-alert"
         type="warning"
         :closable="false"
-        title="当前领域尚未激活统一企业模型版本；可以检查能力合同，但外部能力调用会被阻断。"
+        title="当前领域尚未激活统一企业模型版本；可以检查能力约定，但外部能力调用会被阻断。"
       />
 
       <section class="capability-surface">
@@ -99,7 +99,7 @@
                 <p>通过独立调用凭据开放，由本体对象与明确绑定的语义指标生成。</p>
               </div>
             </div>
-            <el-table v-if="queryCapabilities.length" :data="queryCapabilities" border class="capability-table">
+            <el-table v-if="queryCapabilities.length" :data="queryCapabilities" border height="100%" class="capability-table">
               <el-table-column label="能力" min-width="230">
                 <template #default="{ row }">
                   <div class="primary-cell">
@@ -128,7 +128,7 @@
               </el-table-column>
               <el-table-column label="操作" width="110" fixed="right" align="center">
                 <template #default="{ row }">
-                  <el-button link type="primary" :aria-label="`查看 Query 能力合同：${row.name}`" @click="showQueryContract(row)">查看合同</el-button>
+                  <el-button link type="primary" :aria-label="`查看 Query 能力约定：${row.name}`" @click="showQueryContract(row)">查看约定</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -142,7 +142,7 @@
                 <p>当前仅供本项目内部验证；执行时仍会校验角色、对象版本、前置条件与审批单号。</p>
               </div>
             </div>
-            <el-table v-if="actions.length" :data="actions" border class="capability-table">
+            <el-table v-if="actions.length" :data="actions" border height="100%" class="capability-table">
               <el-table-column label="动作" min-width="230">
                 <template #default="{ row }">
                   <div class="primary-cell">
@@ -154,7 +154,7 @@
               <el-table-column label="目标对象" min-width="170">
                 <template #default="{ row }"><code>{{ row.target_object_key }}</code></template>
               </el-table-column>
-              <el-table-column label="合同组成" min-width="260">
+              <el-table-column label="约定组成" min-width="260">
                 <template #default="{ row }">
                   <div class="scope-cell">
                     <span><b>{{ row.parameters?.length || 0 }}</b> 个参数</span>
@@ -173,7 +173,7 @@
               </el-table-column>
               <el-table-column label="操作" width="110" fixed="right" align="center">
                 <template #default="{ row }">
-                  <el-button link type="primary" :aria-label="`查看内部动作合同：${row.name}`" @click="showActionContract(row)">查看合同</el-button>
+                  <el-button link type="primary" :aria-label="`查看内部动作约定：${row.name}`" @click="showActionContract(row)">查看约定</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -215,6 +215,7 @@
               v-loading="clientsLoading"
               :data="clients"
               border
+              height="100%"
               class="capability-table"
             >
               <el-table-column label="调用方" min-width="210">
@@ -228,8 +229,22 @@
               <el-table-column label="Client Key" min-width="240">
                 <template #default="{ row }"><code>{{ row.client_key }}</code></template>
               </el-table-column>
-              <el-table-column label="授权" width="100" align="center">
-                <template #default="{ row }">{{ activeGrantCount(row.id) }} 项</template>
+              <el-table-column label="授权" min-width="260">
+                <template #default="{ row }">
+                  <div v-if="activeGrants(row.id).length" class="grant-summary">
+                    <el-tooltip placement="top" :show-after="200">
+                      <template #content>
+                        <div class="grant-tooltip">
+                          <p v-for="item in activeGrants(row.id)" :key="item.id || item.capability_key">
+                            {{ capabilityLabel(item.capability_key) }} · {{ item.capability_key }}
+                          </p>
+                        </div>
+                      </template>
+                      <span class="grant-summary-text">{{ activeGrantPreview(row.id) }}</span>
+                    </el-tooltip>
+                  </div>
+                  <span v-else class="cell-note">未授权</span>
+                </template>
               </el-table-column>
               <el-table-column label="状态" width="100" align="center">
                 <template #default="{ row }">
@@ -271,6 +286,7 @@
               v-loading="auditsLoading"
               :data="audits"
               border
+              height="100%"
               class="capability-table"
             >
               <el-table-column label="时间" width="170">
@@ -320,9 +336,9 @@
         :closable="false"
         title="第一版已提供独立调用身份、领域能力授权和调用审计；独立能力版本、灰度与配额治理仍属于后续建设。"
       />
-    </template>
+    </div>
 
-    <el-drawer v-model="contractVisible" title="能力调用合同" size="560px" append-to-body>
+    <el-drawer v-model="contractVisible" title="能力调用约定" size="640px" append-to-body>
       <div v-if="selectedContract" class="contract-detail">
         <div class="contract-identity">
           <span>{{ selectedContract.kind }}</span>
@@ -330,6 +346,52 @@
           <code>{{ selectedContract.key }}</code>
         </div>
         <p v-if="selectedContract.description" class="contract-description">{{ selectedContract.description }}</p>
+        <section v-if="selectedContract.glossary" class="glossary-section">
+          <h4>业务词典</h4>
+          <p class="endpoint-note">第三方 Agent 用这些指标、维度和别名构造 LogicForm；不必复制内置验证智能体的提示词。</p>
+          <div v-if="selectedContract.glossary.metrics?.length" class="glossary-group">
+            <h5>指标</h5>
+            <ul class="glossary-list">
+              <li v-for="item in selectedContract.glossary.metrics" :key="`metric-${item.key}`">
+                <div class="glossary-term">
+                  <strong>{{ item.name || item.key }}</strong>
+                  <code>{{ item.key }}</code>
+                </div>
+                <p v-if="item.description" class="glossary-meta">{{ item.description }}</p>
+                <p v-if="item.synonyms?.length" class="glossary-meta">同义词：{{ item.synonyms.join('、') }}</p>
+                <p v-if="item.dimensions?.length" class="glossary-meta">可用维度：{{ item.dimensions.join('、') }}</p>
+              </li>
+            </ul>
+          </div>
+          <div v-if="selectedContract.glossary.dimensions?.length" class="glossary-group">
+            <h5>维度</h5>
+            <ul class="glossary-list">
+              <li v-for="item in selectedContract.glossary.dimensions" :key="`dimension-${item.key}`">
+                <div class="glossary-term">
+                  <strong>{{ item.name || item.key }}</strong>
+                  <code>{{ item.key }}</code>
+                </div>
+                <p v-if="item.synonyms?.length" class="glossary-meta">同义词：{{ item.synonyms.join('、') }}</p>
+              </li>
+            </ul>
+          </div>
+          <div v-if="aliasEntries(selectedContract.glossary.field_aliases).length" class="glossary-group">
+            <h5>字段别名</h5>
+            <ul class="glossary-list">
+              <li v-for="item in aliasEntries(selectedContract.glossary.field_aliases)" :key="`alias-${item.source}`">
+                <code>{{ item.source }}</code>
+                <span class="glossary-meta">→ {{ item.target }}</span>
+              </li>
+            </ul>
+          </div>
+          <div v-if="selectedContract.glossary.examples?.length" class="glossary-group">
+            <h5>示例 LogicForm</h5>
+            <div v-for="(item, index) in selectedContract.glossary.examples" :key="`example-${index}`" class="glossary-example">
+              <span>{{ item.title || `示例 ${index + 1}` }}</span>
+              <pre>{{ JSON.stringify(item.logic_form || item, null, 2) }}</pre>
+            </div>
+          </div>
+        </section>
         <section>
           <h4>调用入口</h4>
           <code class="endpoint">{{ selectedContract.endpoint }}</code>
@@ -339,10 +401,10 @@
           <h4>请求示例</h4>
           <pre>{{ JSON.stringify(selectedContract.example, null, 2) }}</pre>
         </section>
-        <section>
-          <h4>完整合同</h4>
+        <details class="contract-raw">
+          <summary>完整约定 JSON</summary>
           <pre>{{ JSON.stringify(selectedContract.raw, null, 2) }}</pre>
-        </section>
+        </details>
       </div>
     </el-drawer>
 
@@ -362,14 +424,21 @@
             新增授权
           </el-button>
         </div>
-        <el-table v-if="selectedGrants.length" :data="selectedGrants" border size="small">
-          <el-table-column label="业务领域" min-width="150">
+        <el-table
+          v-if="selectedGrants.length"
+          :data="selectedGrants"
+          border
+          size="small"
+          class="grant-table"
+          table-layout="fixed"
+        >
+          <el-table-column label="业务领域" min-width="88">
             <template #default="{ row }">{{ domainName(row.domain_id) }}</template>
           </el-table-column>
-          <el-table-column label="能力" min-width="220">
-            <template #default="{ row }"><code>{{ row.capability_key }}</code></template>
+          <el-table-column label="能力" min-width="132" show-overflow-tooltip>
+            <template #default="{ row }"><code class="grant-key">{{ row.capability_key }}</code></template>
           </el-table-column>
-          <el-table-column label="数据边界" min-width="180">
+          <el-table-column label="数据边界" min-width="128">
             <template #default="{ row }">
               <div class="primary-cell">
                 <strong>{{ row.execution_agent_id ? '旧权限兼容适配' : '业务领域权限' }}</strong>
@@ -377,22 +446,22 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="授权合同" min-width="170">
+          <el-table-column label="授权约定" min-width="112">
             <template #default="{ row }">
               <div class="primary-cell">
                 <strong>{{ row.model_release_id ? `模型 #${row.model_release_id}` : '历史授权' }}</strong>
-                <span class="cell-note">{{ row.contract_hash ? `合同 ${row.contract_hash.slice(0, 8)}…` : '首次调用时兼容绑定' }}</span>
+                <span class="cell-note">{{ row.contract_hash ? `约定 ${row.contract_hash.slice(0, 8)}…` : '首次调用时兼容绑定' }}</span>
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="90">
+          <el-table-column label="状态" width="72">
             <template #default="{ row }">
               <el-tag :type="row.status === 'active' ? 'success' : 'info'" effect="plain">
                 {{ row.status === 'active' ? '生效' : '已撤销' }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="90" align="center">
+          <el-table-column label="操作" width="72" align="center" class-name="grant-action-column">
             <template #default="{ row }">
               <el-button
                 v-if="row.status === 'active'"
@@ -499,6 +568,7 @@ import {
   type OntologyAgentContext,
   type OntologyAgentToolDefinition,
   type OntologyQueryCapability,
+  type OntologyQueryCapabilityGlossary,
   type SemanticDomain,
 } from '../api'
 import { isTechnicalUser } from '../stores/auth'
@@ -514,6 +584,7 @@ interface ContractView {
   endpointNote: string
   example: Record<string, unknown>
   raw: Record<string, unknown>
+  glossary?: OntologyQueryCapabilityGlossary
 }
 type FocusableControl = { focus: () => void }
 
@@ -761,8 +832,18 @@ async function revokeGrant(grant: CapabilityGrant) {
   }
 }
 
-function activeGrantCount(clientId: number) {
-  return (grantsByClient.value[clientId] || []).filter(item => item.status === 'active').length
+function activeGrants(clientId: number) {
+  return (grantsByClient.value[clientId] || []).filter(item => (
+    item.status === 'active' && (!domainId.value || item.domain_id === domainId.value)
+  ))
+}
+
+function capabilityLabel(key: string) {
+  return queryCapabilities.value.find(item => item.key === key)?.name || key
+}
+
+function activeGrantPreview(clientId: number) {
+  return activeGrants(clientId).map(item => capabilityLabel(item.capability_key)).join('、')
 }
 
 function clientName(clientId: number) {
@@ -791,9 +872,10 @@ function auditStatusType(status: string) {
 }
 
 function showQueryContract(capability: OntologyQueryCapability) {
+  const sampleLogicForm = capability.glossary?.examples?.[0]?.logic_form
   const example: Record<string, unknown> = {
     domain_id: domainId.value,
-    logic_form: {
+    logic_form: sampleLogicForm || {
       domain_key: currentDomain.value?.domain_key,
       metrics: capability.supported_metrics.slice(0, 1),
       dimensions: capability.supported_dimensions.slice(0, 1),
@@ -809,11 +891,16 @@ function showQueryContract(capability: OntologyQueryCapability) {
     description: capability.description || '',
     tool: 'ontology_query_capability',
     endpoint: `POST /api/v1/capabilities/${capability.key}:invoke`,
-    endpointNote: '请求头需携带 X-Capability-Key 与 X-Capability-Secret。',
+    endpointNote: '先 GET /api/v1/capabilities?domain_id= 读取业务词典，再携带 X-Capability-Key 与 X-Capability-Secret 调用。',
     example,
     raw: capability as unknown as Record<string, unknown>,
+    glossary: capability.glossary,
   }
   contractVisible.value = true
+}
+
+function aliasEntries(aliases: Record<string, string> | undefined) {
+  return Object.entries(aliases || {}).map(([source, target]) => ({ source, target }))
 }
 
 function showActionContract(action: Record<string, unknown>) {
@@ -875,10 +962,20 @@ function errorMessage(error: unknown) {
 .capability-page {
   height: 100%;
   min-height: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.capability-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .consumer-note {
+  display: none;
   margin-bottom: 14px;
 }
 
@@ -946,7 +1043,7 @@ function errorMessage(error: unknown) {
 .capability-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin-bottom: 16px;
+  margin-bottom: 10px;
   overflow: hidden;
   background: var(--wq-surface);
   border: 1px solid var(--wq-border);
@@ -956,9 +1053,9 @@ function errorMessage(error: unknown) {
 
 .capability-summary > div {
   min-width: 0;
-  padding: 10px 13px;
+  padding: 8px 12px;
   display: grid;
-  gap: 4px;
+  gap: 2px;
   border-right: 1px solid var(--wq-border);
 }
 
@@ -977,7 +1074,7 @@ function errorMessage(error: unknown) {
 
 .capability-summary strong {
   color: var(--wq-text);
-  font-size: 19px;
+  font-size: 16px;
   line-height: 1.25;
 }
 
@@ -990,12 +1087,48 @@ function errorMessage(error: unknown) {
 }
 
 .capability-surface {
-  min-height: 380px;
+  flex: 1;
+  min-height: 280px;
   padding: 0 16px 16px;
+  overflow: hidden;
   background: var(--wq-surface);
   border: 1px solid var(--wq-border);
   border-radius: var(--wq-radius);
   box-shadow: var(--wq-shadow-sm);
+}
+
+.capability-surface :deep(.el-tabs) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.capability-surface :deep(.el-tabs__header) {
+  flex: 0 0 auto;
+}
+
+.capability-surface :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.capability-surface :deep(.el-tab-pane) {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.capability-table,
+.tool-list {
+  flex: 1;
+  min-height: 0;
+}
+
+.tool-list {
+  overflow-y: auto;
 }
 
 .tab-heading {
@@ -1020,6 +1153,32 @@ function errorMessage(error: unknown) {
 .primary-cell {
   display: grid;
   gap: 4px;
+}
+
+.grant-summary {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.grant-summary-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--wq-text);
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: default;
+}
+
+.grant-tooltip {
+  display: grid;
+  gap: 4px;
+}
+
+.grant-tooltip p {
+  margin: 0;
+  line-height: 1.5;
 }
 
 .primary-cell code,
@@ -1161,6 +1320,68 @@ function errorMessage(error: unknown) {
   border-radius: var(--wq-radius);
 }
 
+.glossary-section,
+.glossary-group {
+  display: grid;
+  gap: 8px;
+}
+
+.glossary-group h5 {
+  margin: 0;
+  color: var(--wq-text);
+  font-size: 13px;
+}
+
+.glossary-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.glossary-list li {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--wq-border);
+}
+
+.glossary-list li:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.glossary-term {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.glossary-meta {
+  margin: 0;
+  color: var(--wq-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.glossary-example {
+  display: grid;
+  gap: 6px;
+}
+
+.contract-raw summary {
+  cursor: pointer;
+  color: var(--wq-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.contract-raw pre {
+  margin-top: 8px;
+}
+
 .grant-management {
   display: grid;
   gap: 16px;
@@ -1169,7 +1390,7 @@ function errorMessage(error: unknown) {
 .grant-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 16px;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--wq-border);
@@ -1179,6 +1400,11 @@ function errorMessage(error: unknown) {
   min-width: 0;
   display: grid;
   gap: 5px;
+}
+
+.grant-toolbar > .el-button {
+  flex: 0 0 auto;
+  margin-left: 4px;
 }
 
 .grant-toolbar span,
@@ -1192,6 +1418,28 @@ function errorMessage(error: unknown) {
   overflow-wrap: anywhere;
   color: #31506f;
   font-size: 12px;
+}
+
+.grant-table {
+  width: 100%;
+  min-width: 0;
+}
+
+.grant-table :deep(.el-table__inner-wrapper),
+.grant-table :deep(.el-table__body-wrapper),
+.grant-table :deep(.el-scrollbar__wrap) {
+  min-width: 0;
+}
+
+.grant-key {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grant-table :deep(.grant-action-column .cell) {
+  overflow: visible;
 }
 
 .credential-detail {
@@ -1246,6 +1494,21 @@ function errorMessage(error: unknown) {
 }
 
 @media (max-width: 760px) {
+  .capability-page {
+    display: block;
+    overflow: auto;
+  }
+
+  .capability-content,
+  .capability-surface,
+  .capability-surface :deep(.el-tabs),
+  .capability-surface :deep(.el-tabs__content),
+  .capability-surface :deep(.el-tab-pane) {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
   .page-header,
   .header-actions,
   .grant-toolbar {

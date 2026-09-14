@@ -290,3 +290,19 @@ def test_session_filter_isolates_regular_users_and_keeps_admin_global_view():
     assert admin_params == {"aid": 3}
     assert user_filter == "agent_id = :aid AND user_id = :user_id"
     assert user_params == {"aid": 3, "user_id": 9}
+
+
+
+@pytest.mark.asyncio
+async def test_register_api_rejects_self_service():
+    from fastapi import HTTPException
+
+    from app.api.auth import register
+    from app.models.user import RegisterRequest
+
+    with pytest.raises(HTTPException) as exc:
+        await register(
+            RegisterRequest(username="alice", password="password123", display_name="Alice")
+        )
+    assert exc.value.status_code == 403
+    assert "不开放自助注册" in str(exc.value.detail)

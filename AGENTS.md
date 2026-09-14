@@ -7,7 +7,8 @@ This file applies to the whole repository. It defines stable project boundaries 
 - WenQu is an internal, Ontology-driven enterprise operational digital-twin and intelligent-decision platform.
 - First principle: business semantics are enterprise assets, databases are data sources, and Agents are capability consumers.
 - The current priority is to make the enterprise model, data/twin runtime, and capability publishing center solid.
-- Built-in Agent/chat features are reference clients for debugging, regression, and acceptance. Do not let Agent configuration own or control enterprise-model assets.
+- Built-in Agent/chat features are reference clients for proving the platform meets the bar. Do not let Agent configuration own or control enterprise-model assets.
+- The acceptance bar is third-party: given the same `domain_id + release_id + capability + parameters`, an external Agent must get the same business result as the built-in validation Agent. Changing a validation Agent's prompt or model must not change the enterprise model.
 - Finance/tax, lending, risk delivery, and intelligent querying are vertical validation scenarios, not the platform boundary.
 
 ## Product Boundaries
@@ -17,6 +18,8 @@ This file applies to the whole repository. It defines stable project boundaries 
 - `admin/user` remain compatibility account values. Do not treat them as additional product roles or redesign the account model without an explicit request.
 - Business domains organize models, mappings, releases, permissions, and capabilities. They are not tenants.
 - External Agents and applications must be able to consume published capabilities without first creating an internal Agent.
+- Default authenticated landing is the enterprise model, not chat.
+- Accounts are created by technical personnel. Do not reopen public self-registration.
 
 ## Model and Runtime Invariants
 
@@ -66,3 +69,4 @@ Before completing a material change, verify as applicable:
 - Describe `admin/user` as compatibility accounts, not product roles.
 - Use “业务确认人（由业务人员承担）” for a confirmation responsibility; security, delivery, review, and Agent integration are responsibilities rather than new platform roles.
 - Clearly distinguish “已实现”, “已有基础”, “计划中”, and “明确不包含”.
+- In Chinese product docs, call the in-project client “内置验证智能体”. Call external callers “第三方 Agent”. Do not describe the built-in client as the product.

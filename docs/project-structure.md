@@ -1,6 +1,6 @@
 # 问渠 WenQu 项目结构与功能边界
 
-> 基准日期：2026-09-11
+> 基准日期：2026-09-14
 > 文档用途：给开发、业务、数据和测试人员提供一张“项目地图”。本文按**公司内部单一部署**描述项目，不设计多租户、多企业空间或企业间隔离。
 
 ## 1. 先记住一条主线
@@ -28,7 +28,7 @@
 第三方 Agent / 业务应用
 ```
 
-本项目内的对话页和 Agent 配置只是一套**调试、回归和验收客户端**，用来验证外部 Agent 能否得到同样的业务口径和结果：
+本项目内的对话页和验证智能体配置只是一套**验收客户端**，用来证明平台能力达标：同一合同下，第三方 Agent 应得到同样的业务口径和结果。
 
 ```text
 同一业务问题
@@ -45,7 +45,7 @@
 | 3 | 企业模型中心 | 统一维护 Ontology 与查询语义 | 对象、关系、状态、指标、规则、字段映射 | 模型草稿、服务端校验、统一激活版本 | 产品入口和发布生命周期统一，底层资产表仍分开维护 |
 | 4 | 数据处理与孪生运行时 | 建立对象身份、同步当前状态、关联来源和关系 | active release 冻结定义、业务库数据 | `ontology_object`、`ontology_link`、`twin_sync_run` | 当前支持预览和技术人员手动分页同步；同步按 active release 冻结定义执行，草稿可继续编辑 |
 | 5 | 能力发布与运行出口 | 把模型和数据转换为稳定、可复用的能力合同 | 企业模型、孪生对象、权限、调用方上下文 | Query API、调用凭据、授权和审计 | 外部 Query 第一版已实现；Decision/Action、SDK 和配额治理后续建设 |
-| 6 | 验证客户端与垂直应用 | 验证能力效果，承载具体场景交互和交付 | 已发布能力 | 内置验证 Agent、第三方 Agent、风险交付等 | Agent 不是企业模型所有者，风险交付只是验证场景 |
+| 6 | 验证客户端与垂直应用 | 验收平台能力是否达标，承载垂直场景 | 已发布能力 | 内置验证智能体、第三方 Agent、风险交付等 | 验收标准是第三方调用同一合同得到同样业务结果；风险交付只是验证场景 |
 
 ### 2.1 模块边界（谁不负责什么）
 
@@ -56,7 +56,7 @@
 | 企业模型中心 | 业务定义、映射、规则、版本和动作合同 | 不负责持续拉取全库数据 |
 | 孪生运行时 | 对象实例、当前状态、来源、同步结果 | 不重新定义指标和业务规则 |
 | 能力发布中心 | 对外提供稳定输入/输出、权限和审计契约 | 不要求调用方先创建本项目 Agent |
-| 内置验证 Agent | 调试、回归、演示和验收能力消费 | 不拥有或复制企业模型，不代表第三方 Agent 的运行形态 |
+| 内置验证智能体 | 验收平台能力是否达标 | 不拥有企业模型，不是第三方接入网关，不代表第三方运行形态 |
 | 风险交付 | 风险事项、证据、复核、报告和审计 | 不作为平台主线或通用 Agent 管理中心 |
 
 ## 3. 产品页面与后端入口
@@ -65,17 +65,18 @@
 
 | 页面/路由 | 产品定位 | 说明 |
 |---|---|---|
-| `/` | 对话验证 | 验证 Agent 消费企业能力的效果，展示过程、SQL、结果和报告 |
+| `/` | 默认入口 | 登录后重定向到企业模型 |
 | `/enterprise-model` | 企业模型 | 公共顶部先创建/选择业务领域，再按“业务模型 → 数据绑定 → 校验发布”推进；业务模型按对象组织对象/关系/动作/指标/规则，数据绑定集中对象来源、指标计算、关系 JOIN 和字段映射，三个步骤共享同一 `domain_id` |
 | `/twin-runtime` | 孪生运行 | 预览/执行对象同步，查看对象实例、关系实例、动作执行记录、版本、统计、错误和 trace |
 | `/capability-center` | 能力发布 | 查看合同，管理第三方调用方、Query 授权和调用审计 |
-| `/agent` | 调试与验证智能体 | 仅技术人员配置本项目内置验证客户端，不是第三方 Agent 注册中心 |
+| `/agent` | 调试与验证智能体 | 仅用于验收平台能力是否达标；第三方 Agent 走能力发布中心，应命中同一合同和业务结果 |
 | `/datasource` | 数据源 | 技术人员测试连接、发现表、采集 Schema |
 | `/model-config` | 模型配置 | 大语言模型和向量模型 |
 | `/system-parameter` | 系统参数 | Prompt、召回阈值和用户管理子区 |
+| `/chat` | 对话验证 | 内置验证智能体的验收客户端，用来核对第三方调用同一合同能否得到同样业务结果 |
 | `/risk-delivery` | 风险交付技术切片 | 贷款/财税场景的事项、证据、报告和审计工作台 |
 
-兼容地址 `/knowledge`、`/ontology`、`/users` 会重定向到新入口；`KnowledgeConfig.vue` 以 `business/binding` 两种页面模式嵌入企业模型，底层继续兼容六类语义资产，但不再把六张资产表直接作为六个产品页签。
+兼容地址 `/knowledge`、`/ontology`、`/users` 会重定向到新入口；`/register` 重定向到登录。`KnowledgeConfig.vue` 以 `business/binding` 两种页面模式嵌入企业模型，底层继续兼容六类语义资产，但不再把六张资产表直接作为六个产品页签。
 
 `/api/workspaces` 和 `enterprise_workspace` 仅作为历史数据兼容的内部单例容器，不是业务人员需要理解或操作的产品功能；后续不扩展多租户能力。
 
@@ -83,14 +84,14 @@
 
 | API | 主要职责 | 关键实现 |
 |---|---|---|
-| `/api/auth`、`/api/users` | 登录、用户和验证 Agent 授权 | `app/api/auth.py`、`user.py`、`app/services/user_service.py` |
+| `/api/auth`、`/api/users` | 登录和用户管理；自助注册已关闭，账号由技术人员创建 | `app/api/auth.py`、`user.py`、`app/services/user_service.py` |
 | `/api/agent` | 内置验证 Agent、数据源/领域绑定 | `app/api/agent.py` |
 | `/api/datasource` | 数据源连接、Schema 采集和领域级表/列权限；旧 Agent 权限仅作迁移兼容 | `app/api/datasource.py`、`datasource_service.py`、`metadata_service.py` |
 | `/api/semantic` | 查询语义资产、快照和向量同步 | `app/api/semantic.py`、`semantic_runtime.py` |
 | `/api/ontology` | Ontology 定义、实例与动作兼容 API；旧同步入口统一委托孪生运行治理 | `app/api/ontology.py`、`ontology_service.py` |
 | `/api/model-releases` | 统一企业模型版本的创建、校验、激活、停用和回滚 | `app/api/model_release.py`、`model_release_service.py` |
 | `/api/twin` | 孪生预览/同步运行与运行记录 | `app/api/twin_runtime.py`、`twin_runtime_service.py` |
-| `/api/capability-clients`、`/api/v1/capabilities/*:invoke` | 第三方调用身份、Query 授权、调用和审计 | `app/api/capability_access.py`、`capability_access_service.py` |
+| `/api/capability-clients`、`GET /api/v1/capabilities`、`/api/v1/capabilities/*:invoke` | 第三方调用身份、Query 授权、业务词典、调用和审计 | `app/api/capability_access.py`、`capability_access_service.py` |
 | Docker 交付 | 后端与前端容器、外部 MySQL 连接、Lite/外部 Milvus 配置 | `Dockerfile`、`frontend/Dockerfile`、`docker-compose.deploy.yml`、`docs/docker-deployment.md` |
 | `/api/chat`（主入口在 `app/main.py`） | 内置验证 Agent 的流式问数和持久任务 | `app/agent/graph.py`、`react.py`、`nodes/` |
 | `/api/risk` | 风险事项、证据、复核、报告、审计 | `app/api/risk_workflow.py`、`risk_workflow_service.py` |

@@ -6,6 +6,7 @@ services:
     env_file:
       - .env
     environment:
+      DEBUG: "false"
       # The deployment image uses the local Lite file by default.  To use an
       # existing Milvus service, set WENQU_DEPLOY_MILVUS_URI to its reachable URL.
       MILVUS_URI: ${WENQU_DEPLOY_MILVUS_URI:-./data/milvus.db}

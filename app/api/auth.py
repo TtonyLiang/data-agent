@@ -10,17 +10,9 @@ router = APIRouter()
 
 
 @router.post("/register")
-async def register(payload: RegisterRequest):
-    """开放注册公司内部业务人员账号；技术人员账号由技术人员通过管理入口创建或调整。"""
-    try:
-        user = await get_user_service().register_user(
-            payload.username,
-            payload.password,
-            payload.display_name,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"user": user.model_dump(), "message": "注册成功"}
+async def register(_payload: RegisterRequest):
+    """自助注册已关闭；账号由技术人员在系统参数中创建。"""
+    raise HTTPException(status_code=403, detail="账号由技术人员在系统参数中创建，不开放自助注册")
 
 
 @router.post("/login", response_model=LoginResponse)

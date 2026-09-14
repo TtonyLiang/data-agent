@@ -7,7 +7,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from app.models.query_capability import QueryCapability
+from app.models.knowledge import SemanticRuntime
+from app.models.query_capability import QueryCapability, _build_glossary
 from app.services.ontology_semantic_bridge import build_ontology_semantic_bridge
 
 
@@ -63,6 +64,10 @@ def _build_query_capabilities(
     metrics = bridge.get("metrics") or {}
     domain = runtime_payload.get("domain") or {}
     domain_key = domain.get("domain_key") if isinstance(domain, Mapping) else None
+    try:
+        runtime_model = SemanticRuntime.model_validate(runtime_payload)
+    except Exception:
+        runtime_model = None
     capabilities: list[QueryCapability] = []
 
     for object_key, object_payload in objects.items():
@@ -115,6 +120,9 @@ def _build_query_capabilities(
                     domain_key=domain_key,
                     supported_metrics=metric_keys,
                     supported_dimensions=supported_dimensions,
+                    glossary=_build_glossary(
+                        runtime_model, metric_keys, supported_dimensions
+                    ),
                     metadata={
                         "source": "ontology_semantic_bridge",
                         "metric_object_binding": "explicit",

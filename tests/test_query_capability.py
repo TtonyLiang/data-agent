@@ -1,3 +1,4 @@
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -9,6 +10,7 @@ from app.models.knowledge import (
     SemanticDomain,
     SemanticMapping,
     SemanticMetric,
+    SemanticRule,
     SemanticRuntime,
 )
 from app.models.query_capability import QueryCapability
@@ -29,17 +31,42 @@ def build_runtime() -> SemanticRuntime:
                 concept_key="LoanApplication",
                 concept_type="entity",
                 name="贷款申请",
-            )
+            ),
+            SemanticConcept(
+                domain_id=1,
+                concept_key="product_type",
+                concept_type="attribute",
+                name="产品类型",
+                synonyms=["产品"],
+            ),
         ],
         metrics=[
             SemanticMetric(
                 domain_id=1,
                 metric_key="application_count",
                 name="申请笔数",
+                description="统计贷款申请笔数，不含取消件",
+                synonyms=["申请数", "笔数"],
                 formula_sql="COUNT(*)",
                 base_table="loan_application",
                 dimensions=["product_type"],
             )
+        ],
+        rules=[
+            SemanticRule(
+                domain_id=1,
+                rule_key="alias_channel",
+                rule_type="normalization",
+                name="渠道别名",
+                expression={"field_aliases": {"channel": "product_type"}},
+            ),
+            SemanticRule(
+                domain_id=1,
+                rule_key="alias_nested",
+                rule_type="normalization",
+                name="嵌套别名",
+                expression={"logic_form": {"field_aliases": {"渠道": "product_type"}}},
+            ),
         ],
         mappings=[
             SemanticMapping(
@@ -129,3 +156,36 @@ def test_facade_delegates_only_to_deterministic_compiler_after_capability_valida
     assert result == "compiled-query"
     compiler.compile_logic_form.assert_called_once_with(logic_form, runtime)
     assert [item[0] for item in compiler.method_calls] == ["compile_logic_form"]
+
+
+
+def test_capability_glossary_exposes_business_terms_without_sql():
+    runtime = build_runtime()
+    capability = QueryCapability.from_runtime(
+        "loan_application_query",
+        runtime,
+        {"object_types": [{"object_key": "LoanApplication"}]},
+    )
+    glossary = capability.glossary
+    metric = glossary.metrics[0]
+    dimension = glossary.dimensions[0]
+    blob = json.dumps(glossary.model_dump(), ensure_ascii=False)
+
+    assert metric.key == "application_count"
+    assert metric.name == "申请笔数"
+    assert "申请数" in metric.synonyms
+    assert metric.description.startswith("统计贷款申请笔数")
+    assert metric.dimensions == ["product_type"]
+    assert dimension.key == "product_type"
+    assert dimension.name == "产品类型"
+    assert "产品" in dimension.synonyms
+    assert "channel" in dimension.synonyms
+    assert glossary.field_aliases["channel"] == "product_type"
+    assert glossary.field_aliases["渠道"] == "product_type"
+    assert glossary.examples
+    assert glossary.examples[0]["logic_form"]["metrics"] == ["application_count"]
+    assert "formula_sql" not in blob
+    assert "base_table" not in blob
+    assert "COUNT(*)" not in blob
+    assert "loan_application" not in blob
+    assert "SELECT" not in blob

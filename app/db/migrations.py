@@ -850,6 +850,32 @@ async def seed_default_system_parameters() -> None:
     await db.execute_transaction(statements)
 
 
+
+async def _refresh_global_accuracy_prompts(db) -> None:
+    """Refresh unscoped default NL2LF/enhance prompts that still look like stock templates."""
+    markers = {
+        "nl2lf_generate.system": "%必须使用上面列出的 canonical key%",
+        "semantic_enhance.system": "%不要改写成账户、余额或放款金额%",
+    }
+    by_key = {item["prompt_key"]: item for item in default_prompt_templates()}
+    for prompt_key, marker in markers.items():
+        item = by_key.get(prompt_key)
+        if not item:
+            continue
+        await db.execute_query(
+            "UPDATE prompt_template SET template_text = :template_text "
+            "WHERE prompt_key = :prompt_key "
+            "AND agent_id IS NULL AND model_config_id IS NULL "
+            "AND semantic_domain_id IS NULL "
+            "AND template_text NOT LIKE :marker",
+            {
+                "template_text": item["template_text"],
+                "prompt_key": prompt_key,
+                "marker": marker,
+            },
+        )
+
+
 async def seed_default_prompt_templates() -> None:
     """Seed editable global prompt templates from app/agent/prompts/*.md."""
     db = get_management_db()
@@ -895,6 +921,7 @@ async def seed_default_prompt_templates() -> None:
     if statements:
         await db.execute_transaction(statements)
         logger.info("seeded default prompt templates count=%s", len(statements))
+    await _refresh_global_accuracy_prompts(db)
 
 
 async def backfill_agent_model_configs() -> None:

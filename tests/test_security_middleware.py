@@ -75,3 +75,8 @@ async def test_auth_middleware_skips_health(monkeypatch):
     result = await security.auth_and_rate_limit_middleware(FakeRequest(path="/health"), call_next)
 
     assert result == "ok"
+
+
+def test_public_paths_do_not_include_self_registration():
+    assert "/api/auth/login" in security.PUBLIC_PATHS
+    assert "/api/auth/register" not in security.PUBLIC_PATHS

@@ -78,6 +78,42 @@ assert.ok(
 )
 
 assert.ok(
+  source.includes('aria-label="数据绑定统计概览"') &&
+    source.includes('<span>对象绑定进度</span>') &&
+    source.includes('<span>指标绑定进度</span>') &&
+    source.includes('<span>关系绑定进度</span>') &&
+    source.includes('<span>映射项总数</span>') &&
+    source.includes('aria-label="数据绑定任务步骤"') &&
+    source.includes(':aria-label="`${step.label}：${step.description}`"'),
+  'binding progress indicators and interactive task steps should have distinct labels and accessible names',
+)
+
+assert.ok(
+  source.includes('class="binding-section binding-section-object"') &&
+    (source.match(/class="binding-table-frame"/g) || []).length === 3 &&
+    (source.match(/class="binding-table" height="100%"/g) || []).length === 3 &&
+    source.includes('.binding-workspace { min-width: 0; min-height: 0;') &&
+    source.includes('.binding-section { width: 100%; height: 100%;') &&
+    source.includes('.binding-table-frame { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; }') &&
+    source.includes('.binding-table :deep(.el-scrollbar__wrap) { scrollbar-gutter: stable; }') &&
+    objectBindingSource.includes('.binding-table-section { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;') &&
+    objectBindingSource.includes('.binding-table :deep(.el-scrollbar__wrap) { scrollbar-gutter: stable; }'),
+  'all data binding tables should fill a bounded workspace and keep scrolling inside the table body',
+)
+
+assert.ok(
+  source.includes(':content="String(row.base_table || \'未配置\')"') &&
+    source.includes(':content="String(row.time_field || \'未配置\')"') &&
+    source.includes(':content="String(row.table_name || \'未配置\')"') &&
+    source.includes('class="technical-identifier"') &&
+    source.includes('overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; word-break: normal;') &&
+    objectBindingSource.includes(':content="row.object_key"') &&
+    objectBindingSource.includes(':content="row.primary_property || \'未设置\'"') &&
+    objectBindingSource.includes('.technical-identifier { display: block; min-width: 0; max-width: 100%; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; word-break: normal;'),
+  'long technical identifiers should stay on one line, truncate visually, and expose their complete value',
+)
+
+assert.ok(
   source.includes('fetchDatasourceSchema') &&
     source.includes('tableOptions') &&
     source.includes('qualifiedColumnOptions') &&
@@ -97,6 +133,17 @@ assert.ok(
     objectBindingSource.includes('previewOntologyObjectMapping') &&
     objectBindingSource.includes('properties: cloneValue(objectDefinition.properties || [])'),
   'object data binding should generate a safe read-only query from schema selections while preserving the full object definition',
+)
+
+assert.ok(
+  objectBindingSource.includes('visibleProperties(row)') &&
+    objectBindingSource.includes('extraPropertyCount(row)') &&
+    objectBindingSource.includes('hiddenPropertyNames(row)') &&
+    objectBindingSource.includes('const VISIBLE_PROPERTY_COUNT = 3') &&
+    objectBindingSource.includes('flex-wrap: nowrap') &&
+    objectBindingSource.includes(':content="hiddenPropertyNames(row)"') &&
+    objectBindingSource.includes('propertyAriaLabel(row)'),
+  'object data binding should keep property tags on one row and expose overflow names without wrapping into the next record',
 )
 
 assert.ok(

@@ -30,12 +30,19 @@ assert.ok(
 )
 
 assert.ok(
-  routerSource.includes("path: '/enterprise-model'") &&
+  routerSource.includes("path: '/', redirect: '/enterprise-model'") &&
+    routerSource.includes("path: '/chat'") &&
+    routerSource.includes("path: '/enterprise-model'") &&
     routerSource.includes("path: '/twin-runtime'") &&
     routerSource.includes("path: '/capability-center'") &&
     routerSource.includes("path: '/knowledge', redirect:") &&
-    routerSource.includes("path: '/ontology', redirect:"),
-  'platform center routes and legacy entry redirects should remain available',
+    routerSource.includes("path: '/ontology', redirect:") &&
+    routerSource.includes("path: '/register', redirect: '/login'") &&
+    routerSource.includes("return { path: '/enterprise-model' }") &&
+    appSource.includes('index="/chat"') &&
+    appSource.includes("activateRoute('/chat')") &&
+    !appSource.includes("activateRoute('/')"),
+  'root path should open the enterprise model, with chat remaining a validation client',
 )
 
 assert.ok(
@@ -108,6 +115,9 @@ assert.ok(
     releaseSource.includes('validateEnterpriseModelRelease') &&
     releaseSource.includes('activateEnterpriseModelRelease') &&
     releaseSource.includes('rollbackEnterpriseModelRelease') &&
+    releaseSource.includes('v-if="canPublishModelRole"') &&
+    releaseSource.includes('handleRollbackSnapshot') &&
+    !releaseSource.includes(':disabled="!canEditModelRole" @click="handleRollbackSnapshot') &&
     apiSource.includes('/model-releases/domains/${domainId}/releases'),
   'enterprise model should expose one lifecycle for binding, validating, activating, and rolling back releases',
 )
@@ -167,7 +177,7 @@ assert.ok(
 )
 
 assert.ok(
-  twinSource.includes('const PROPERTY_PREVIEW_LIMIT = 4') &&
+  twinSource.includes('const PROPERTY_PREVIEW_LIMIT = 2') &&
     twinSource.includes('class="immutable-property-field"') &&
     twinSource.includes('对象身份 · 只读') &&
     twinSource.includes('用于同步、去重和关系定位；编辑时不可修改。') &&
@@ -199,6 +209,40 @@ assert.ok(
 )
 
 assert.ok(
+  (twinSource.match(/class="runtime-table-viewport"/g) || []).length >= 5 &&
+    twinSource.includes('.runtime-table-viewport {') &&
+    twinSource.includes('overflow-x: auto;') &&
+    twinSource.includes('.runtime-table-viewport :deep(.el-table__inner-wrapper)') &&
+    twinSource.includes('height: auto;') &&
+    twinSource.includes('.runtime-table-panel {') &&
+    twinSource.includes('.sync-history-panel {') &&
+    twinSource.includes('.runtime-entity-panel {') &&
+    twinSource.includes('overflow: visible;'),
+  'twin runtime tables should keep their natural bottom edge visible and delegate horizontal scrolling to a dedicated viewport',
+)
+
+assert.ok(
+  twinSource.includes('class="object-property-preview-items"') &&
+    twinSource.includes('class="audit-field-row object-property-preview-row"') &&
+    twinSource.includes('min-height: 34px;') &&
+    twinSource.includes('object-property-tooltip-list') &&
+    twinSource.includes('const PROPERTY_PREVIEW_LIMIT = 2'),
+  'object instance properties should use a compact inline preview while keeping the complete property list in the tooltip',
+)
+
+assert.ok(
+  twinSource.includes('class="relation-endpoint"') &&
+    twinSource.includes('class="relation-endpoint-role">起点</span>') &&
+    twinSource.includes('class="relation-endpoint-role">终点</span>') &&
+    twinSource.includes('relationIdentifier(row.source_primary_value)') &&
+    twinSource.includes('relationIdentifier(row.target_primary_value)') &&
+    twinSource.includes('class="relation-endpoint-id"') &&
+    twinSource.includes('.relation-endpoint-id {') &&
+    twinSource.includes('text-overflow: ellipsis;'),
+  'relation endpoints should separate source and target labels and expose full long identifiers through tooltip text',
+)
+
+assert.ok(
   capabilitySource.includes('能力发布中心') &&
     capabilitySource.includes(':aria-busy="loading"') &&
     capabilitySource.includes('aria-label="选择业务领域"') &&
@@ -218,12 +262,19 @@ assert.ok(
     capabilitySource.includes('fetchCapabilityInvocationAudits') &&
     capabilitySource.includes('activeModelRelease') &&
     capabilitySource.includes('POST /api/v1/capabilities/${capability.key}:invoke') &&
+    capabilitySource.includes('GET /api/v1/capabilities?domain_id=') &&
+    capabilitySource.includes('业务词典') &&
+    capabilitySource.includes('不必复制内置验证智能体的提示词') &&
+    capabilitySource.includes('完整约定 JSON') &&
     capabilitySource.includes('X-Capability-Key 与 X-Capability-Secret') &&
     capabilitySource.includes('业务领域权限') &&
     capabilitySource.includes('旧权限兼容适配') &&
     capabilitySource.includes('数据源、表和字段权限由平台按业务领域自动适配') &&
     capabilitySource.includes('无需选择或创建内部验证 Agent') &&
-    capabilitySource.includes('授权合同') &&
+    capabilitySource.includes('授权约定') &&
+    capabilitySource.includes('grant-summary-text') &&
+    capabilitySource.includes('activeGrantPreview') &&
+    capabilitySource.includes('未授权') &&
     capabilitySource.includes('首次调用时兼容绑定') &&
     !capabilitySource.includes('grantForm.execution_agent_id') &&
     !capabilitySource.includes('fetchAgents') &&
@@ -233,8 +284,8 @@ assert.ok(
 )
 
 assert.ok(
-  capabilitySource.includes(':aria-label="`查看 Query 能力合同：${row.name}`"') &&
-    capabilitySource.includes(':aria-label="`查看内部动作合同：${row.name}`"') &&
+  capabilitySource.includes(':aria-label="`查看 Query 能力约定：${row.name}`"') &&
+    capabilitySource.includes(':aria-label="`查看内部动作约定：${row.name}`"') &&
     capabilitySource.includes(':aria-label="`管理调用方授权：${row.name}`"') &&
     capabilitySource.includes(':aria-label="`撤销能力授权：${row.capability_key}`"') &&
     capabilitySource.includes('@opened="focusControl(clientNameInput)"') &&
@@ -242,6 +293,33 @@ assert.ok(
     capabilitySource.includes('@opened="focusControl(grantCapabilitySelect)"') &&
     capabilitySource.includes('requestAnimationFrame(() => control?.focus())'),
   'capability table actions and dialogs should expose contextual keyboard labels and predictable initial focus',
+)
+
+assert.ok(
+  capabilitySource.includes('class="capability-content"') &&
+    capabilitySource.includes('border height="100%" class="capability-table"') &&
+    capabilitySource.includes('.capability-content {') &&
+    capabilitySource.includes('.capability-surface :deep(.el-tabs__content)') &&
+    capabilitySource.includes('overflow: hidden;'),
+  'capability tables should scroll inside the remaining workbench height without clipping the final row',
+)
+
+assert.ok(
+  capabilitySource.includes('.grant-toolbar {') &&
+    capabilitySource.includes('justify-content: flex-start;') &&
+    capabilitySource.includes('.grant-toolbar > .el-button {') &&
+    capabilitySource.includes('margin-left: 4px;'),
+  'grant drawer action should align with the Client Key content instead of being pushed to the far right',
+)
+
+assert.ok(
+  capabilitySource.includes('class="grant-table"') &&
+    capabilitySource.includes('table-layout="fixed"') &&
+    capabilitySource.includes('class-name="grant-action-column"') &&
+    capabilitySource.includes('label="操作" width="72"') &&
+    capabilitySource.includes('.grant-table {') &&
+    capabilitySource.includes('min-width: 0;'),
+  'grant drawer table should fit the drawer width so revoke stays visible without horizontal scrolling',
 )
 
 assert.ok(
@@ -254,8 +332,8 @@ assert.ok(
 
 assert.ok(
   agentSource.includes('<h2>调试与验证智能体</h2>') &&
-    agentSource.includes('用于调试、回归和验收企业模型能力') &&
-    agentSource.includes('第三方 Agent 通过能力合同接入') &&
+    agentSource.includes('只用于验收平台能力是否达标') &&
+    agentSource.includes('第三方 Agent 应得到同样的业务结果') &&
     agentSource.includes('v-model="form.semantic_domain_ids"') &&
     agentSource.includes('可消费的业务领域') &&
     agentSource.includes('企业模型与业务领域资产会保留'),

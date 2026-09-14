@@ -300,6 +300,80 @@ def test_build_runtime_context_includes_relevant_columns():
     assert "physical_schema" in context
 
 
+def test_build_runtime_context_keeps_canonical_keys_without_capability_dump():
+    import json
+
+    runtime = build_runtime().model_dump()
+    context = json.loads(
+        build_runtime_context(
+            runtime,
+            query_context={
+                "query_capabilities": [
+                    {
+                        "key": "query_loan_application",
+                        "supported_metrics": ["application_count"],
+                        "input_slots": [{"name": "unused", "description": "should not appear"}],
+                    }
+                ]
+            },
+            ontology_context={
+                "domain": {"id": 1, "domain_key": "loan_risk", "name": "贷款风控"},
+                "object_types": [
+                    {
+                        "object_key": "LoanApplication",
+                        "name": "贷款申请",
+                        "source_query": "SELECT * FROM loan_application_indicator",
+                        "properties": [{"property_key": "application_id", "name": "申请编号"}],
+                    }
+                ],
+            },
+            ontology_evidence={
+                "object_types": [{"object_key": "LoanApplication", "name": "贷款申请"}],
+                "link_types": [],
+                "actions": [],
+            },
+            relevant_tables=[
+                {
+                    "table_name": "loan_application_indicator",
+                    "comment": "贷款申请审批指标表",
+                    "score": 1141.9,
+                    "reason": "业务域匹配: 申请/审批",
+                }
+            ],
+            relevant_columns=[
+                {
+                    "table_name": "loan_application_indicator",
+                    "column_name": "approval_status",
+                    "comment": "审批状态",
+                    "score": 88,
+                    "reason": "命中申请状态",
+                }
+            ],
+        )
+    )
+
+    metric_keys = {item["metric_key"] for item in context["metrics"]}
+    dimension_keys = {item["asset_key"] for item in context["dimensions_and_filters"]}
+    assert "application_count" in metric_keys
+    assert "application_channel" in dimension_keys
+    assert metric_keys == {item["metric_key"] for item in runtime["metrics"]}
+    assert "query_capabilities" not in context
+    assert "unused" not in json.dumps(context, ensure_ascii=False)
+    assert all(
+        "table" not in item and "column" not in item
+        for item in context["dimensions_and_filters"]
+    )
+    assert all("description" not in item for item in context["rules"])
+    assert "score" not in context["physical_schema"]["tables"][0]
+    assert "reason" not in context["physical_schema"]["tables"][0]
+    assert "source_query" not in context["ontology"]["object_types"][0]
+    assert "properties" not in context["ontology"]["object_types"][0]
+    assert "evidence" not in context["ontology"]
+    assert "SELECT * FROM" not in json.dumps(context, ensure_ascii=False)
+    assert context["field_aliases"]["channel"] == "application_channel"
+    assert context["field_aliases"]["status"] == "application_approval_status"
+
+
 def test_age_intent_can_attach_physical_schema_dimension():
     logic_form = LogicForm(metrics=["application_count"], dimensions=["application_product_type"])
 

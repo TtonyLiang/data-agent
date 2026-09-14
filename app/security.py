@@ -27,7 +27,7 @@ from app.utils.logging_helpers import redact_text
 logger = logging.getLogger(__name__)
 
 # 公开端点(不要求登录)
-PUBLIC_PATHS = {"/health", "/api/auth/login", "/api/auth/register"}
+PUBLIC_PATHS = {"/health", "/api/auth/login"}
 
 
 class InMemoryRateLimiter:

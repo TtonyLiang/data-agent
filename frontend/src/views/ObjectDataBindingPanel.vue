@@ -50,7 +50,9 @@
           <template #default="{ row }">
             <div class="primary-cell">
               <strong>{{ row.name }}</strong>
-              <code>{{ row.object_key }}</code>
+              <el-tooltip :content="row.object_key" placement="top" popper-class="binding-identifier-tooltip">
+                <code class="technical-identifier" tabindex="0">{{ row.object_key }}</code>
+              </el-tooltip>
             </div>
           </template>
         </el-table-column>
@@ -59,14 +61,22 @@
           <template #default="{ row }">
             <div class="property-tags" :aria-label="propertyAriaLabel(row)">
               <el-tag
-                v-for="property in row.properties"
+                v-for="property in visibleProperties(row)"
                 :key="property.property_key"
                 size="small"
                 effect="plain"
                 :type="property.property_key === row.primary_property ? 'warning' : 'info'"
+                :title="property.name || property.property_key"
               >
                 {{ property.name || property.property_key }}
               </el-tag>
+              <el-tooltip
+                v-if="extraPropertyCount(row)"
+                :content="hiddenPropertyNames(row)"
+                placement="top"
+              >
+                <el-tag size="small" effect="plain" class="property-more">+{{ extraPropertyCount(row) }}</el-tag>
+              </el-tooltip>
               <span v-if="row.properties.length === 0" class="muted">未定义属性</span>
             </div>
           </template>
@@ -76,7 +86,9 @@
           <template #default="{ row }">
             <div class="property-identity">
               <strong>{{ primaryPropertyName(row) }}</strong>
-              <code>{{ row.primary_property }}</code>
+              <el-tooltip :disabled="!row.primary_property" :content="row.primary_property || '未设置'" placement="top" popper-class="binding-identifier-tooltip">
+                <code class="technical-identifier" :tabindex="row.primary_property ? 0 : -1">{{ row.primary_property }}</code>
+              </el-tooltip>
             </div>
           </template>
         </el-table-column>
@@ -136,13 +148,13 @@
       <div class="mobile-list" aria-label="对象数据绑定列表">
         <article v-for="row in objectTypes" :key="row.id" class="binding-card">
           <header>
-            <div class="primary-cell"><strong>{{ row.name }}</strong><code>{{ row.object_key }}</code></div>
+            <div class="primary-cell"><strong>{{ row.name }}</strong><code class="technical-identifier" :title="row.object_key">{{ row.object_key }}</code></div>
             <el-tag size="small" effect="plain" :type="row.sync_enabled ? 'success' : 'info'">
               {{ row.sync_enabled ? '同步已启用' : '同步未启用' }}
             </el-tag>
           </header>
           <dl>
-            <div><dt>主属性</dt><dd>{{ primaryPropertyName(row) }}（{{ row.primary_property }}）</dd></div>
+            <div><dt>主属性</dt><dd class="mobile-identifier" :title="`${primaryPropertyName(row)}（${row.primary_property}）`">{{ primaryPropertyName(row) }}（{{ row.primary_property }}）</dd></div>
             <div><dt>对象属性</dt><dd>{{ row.properties.length }} 项</dd></div>
             <div><dt>来源查询</dt><dd>{{ hasSourceQuery(row) ? '已配置' : '未配置' }}</dd></div>
             <div><dt>最近同步</dt><dd>{{ syncStatusLabel(row) }}</dd></div>
@@ -165,12 +177,12 @@
           <div>
             <span>业务对象</span>
             <strong>{{ editingObject.name }}</strong>
-            <code>{{ editingObject.object_key }}</code>
+            <code class="technical-identifier" :title="editingObject.object_key">{{ editingObject.object_key }}</code>
           </div>
           <div>
             <span>主属性</span>
             <strong>{{ primaryPropertyName(editingObject) }}</strong>
-            <code>{{ editingObject.primary_property }}</code>
+            <code class="technical-identifier" :title="editingObject.primary_property">{{ editingObject.primary_property }}</code>
           </div>
           <div>
             <span>属性数量</span>
@@ -187,7 +199,7 @@
           <div class="property-definition-list">
             <div v-for="property in editingObject.properties" :key="property.property_key">
               <span>{{ property.name }}</span>
-              <code>{{ property.property_key }}</code>
+              <code class="technical-identifier" :title="property.property_key">{{ property.property_key }}</code>
               <el-tag v-if="property.property_key === editingObject.primary_property" size="small" type="warning" effect="plain">主属性</el-tag>
               <small>{{ typeLabel(property.data_type) }}</small>
             </div>
@@ -239,7 +251,7 @@
             </el-form-item>
             <div class="field-mapping-list" aria-label="对象属性字段映射">
               <div v-for="property in editingObject.properties" :key="property.property_key" class="field-mapping-row">
-                <div><strong>{{ property.name }}</strong><code>{{ property.property_key }}</code></div>
+                <div><strong>{{ property.name }}</strong><code class="technical-identifier" :title="property.property_key">{{ property.property_key }}</code></div>
                 <span aria-hidden="true">对应</span>
                 <el-select v-model="propertyMappings[property.property_key]" :disabled="!canManageTechnical" clearable filterable placeholder="选择数据库字段" :aria-label="`为${property.name || property.property_key}选择数据库字段`">
                   <el-option v-for="column in sourceTableColumns" :key="column.column_name" :label="columnLabel(column)" :value="column.column_name" />
@@ -703,6 +715,23 @@ function propertyAriaLabel(row: OntologyObjectType) {
   return `${row.name}包含属性：${row.properties.map((item) => item.name || item.property_key).join('、')}`
 }
 
+const VISIBLE_PROPERTY_COUNT = 3
+
+function visibleProperties(row: OntologyObjectType) {
+  return row.properties.slice(0, VISIBLE_PROPERTY_COUNT)
+}
+
+function extraPropertyCount(row: OntologyObjectType) {
+  return Math.max(0, row.properties.length - VISIBLE_PROPERTY_COUNT)
+}
+
+function hiddenPropertyNames(row: OntologyObjectType) {
+  return row.properties
+    .slice(VISIBLE_PROPERTY_COUNT)
+    .map((item) => item.name || item.property_key)
+    .join('、')
+}
+
 function syncStatusLabel(row: OntologyObjectType) {
   if (!row.sync_enabled) return '未启用'
   if (!row.last_sync_status) return '等待首次同步'
@@ -813,11 +842,12 @@ function errorMessage(error: unknown) {
 .binding-summary strong.danger { color: var(--wq-danger); }
 
 .load-error { flex: 0 0 auto; margin: 0 0 10px; }
-.binding-table-section { flex: 1; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--wq-border); border-radius: 7px; background: var(--wq-surface); }
-.binding-table { width: 100%; height: 100%; }
+.binding-table-section { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--wq-border); border-radius: 7px; background: var(--wq-surface); }
+.binding-table { flex: 1 1 auto; width: 100%; height: 100%; min-height: 0; }
 .binding-table :deep(.el-table__header-wrapper th.el-table__cell) { color: #475467; background: #f5f7fa; font-size: 12px; font-weight: 680; }
-.binding-table :deep(.el-table__body td.el-table__cell) { padding: 9px 0; }
+.binding-table :deep(.el-table__body td.el-table__cell) { overflow: hidden; padding: 9px 0; }
 .binding-table :deep(.el-table__body tr:hover > td.el-table__cell) { background: #f5f9ff !important; }
+.binding-table :deep(.el-scrollbar__wrap) { scrollbar-gutter: stable; }
 
 @media (min-width: 921px) and (max-height: 820px) {
   .binding-table :deep(.el-table__body td.el-table__cell) { padding: 7px 0; }
@@ -828,15 +858,20 @@ function errorMessage(error: unknown) {
 .primary-cell, .property-identity, .stacked-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
 .primary-cell strong, .property-identity strong { overflow: hidden; max-width: 100%; color: var(--wq-text); font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 code { color: #344054; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; overflow-wrap: anywhere; }
+.technical-identifier { display: block; min-width: 0; max-width: 100%; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; word-break: normal; cursor: help; }
 .stacked-cell small, .object-definition small { color: var(--wq-muted); font-size: 11px; line-height: 1.35; }
 .sync-status-tag { max-width: 100%; }
 .muted { color: var(--wq-muted); font-size: 12px; }
 
-.property-tags { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; padding: 2px 0; }
-.property-tags :deep(.el-tag) { max-width: 150px; }
+.property-tags { display: flex; align-items: center; gap: 5px; flex-wrap: nowrap; min-width: 0; overflow: hidden; padding: 2px 0; }
+.property-tags :deep(.el-tag) { flex: 0 1 auto; max-width: 108px; }
 .property-tags :deep(.el-tag__content) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.property-more { flex: 0 0 auto; cursor: default; }
+.mobile-identifier { overflow: hidden; overflow-wrap: normal !important; text-overflow: ellipsis; white-space: nowrap; word-break: normal; }
 
 .mobile-list { display: none; }
+
+:global(.binding-identifier-tooltip) { max-width: min(560px, calc(100vw - 32px)); overflow-wrap: anywhere; }
 
 :deep(.binding-editor-dialog), :deep(.mapping-preview-dialog) { max-width: calc(100vw - 32px); }
 :deep(.binding-editor-dialog .el-dialog__body), :deep(.mapping-preview-dialog .el-dialog__body) { max-height: calc(100vh - 190px); overflow-y: auto; padding-top: 16px; }

@@ -18,6 +18,34 @@ CAPABILITY_KEY_PATTERN = r"^[a-z][a-z0-9_]{0,127}$"
 OBJECT_KEY_PATTERN = r"^[A-Za-z][A-Za-z0-9_]{0,127}$"
 
 
+class QueryCapabilityMetricTerm(BaseModel):
+    """Business meaning of one metric key in a published contract."""
+
+    key: str = Field(min_length=1, max_length=128)
+    name: str = ""
+    synonyms: list[str] = Field(default_factory=list)
+    description: str = ""
+    dimensions: list[str] = Field(default_factory=list)
+
+
+class QueryCapabilityDimensionTerm(BaseModel):
+    """Business meaning of one dimension/filter key in a published contract."""
+
+    key: str = Field(min_length=1, max_length=128)
+    name: str = ""
+    synonyms: list[str] = Field(default_factory=list)
+    role: str = "dimension"
+
+
+class QueryCapabilityGlossary(BaseModel):
+    """Caller-facing dictionary for constructing LogicForm without internal prompts."""
+
+    metrics: list[QueryCapabilityMetricTerm] = Field(default_factory=list)
+    dimensions: list[QueryCapabilityDimensionTerm] = Field(default_factory=list)
+    field_aliases: dict[str, str] = Field(default_factory=dict)
+    examples: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class QueryCapabilityInputSlot(BaseModel):
     """One named input slot accepted by a query capability."""
 
@@ -61,6 +89,7 @@ class QueryCapability(BaseModel):
     domain_key: str | None = Field(default=None, max_length=128)
     supported_metrics: list[str] = Field(default_factory=list)
     supported_dimensions: list[str] = Field(default_factory=list)
+    glossary: QueryCapabilityGlossary = Field(default_factory=QueryCapabilityGlossary)
     input_slots: list[QueryCapabilityInputSlot] = Field(default_factory=list)
     output: QueryCapabilityOutputMetadata = Field(
         default_factory=QueryCapabilityOutputMetadata
@@ -125,6 +154,11 @@ class QueryCapability(BaseModel):
             ),
             supported_metrics=list(dict.fromkeys(logic_form.metrics)),
             supported_dimensions=list(dict.fromkeys(logic_form.dimensions)),
+            glossary=_build_glossary(
+                runtime_model,
+                list(dict.fromkeys(logic_form.metrics)),
+                list(dict.fromkeys(logic_form.dimensions)),
+            ),
             input_slots=input_slots or _logic_form_slots(logic_form),
             output=output or QueryCapabilityOutputMetadata(),
             execution=execution or QueryCapabilityExecutionMetadata(),
@@ -167,11 +201,127 @@ class QueryCapability(BaseModel):
             domain_key=runtime_model.domain.domain_key,
             supported_metrics=[metric.metric_key for metric in runtime_model.metrics],
             supported_dimensions=list(dict.fromkeys(dimensions)),
+            glossary=_build_glossary(
+                runtime_model,
+                [metric.metric_key for metric in runtime_model.metrics],
+                list(dict.fromkeys(dimensions)),
+            ),
             input_slots=input_slots or _default_input_slots(),
             output=output or QueryCapabilityOutputMetadata(),
             execution=execution or QueryCapabilityExecutionMetadata(),
             metadata=dict(metadata or {}),
         )
+
+
+def _unique_terms(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(str(item).strip() for item in values if str(item or "").strip()))
+
+
+def _build_glossary(
+    runtime: SemanticRuntime | None,
+    metric_keys: list[str],
+    dimension_keys: list[str],
+) -> QueryCapabilityGlossary:
+    """Build a SQL-free business dictionary for one capability boundary."""
+    if runtime is None:
+        return QueryCapabilityGlossary()
+    allowed_metrics = [key for key in metric_keys if key]
+    allowed_dimensions = [key for key in dimension_keys if key]
+    aliases = _field_aliases(runtime)
+    inverse_aliases: dict[str, list[str]] = {}
+    for source, target in aliases.items():
+        inverse_aliases.setdefault(target, []).append(source)
+    metric_by_key = {item.metric_key: item for item in runtime.metrics}
+    concept_by_key = {item.concept_key: item for item in runtime.concepts}
+    mapping_by_key = {item.asset_key: item for item in runtime.mappings}
+    metrics = []
+    for key in allowed_metrics:
+        item = metric_by_key.get(key)
+        metrics.append(
+            QueryCapabilityMetricTerm(
+                key=key,
+                name=(item.name if item else key),
+                synonyms=_unique_terms(
+                    [*(item.synonyms if item else []), *inverse_aliases.get(key, [])]
+                ),
+                description=str(item.description or "") if item else "",
+                dimensions=[
+                    dim
+                    for dim in (item.dimensions if item else [])
+                    if dim in set(allowed_dimensions)
+                ],
+            )
+        )
+    dimensions = []
+    for key in allowed_dimensions:
+        concept = concept_by_key.get(key)
+        mapping = mapping_by_key.get(key)
+        dimensions.append(
+            QueryCapabilityDimensionTerm(
+                key=key,
+                name=(concept.name if concept else key),
+                synonyms=_unique_terms(
+                    [*(concept.synonyms if concept else []), *inverse_aliases.get(key, [])]
+                ),
+                role=(mapping.role if mapping and mapping.role else "dimension"),
+            )
+        )
+    examples: list[dict[str, Any]] = []
+    if allowed_metrics:
+        examples.append(
+            {
+                "title": "按指标汇总",
+                "logic_form": {
+                    "intent_type": "metric_query",
+                    "metrics": [allowed_metrics[0]],
+                    "dimensions": [],
+                },
+            }
+        )
+    if allowed_metrics and allowed_dimensions:
+        metric_dimensions = metrics[0].dimensions if metrics else []
+        preferred = next(
+            (dim for dim in metric_dimensions if dim in allowed_dimensions),
+            allowed_dimensions[0],
+        )
+        examples.append(
+            {
+                "title": "按维度分组",
+                "logic_form": {
+                    "intent_type": "metric_query",
+                    "metrics": [allowed_metrics[0]],
+                    "dimensions": [preferred],
+                },
+            }
+        )
+    scoped_aliases = {
+        source: target
+        for source, target in aliases.items()
+        if target in set(allowed_metrics + allowed_dimensions)
+    }
+    return QueryCapabilityGlossary(
+        metrics=metrics,
+        dimensions=dimensions,
+        field_aliases=scoped_aliases,
+        examples=examples,
+    )
+
+
+def _field_aliases(runtime: SemanticRuntime) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for rule in runtime.rules:
+        if str(rule.rule_type or "") != "normalization":
+            continue
+        expression = rule.expression if isinstance(rule.expression, dict) else {}
+        blobs = [expression]
+        nested = expression.get("logic_form")
+        if isinstance(nested, dict):
+            blobs.append(nested)
+        for blob in blobs:
+            for source, target in (blob.get("field_aliases") or {}).items():
+                if source and target:
+                    aliases[str(source)] = str(target)
+    return aliases
 
 
 class QueryCapabilityValidation(BaseModel):

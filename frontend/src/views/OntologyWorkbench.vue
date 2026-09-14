@@ -113,7 +113,8 @@
                 新建对象
               </el-button>
             </div>
-            <el-table class="ontology-table" :data="objectTypes" row-key="id" height="100%">
+            <div class="table-scroll-frame">
+              <el-table class="ontology-table" :data="objectTypes" row-key="id" height="100%">
               <el-table-column type="expand" width="42">
                 <template #default="{ row }">
                   <div class="property-grid">
@@ -182,7 +183,8 @@
                   </div>
                 </template>
               </el-table-column>
-            </el-table>
+              </el-table>
+            </div>
           </section>
         </el-tab-pane>
 
@@ -198,7 +200,8 @@
               </div>
               <el-button v-if="canManage" type="primary" :icon="Plus" @click="openLinkTypeDialog()">新建关系</el-button>
             </div>
-            <el-table class="ontology-table" :data="linkTypes" height="100%">
+            <div class="table-scroll-frame">
+              <el-table class="ontology-table" :data="linkTypes" height="100%">
               <el-table-column label="关系" min-width="200">
                 <template #default="{ row }">
                   <div class="primary-cell"><strong>{{ row.name }}</strong><code>{{ row.link_key }}</code></div>
@@ -235,7 +238,8 @@
                   </div>
                 </template>
               </el-table-column>
-            </el-table>
+              </el-table>
+            </div>
           </section>
         </el-tab-pane>
 
@@ -251,7 +255,8 @@
               </div>
               <el-button v-if="canManage" type="primary" :icon="Plus" @click="openActionTypeDialog()">新建动作</el-button>
             </div>
-            <el-table class="ontology-table" :data="actionTypes" height="100%">
+            <div class="table-scroll-frame">
+              <el-table class="ontology-table" :data="actionTypes" height="100%">
               <el-table-column label="动作" min-width="210">
                 <template #default="{ row }">
                   <div class="primary-cell"><strong>{{ row.name }}</strong><code>{{ row.action_key }}</code></div>
@@ -308,7 +313,8 @@
                   </div>
                 </template>
               </el-table-column>
-            </el-table>
+              </el-table>
+            </div>
           </section>
         </el-tab-pane>
 
@@ -867,6 +873,32 @@ function observeGraphElement() {
   observedGraphElement = element
 }
 
+// Force layout starts on the view boundary, so reserve room for node symbols and labels.
+function graphViewportInsets(width: number, height: number) {
+  const horizontalScale = Math.max(0.65, Math.min(1, width / 720))
+  const verticalScale = Math.max(0.55, Math.min(1, height / 360))
+  const horizontal = Math.round(58 * horizontalScale)
+  return {
+    top: Math.round(62 * verticalScale),
+    right: horizontal,
+    bottom: Math.round(104 * verticalScale),
+    left: horizontal,
+  }
+}
+
+function graphForceScale(width: number, height: number) {
+  return Math.max(0.88, Math.min(1, Math.min(width / 960, height / 520)))
+}
+
+function graphInitialZoom(width: number, height: number, nodeCount: number) {
+  if (!nodeCount) return 1
+  const columns = Math.max(1, Math.ceil(Math.sqrt(nodeCount)))
+  const rows = Math.max(1, Math.ceil(nodeCount / columns))
+  const widthFit = (width - 32) / (columns * 170)
+  const heightFit = (height - 24) / (rows * 118)
+  return Math.max(0.62, Math.min(0.86, widthFit, heightFit * 0.88))
+}
+
 function renderGraph() {
   observeGraphElement()
   const element = graphElement.value
@@ -876,8 +908,11 @@ function renderGraph() {
   if (!width || !height) return
   graph ||= echarts.init(element)
   graph.resize({ width, height })
+  const graphInsets = graphViewportInsets(width, height)
+  const forceScale = graphForceScale(width, height)
   const nodes = objectTypes.value.map((item) => ({ id: item.object_key, name: item.name, value: `对象类型 · ${item.object_key}\n${item.properties.length} 个属性`, symbolSize: 78, category: 0 }))
   actionTypes.value.forEach((item) => nodes.push({ id: `action:${item.action_key}`, name: item.name, value: `业务动作 · ${item.action_key}`, symbolSize: 58, category: 1 } as any))
+  const initialZoom = graphInitialZoom(width, height, nodes.length)
   const edges: any[] = linkTypes.value.map((item) => ({ source: item.source_object_key, target: item.target_object_key, name: item.name }))
   actionTypes.value.forEach((item) => edges.push({ source: `action:${item.action_key}`, target: item.target_object_key, name: '作用于', lineStyle: { type: 'dashed' } }))
   const graphTooltip = (p: any) => {
@@ -885,7 +920,37 @@ function renderGraph() {
     const kind = p.data.category === 0 ? '对象类型（实体/业务记录）' : '业务动作（处理行为）'
     return `${p.data.name}<br/>${kind}<br/>${String(p.data.value || '').replace('\n', '<br/>')}`
   }
-  graph.setOption({ tooltip: { formatter: graphTooltip }, legend: [{ data: ['对象（实体/记录）', '动作（处理行为）'], bottom: 12 }], series: [{ type: 'graph', layout: 'force', roam: true, draggable: true, top: 24, right: 24, bottom: 60, left: 24, categories: [{ name: '对象（实体/记录）', itemStyle: { color: '#167c5a' } }, { name: '动作（处理行为）', itemStyle: { color: '#c36b18' } }], data: nodes, links: edges, label: { show: true, color: '#182230', fontSize: 13, position: 'bottom' }, edgeLabel: { show: true, formatter: (params: any) => params.data?.name || '', fontSize: 11, color: '#475467' }, lineStyle: { color: '#98a2b3', width: 1.5, curveness: 0.1 }, force: { initLayout: 'circular', repulsion: 360, edgeLength: 170, gravity: 0.08 }, emphasis: { focus: 'adjacency', lineStyle: { width: 3 } } }] }, true)
+  graph.setOption({
+    tooltip: { formatter: graphTooltip },
+    legend: [{ show: false, data: ['对象（实体/记录）', '动作（处理行为）'], bottom: 12 }],
+    series: [{
+      type: 'graph',
+      layout: 'force',
+      roam: true,
+      draggable: true,
+      zoom: initialZoom,
+      top: graphInsets.top,
+      right: graphInsets.right,
+      bottom: graphInsets.bottom,
+      left: graphInsets.left,
+      categories: [
+        { name: '对象（实体/记录）', itemStyle: { color: '#167c5a' } },
+        { name: '动作（处理行为）', itemStyle: { color: '#c36b18' } },
+      ],
+      data: nodes,
+      links: edges,
+      label: { show: true, color: '#182230', fontSize: 13, position: 'bottom', distance: 5 },
+      edgeLabel: { show: true, formatter: (params: any) => params.data?.name || '', fontSize: 11, color: '#475467' },
+      lineStyle: { color: '#98a2b3', width: 1.5, curveness: 0.1 },
+      force: {
+        initLayout: 'circular',
+        repulsion: Math.round(480 * forceScale),
+        edgeLength: Math.round(190 * forceScale),
+        gravity: 0.06,
+      },
+      emphasis: { focus: 'adjacency', lineStyle: { width: 3 } },
+    }],
+  }, true)
   graphSize = { width, height }
 }
 
@@ -1120,19 +1185,24 @@ onBeforeUnmount(() => {
 .toolbar-actions, .section-toolbar, .subsection-title { display: flex; align-items: center; }
 .file-input { display: none; }
 .title-group { min-width: 0; }.title-group h2 { color: var(--wq-text); font-size: 18px; line-height: 1.2; }.title-group p { margin-top: 2px; color: var(--wq-muted); font-size: 11px; line-height: 1.25; }.toolbar-actions { justify-content: flex-end; gap: 6px; flex-wrap: nowrap; min-width: 0; }.toolbar-actions :deep(.el-button) { margin-left: 0; white-space: nowrap; }.toolbar-actions :deep(.el-dropdown) { flex: 0 0 auto; }.model-version-status { display: inline-flex; flex: 0 0 auto; align-items: center; min-height: 28px; padding-right: 2px; }.model-more-button { min-width: 68px; }
-.metric-strip { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 1px; margin: 5px 0 3px; background: var(--wq-border); border: 1px solid var(--wq-border); border-radius: 7px; overflow: hidden; }.metric-item { position: relative; min-height: 54px; padding: 8px 12px; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; appearance: none; background: var(--wq-surface); transition: background-color 140ms ease; }.metric-item:hover { background: var(--wq-primary-soft); }.metric-item:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--wq-primary); outline-offset: -2px; }.metric-item span { display: block; color: var(--wq-muted); font-size: 10px; }.metric-item strong { display: block; margin-top: 1px; font-size: 18px; font-weight: 680; }.metric-item .el-icon { position: absolute; right: 10px; top: 14px; color: var(--wq-subtle); font-size: 24px; }
-.workspace-tabs { min-width: 0; min-height: 0; flex: 1; }.workspace-tabs :deep(.el-tabs__header) { height: 32px; margin: 0; }.workspace-tabs :deep(.el-tabs__item) { height: 32px; line-height: 32px; font-size: 13px; }.workspace-tabs :deep(.el-tabs__content) { min-width: 0; height: calc(100% - 32px); }.workspace-tabs :deep(.el-tab-pane) { min-width: 0; height: 100%; }.graph-panel { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; height: 100%; min-height: 0; overflow: hidden; background: #fff; border-bottom: 1px solid var(--wq-border); }.ontology-graph { width: 100%; height: 100%; min-height: 0; }.graph-empty { position: absolute; inset: 0; background: #fff; }
-.graph-guide { display: grid; grid-template-columns: minmax(170px, .55fr) minmax(0, 2.45fr); gap: 8px 16px; padding: 7px 12px 6px; border-bottom: 1px solid #cfd8e3; background: #f7f9fc; color: var(--wq-muted); font-size: 11px; line-height: 1.3; }
-.graph-guide-intro { display: grid; align-content: center; gap: 4px; min-width: 0; padding-right: 16px; border-right: 1px solid #dbe4ef; }
-.graph-guide-kicker { color: var(--wq-primary-strong); font-size: 11px; font-weight: 700; line-height: 1.3; }
-.graph-guide-heading { display: grid; gap: 3px; }
-.graph-guide-heading strong { color: var(--wq-text); font-size: 14px; font-weight: 700; line-height: 1.35; }
-.graph-guide-heading span { color: #475467; font-size: 11px; line-height: 1.45; }
-.graph-guide-body { display: grid; gap: 6px; min-width: 0; }
-.graph-guide-items { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; min-width: 0; }
-.graph-guide-item { display: grid; grid-template-columns: 6px minmax(0, 1fr); align-items: start; gap: 8px; min-width: 0; min-height: 41px; padding: 6px 8px; background: #fff; border: 1px solid #dbe4ef; border-radius: 6px; }
-.graph-guide-item > span:last-child { display: grid; gap: 2px; min-width: 0; }
-.graph-guide-item b { color: var(--wq-text); font-size: 12px; font-weight: 700; line-height: 1.2; }.graph-guide-item small { overflow: hidden; color: #667085; font-size: 10px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.metric-strip { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 1px; margin: 5px 0 3px; background: var(--wq-border); border: 1px solid var(--wq-border); border-radius: 7px; overflow: hidden; }.metric-item { position: relative; min-height: 42px; padding: 6px 12px; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; appearance: none; background: var(--wq-surface); transition: background-color 140ms ease; }.metric-item:hover { background: var(--wq-primary-soft); }.metric-item:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--wq-primary); outline-offset: -2px; }.metric-item span { display: block; color: var(--wq-muted); font-size: 10px; }.metric-item strong { display: block; margin-top: 1px; font-size: 18px; font-weight: 680; }.metric-item .el-icon { position: absolute; right: 10px; top: 14px; color: var(--wq-subtle); font-size: 24px; display: none; }
+.workspace-tabs { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.workspace-tabs :deep(.el-tabs__header) { height: 32px; margin: 0; flex: 0 0 32px; }
+.workspace-tabs :deep(.el-tabs__item) { height: 32px; line-height: 32px; font-size: 13px; }
+.workspace-tabs :deep(.el-tabs__content) { min-width: 0; min-height: 0; height: auto; flex: 1; overflow: hidden; }
+.workspace-tabs :deep(.el-tab-pane) { min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
+.graph-panel { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; height: 100%; min-height: 0; overflow: hidden; background: #fff; border-bottom: 1px solid var(--wq-border); }.ontology-graph { width: 100%; height: 100%; min-height: 0; }.graph-empty { position: absolute; inset: 0; background: #fff; }
+.graph-guide { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 6px 12px; border-bottom: 1px solid #cfd8e3; background: #f7f9fc; color: var(--wq-muted); font-size: 11px; line-height: 1.3; }
+.graph-guide-intro { display: flex; align-items: center; gap: 8px; min-width: 0; padding-right: 0; border-right: 0; }
+.graph-guide-kicker { display: none; color: var(--wq-primary-strong); font-size: 11px; font-weight: 700; line-height: 1.3; }
+.graph-guide-heading { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.graph-guide-heading strong { color: var(--wq-text); font-size: 12px; font-weight: 700; line-height: 1.3; white-space: nowrap; }
+.graph-guide-heading span { overflow: hidden; color: #475467; font-size: 11px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.graph-guide-body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+.graph-guide-items { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.graph-guide-item { display: grid; grid-template-columns: 6px minmax(0, 1fr); align-items: center; gap: 6px; min-width: 0; min-height: 0; padding: 4px 8px; background: #fff; border: 1px solid #dbe4ef; border-radius: 6px; }
+.graph-guide-item > span:last-child { display: grid; gap: 0; min-width: 0; }
+.graph-guide-item b { color: var(--wq-text); font-size: 12px; font-weight: 700; line-height: 1.2; }.graph-guide-item small { display: none; overflow: hidden; color: #667085; font-size: 10px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .graph-guide-dot { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: #98a2b3; }
 .graph-guide-item.guide-object { border-color: #a6e4c9; background: #f4fbf7; }
 .graph-guide-item.guide-object .graph-guide-dot { background: #067647; }
@@ -1142,15 +1212,23 @@ onBeforeUnmount(() => {
 .graph-guide-item.guide-action .graph-guide-dot { background: #b54708; }
 .graph-guide-item.guide-state { border-color: #d0d5dd; background: #fafbfc; }
 .graph-guide-item.guide-state .graph-guide-dot { background: #475467; }
-.graph-guide-example { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.graph-guide-example { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .graph-guide-example-label { color: #475467; font-size: 11px; font-weight: 700; }
-.graph-guide-example > span:not(.graph-guide-example-label) { display: inline-flex; align-items: center; gap: 6px; min-height: 23px; padding: 2px 8px; background: #fff; border: 1px solid #d0d5dd; border-radius: 6px; white-space: nowrap; }
+.graph-guide-example > span:not(.graph-guide-example-label) { display: inline-flex; align-items: center; gap: 6px; min-height: 22px; padding: 2px 8px; background: #fff; border: 1px solid #d0d5dd; border-radius: 6px; white-space: nowrap; }
 .graph-guide-example b { color: var(--wq-text); font-size: 11px; font-weight: 650; }
 .graph-guide-example small { color: #667085; font-size: 10px; }
 .graph-guide-example .guide-object { border-color: #a6e4c9; background: #effaf4; }
 .graph-guide-example .guide-state { border-color: #b2ddff; background: #eff8ff; }
 .graph-guide-example .guide-action { border-color: #f7c58b; background: #fff7ed; }
-.table-section { height: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: var(--wq-surface); }.section-toolbar { height: auto; min-height: 54px; justify-content: space-between; border-bottom: 1px solid var(--wq-border); }.section-toolbar > div { display: flex; align-items: baseline; gap: 8px; }.section-toolbar span { color: var(--wq-muted); font-size: 12px; }.ontology-table { width: 100%; min-height: 0; height: 100%; }
+.table-section { height: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: var(--wq-surface); }.section-toolbar { height: auto; min-height: 54px; justify-content: space-between; border-bottom: 1px solid var(--wq-border); }.section-toolbar > div { display: flex; align-items: baseline; gap: 8px; }.section-toolbar span { color: var(--wq-muted); font-size: 12px; }
+.table-scroll-frame { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
+.ontology-table { width: 100%; min-height: 0; height: 100%; }
+.ontology-table :deep(.el-table__inner-wrapper),
+.ontology-table :deep(.el-table__body-wrapper),
+.ontology-table :deep(.el-scrollbar),
+.ontology-table :deep(.el-scrollbar__wrap) { min-height: 0; }
+.ontology-table :deep(.el-table__body-wrapper) { overscroll-behavior: contain; }
+.ontology-table :deep(.el-scrollbar__wrap) { scrollbar-gutter: stable; }
 .sync-status-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }.sync-status-cell small { color: var(--wq-muted); font-size: 11px; white-space: nowrap; }.muted { color: var(--wq-muted); }.source-query-input :deep(textarea) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; }
 .mapping-preview-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; padding: 9px 11px; border: 1px solid #b2ddff; border-radius: 6px; background: #f5f9ff; color: var(--wq-muted); font-size: 12px; line-height: 1.45; }.mapping-preview-bar .el-button { flex: 0 0 auto; margin-left: 0; }
 .mapping-preview-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 14px 0; }.mapping-preview-summary > div { min-width: 0; padding: 10px 12px; border: 1px solid var(--wq-border); border-radius: 6px; background: #f8fafc; }.mapping-preview-summary span { display: block; color: var(--wq-muted); font-size: 11px; }.mapping-preview-summary strong { display: block; margin-top: 4px; overflow: hidden; color: var(--wq-text); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }.mapping-preview-section { margin-top: 16px; }.mapping-preview-section h4 { margin: 0 0 8px; color: var(--wq-text); font-size: 13px; }.mapping-preview-section p { margin: 0; color: var(--wq-muted); font-size: 12px; line-height: 1.5; }.mapping-preview-list { display: grid; gap: 5px; padding: 8px 10px; border-radius: 5px; font-size: 12px; line-height: 1.5; }.mapping-preview-list.is-error { color: #b42318; background: #fef3f2; }.mapping-preview-list.is-warning { color: #b54708; background: #fffaeb; }.mapping-preview-ok { color: #067647 !important; }.mapping-preview-warning { margin-top: 8px !important; color: #b54708 !important; }

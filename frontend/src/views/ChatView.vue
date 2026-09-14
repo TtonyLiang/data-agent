@@ -73,14 +73,14 @@
         </template>
       </nav>
       <div class="session-footer">
-        <span>历史记录按当前智能体自动保存</span>
+        <span>验收会话按当前验证智能体保存，不代表第三方运行形态</span>
       </div>
     </aside>
 
     <div class="chat-container">
       <div class="workspace-toolbar">
         <div class="workspace-title">
-          <h2>智能问数对话</h2>
+          <h2>能力验收对话</h2>
           <p>{{ selectedAgentName }}</p>
         </div>
         <div class="chat-controls">
@@ -102,13 +102,13 @@
           </el-select>
           <el-select
             v-model="agentId"
-            :placeholder="agents.length ? '选择智能体' : '暂无可用智能体'"
-            style="width: 260px"
+            :placeholder="agents.length ? '选择验证智能体' : '暂无可用验证智能体'"
+            style="width: 220px"
             size="small"
             :disabled="loading || agents.length === 0"
             aria-label="选择验证智能体"
           >
-            <el-option v-if="agents.length === 0" label="暂无可用智能体" :value="0" disabled />
+            <el-option v-if="agents.length === 0" label="暂无可用验证智能体" :value="0" disabled />
             <el-option
               v-for="agent in agents"
               :key="agent.id"
@@ -116,6 +116,7 @@
               :value="agent.id"
             />
           </el-select>
+          <el-button class="insight-toggle" @click="openInsight()">分析与结果</el-button>
         </div>
       </div>
 
@@ -130,13 +131,13 @@
       >
         <div v-if="agentsLoading" class="empty-hint chat-loading-state" aria-live="polite">
           <div class="empty-icon"><el-icon class="is-loading" :size="24"><Loading /></el-icon></div>
-          <h3>正在加载可用智能体</h3>
+          <h3>正在加载验证智能体</h3>
           <p>正在准备当前验证智能体的业务领域和数据权限。</p>
         </div>
 
         <div v-else-if="agentsLoadError" class="empty-hint chat-loading-state" aria-live="assertive">
           <div class="empty-icon error"><el-icon :size="24"><WarningFilled /></el-icon></div>
-          <h3>智能体暂时不可用</h3>
+          <h3>验证智能体暂时不可用</h3>
           <p>请确认服务正常后重试，或联系技术人员检查验证客户端与数据权限。</p>
           <el-button type="primary" size="small" :loading="agentsLoading" @click="loadAgents">重新加载</el-button>
         </div>
@@ -384,7 +385,7 @@
                   <el-button size="small" type="primary" :icon="Refresh" :disabled="loading || !latestUserQuestion" @click="rerunLatestQuestion">
                     重新运行
                   </el-button>
-                  <el-button size="small" :disabled="!latestSql" @click="activeResultTab = 'sql'">查看 SQL</el-button>
+                  <el-button size="small" :disabled="!latestSql" @click="openInsight('sql')">查看 SQL</el-button>
                 </div>
                 <div class="run-error-tip">完整堆栈已写入 logs/backend.log</div>
               </div>
@@ -509,7 +510,7 @@
                   </div>
                 </div>
                 <div v-if="msg.sql || msg.report_payload" class="answer-assets">
-                  <button v-if="msg.sql" class="asset-chip" type="button" @click="activeResultTab = 'sql'">
+                  <button v-if="msg.sql" class="asset-chip" type="button" @click="openInsight('sql')">
                     <span>技术 SQL</span>
                     <strong>{{ compactSql(msg.sql) }}</strong>
                   </button>
@@ -536,7 +537,7 @@
               <div v-if="msg.role === 'assistant' && msg.sql_result && msg.sql_result.length > 0 && !msg.report_payload" class="result-table compact-result">
                 <div class="inline-result-header">
                   <span>结果预览</span>
-                  <el-button size="small" text @click="activeResultTab = 'result'">查看完整结果</el-button>
+                  <el-button size="small" text @click="openInsight('result')">查看完整结果</el-button>
                 </div>
                 <el-table :data="msg.sql_result.slice(0, 5)" border size="small" max-height="240">
                   <el-table-column
@@ -589,12 +590,12 @@
             type="textarea"
             aria-label="输入查询问题"
             :placeholder="hasSelectedAgent && hasSelectedDomain ? '输入你的问题，支持自然语言查询数据...' : '请先选择业务领域和验证智能体'"
-            :autosize="{ minRows: 2, maxRows: 4 }"
+            :autosize="{ minRows: 1, maxRows: 4 }"
             :disabled="loading || !hasSelectedAgent || !hasSelectedDomain"
             @keydown.enter.exact.prevent="handleSend()"
           />
           <div class="composer-footer">
-            <div class="quick-query-list">
+            <div v-if="!hasConversation" class="quick-query-list">
               <el-button
                 v-for="query in quickQueries"
                 :key="query"
@@ -619,6 +620,13 @@
       </div>
     </div>
 
+    <el-drawer
+      v-model="insightOpen"
+      class="insight-drawer"
+      title="分析与结果"
+      size="420px"
+      append-to-body
+    >
     <div class="insight-panel">
       <el-tabs v-model="activeResultTab" stretch>
         <el-tab-pane label="分析链路" name="chain">
@@ -730,7 +738,7 @@
             <strong>本次 SQL 返回 0 行</strong>
             <p>可能是时间范围、过滤条件、字段口径或数据源选择过窄。可以查看 SQL 后调整问法，或重新运行最近的问题。</p>
             <div>
-              <el-button size="small" :disabled="!latestSql" @click="activeResultTab = 'sql'">查看 SQL</el-button>
+              <el-button size="small" :disabled="!latestSql" @click="openInsight('sql')">查看 SQL</el-button>
               <el-button size="small" type="primary" :disabled="loading || !latestUserQuestion" @click="rerunLatestQuestion">重新提问</el-button>
             </div>
           </div>
@@ -774,6 +782,7 @@
         </el-tab-pane>
       </el-tabs>
     </div>
+    </el-drawer>
 
     <el-dialog v-model="showCellDetail" title="字段详情" width="640px" append-to-body>
       <div class="cell-detail">
@@ -1070,9 +1079,11 @@ type RiskIssueFormModel = {
 const router = useRouter()
 const streamState = ref<ChatStreamState>(createChatStreamState())
 const messages = computed(() => streamState.value.messages)
+const hasConversation = computed(() => messages.value.length > 0)
 const inputText = ref('')
 const sessionSearch = ref('')
 const activeResultTab = ref('chain')
+const insightOpen = ref(false)
 const loading = ref(false)
 const agentId = ref<number>(Number(localStorage.getItem('wenqu_agent_id')) || 1)
 const domainId = ref<number>(Number(localStorage.getItem('wenqu_domain_id')) || 0)
@@ -1208,7 +1219,7 @@ const quickQueries = computed(() => {
   const configured = semanticExampleQueries.value.filter(Boolean)
   return configured.length ? configured.slice(0, 4) : defaultQuickQueries
 })
-const semanticHintText = computed(() => semanticHint.value || '先选择企业业务领域，再由验证智能体消费统一业务语义并查询已授权数据。')
+const semanticHintText = computed(() => semanticHint.value || '先选择企业业务领域和验证智能体。验收标准是第三方 Agent 调用同一能力约定得到同样的业务结果。')
 const hasSelectedAgent = computed(() => agents.value.some(agent => agent.id === agentId.value))
 const hasSelectedDomain = computed(() => domains.value.some(domain => domain.id === domainId.value))
 
@@ -2329,6 +2340,11 @@ function previewCellValue(column: string, value: unknown) {
   showCellDetail.value = true
 }
 
+function openInsight(tab?: string) {
+  if (tab) activeResultTab.value = tab
+  insightOpen.value = true
+}
+
 function openLatestReport() {
   if (!latestReport.value) return
   expandedReport.value = latestReport.value
@@ -3314,7 +3330,7 @@ onUnmounted(() => {
 <style scoped>
 .chat-layout {
   display: grid;
-  grid-template-columns: 280px minmax(460px, 1fr) 430px;
+  grid-template-columns: 280px minmax(0, 1fr);
   height: calc(100dvh - var(--wq-header-height));
   width: 100%;
   max-width: var(--wq-page-max-width);
@@ -4103,7 +4119,7 @@ onUnmounted(() => {
 .query-composer :deep(.el-textarea__inner) {
   box-shadow: none;
   border-radius: 0;
-  min-height: 48px !important;
+  min-height: 36px !important;
   padding: 4px 6px;
   resize: none;
 }
@@ -4114,6 +4130,10 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding-top: 8px;
+}
+
+.composer-footer > .el-button {
+  margin-left: auto;
 }
 
 .quick-query-list {
@@ -5235,7 +5255,7 @@ onUnmounted(() => {
   --chat-raised: var(--wq-surface-raised, var(--wq-surface));
   --chat-code: var(--wq-code, var(--wq-bg));
   --chat-radius: var(--wq-radius);
-  grid-template-columns: 248px minmax(520px, 1fr) 380px;
+  grid-template-columns: 248px minmax(0, 1fr);
   background: var(--chat-surface);
   color: var(--wq-text);
   font-size: 14px;
@@ -6307,6 +6327,16 @@ onUnmounted(() => {
   min-height: 0;
 }
 
+.insight-toggle {
+  min-width: 108px;
+}
+
+.insight-panel {
+  height: 100%;
+  min-height: 0;
+  border-left: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .analysis-stream-cursor span {
     animation: none;
@@ -6315,23 +6345,13 @@ onUnmounted(() => {
 
 @media (max-width: 1260px) {
   .chat-layout {
-    grid-template-columns: 236px minmax(440px, 1fr);
-    grid-template-rows: minmax(0, 1fr) 320px;
-  }
-
-  .insight-panel {
-    display: flex;
-    grid-column: 2;
-    grid-row: 2;
-    border-top: 1px solid var(--wq-border);
-    border-left: 0;
+    grid-template-columns: 236px minmax(0, 1fr);
   }
 }
 
 @media (max-width: 860px) {
   .chat-layout {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) minmax(260px, 44dvh);
     height: calc(100dvh - var(--wq-header-height));
   }
 
@@ -6339,20 +6359,9 @@ onUnmounted(() => {
     display: none;
   }
 
-  .chat-container,
-  .insight-panel {
-    grid-column: 1;
-  }
-
   .chat-container {
+    grid-column: 1;
     grid-row: 1;
-  }
-
-  .insight-panel {
-    display: flex;
-    grid-row: 2;
-    border-top: 1px solid var(--wq-border);
-    border-left: 0;
   }
 
   .workspace-toolbar {
@@ -6439,5 +6448,20 @@ onUnmounted(() => {
   .risk-form-wide {
     grid-column: auto;
   }
+}
+</style>
+
+<style>
+.insight-drawer .el-drawer__body {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.insight-drawer .insight-panel {
+  height: 100%;
+  min-height: 0;
+  border-left: 0;
 }
 </style>

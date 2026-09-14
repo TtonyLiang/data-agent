@@ -105,80 +105,82 @@
             <el-button text type="primary" @click="openModelConfig">配置业务对象</el-button>
           </div>
 
-          <el-table v-if="objectTypes.length" :data="objectTypes" class="runtime-table" border>
-            <el-table-column label="业务对象" min-width="200">
-              <template #default="{ row }">
-                <div class="primary-cell">
-                  <strong>{{ row.name }}</strong>
-                  <code>{{ row.object_key }}</code>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="数据同步" min-width="150">
-              <template #default="{ row }">
-                <el-tag v-if="row.sync_enabled" type="success" effect="plain">已配置</el-tag>
-                <el-tag v-else type="info" effect="plain">未配置</el-tag>
-                <span class="cell-note">{{ row.source_query ? '只读查询已配置' : '未配置来源查询' }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="运行状态" min-width="170">
-              <template #default="{ row }">
-                <el-tag :type="syncStatusType(row.last_sync_status)" effect="plain">
-                  {{ syncStatusLabel(row) }}
-                </el-tag>
-                <span class="cell-note">
-                  {{ row.last_synced_at ? formatDateTime(row.last_synced_at) : '暂无运行记录' }}
-                </span>
-              </template>
-            </el-table-column>
-            <el-table-column label="源记录" width="110" align="right">
-              <template #default="{ row }">{{ row.last_sync_total || row.last_sync_count || 0 }}</template>
-            </el-table-column>
-            <el-table-column label="操作" width="196" fixed="right" align="center">
-              <template #default="{ row }">
-                <span class="sync-actions">
-                  <el-tooltip
-                    :disabled="row.sync_enabled && Boolean(activeModelRelease)"
-                    :content="syncActionHint(row, true)"
-                    placement="top"
-                  >
-                    <span
-                      :tabindex="row.sync_enabled && activeModelRelease ? -1 : 0"
-                      :role="row.sync_enabled && activeModelRelease ? undefined : 'note'"
-                      :aria-label="row.sync_enabled && activeModelRelease ? undefined : syncActionHint(row, true)"
+          <div v-if="objectTypes.length" class="runtime-table-viewport">
+            <el-table :data="objectTypes" class="runtime-table" border>
+              <el-table-column label="业务对象" min-width="200">
+                <template #default="{ row }">
+                  <div class="primary-cell">
+                    <strong>{{ row.name }}</strong>
+                    <code>{{ row.object_key }}</code>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="数据同步" min-width="150">
+                <template #default="{ row }">
+                  <el-tag v-if="row.sync_enabled" type="success" effect="plain">已配置</el-tag>
+                  <el-tag v-else type="info" effect="plain">未配置</el-tag>
+                  <span class="cell-note">{{ row.source_query ? '只读查询已配置' : '未配置来源查询' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="运行状态" min-width="170">
+                <template #default="{ row }">
+                  <el-tag :type="syncStatusType(row.last_sync_status)" effect="plain">
+                    {{ syncStatusLabel(row) }}
+                  </el-tag>
+                  <span class="cell-note">
+                    {{ row.last_synced_at ? formatDateTime(row.last_synced_at) : '暂无运行记录' }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="源记录" width="110" align="right">
+                <template #default="{ row }">{{ row.last_sync_total || row.last_sync_count || 0 }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="196" fixed="right" align="center">
+                <template #default="{ row }">
+                  <span class="sync-actions">
+                    <el-tooltip
+                      :disabled="row.sync_enabled && Boolean(activeModelRelease)"
+                      :content="syncActionHint(row, true)"
+                      placement="top"
                     >
-                      <el-button
-                        size="small"
-                        :disabled="!row.sync_enabled || !activeModelRelease"
-                        :loading="previewingTypeId === row.id"
-                        @click="runObjectType(row, true)"
-                      >预览</el-button>
-                    </span>
-                  </el-tooltip>
-                  <el-tooltip
-                    :disabled="row.sync_enabled && Boolean(activeModelRelease) && canManage"
-                    :content="syncActionHint(row, false)"
-                    placement="top"
-                  >
-                    <span
-                      :tabindex="row.sync_enabled && activeModelRelease && canManage ? -1 : 0"
-                      :role="row.sync_enabled && activeModelRelease && canManage ? undefined : 'note'"
-                      :aria-label="row.sync_enabled && activeModelRelease && canManage ? undefined : syncActionHint(row, false)"
+                      <span
+                        :tabindex="row.sync_enabled && activeModelRelease ? -1 : 0"
+                        :role="row.sync_enabled && activeModelRelease ? undefined : 'note'"
+                        :aria-label="row.sync_enabled && activeModelRelease ? undefined : syncActionHint(row, true)"
+                      >
+                        <el-button
+                          size="small"
+                          :disabled="!row.sync_enabled || !activeModelRelease"
+                          :loading="previewingTypeId === row.id"
+                          @click="runObjectType(row, true)"
+                        >预览</el-button>
+                      </span>
+                    </el-tooltip>
+                    <el-tooltip
+                      :disabled="row.sync_enabled && Boolean(activeModelRelease) && canManage"
+                      :content="syncActionHint(row, false)"
+                      placement="top"
                     >
-                      <el-button
-                        type="primary"
-                        plain
-                        size="small"
-                        :disabled="!row.sync_enabled || !activeModelRelease || !canManage"
-                        :loading="syncingTypeId === row.id"
-                        @click="runObjectType(row, false)"
-                      >执行</el-button>
-                    </span>
-                  </el-tooltip>
-                </span>
-              </template>
-            </el-table-column>
-          </el-table>
+                      <span
+                        :tabindex="row.sync_enabled && activeModelRelease && canManage ? -1 : 0"
+                        :role="row.sync_enabled && activeModelRelease && canManage ? undefined : 'note'"
+                        :aria-label="row.sync_enabled && activeModelRelease && canManage ? undefined : syncActionHint(row, false)"
+                      >
+                        <el-button
+                          type="primary"
+                          plain
+                          size="small"
+                          :disabled="!row.sync_enabled || !activeModelRelease || !canManage"
+                          :loading="syncingTypeId === row.id"
+                          @click="runObjectType(row, false)"
+                        >执行</el-button>
+                      </span>
+                    </el-tooltip>
+                  </span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
 
           <el-empty v-else description="当前领域还没有业务对象">
             <el-button type="primary" @click="openModelConfig">开始本体建模</el-button>
@@ -228,42 +230,44 @@
             <p>预览不会写入对象；执行记录可按 trace 定位同步数量和错误。</p>
           </div>
         </div>
-        <el-table v-if="syncRuns.length" :data="syncRuns" border size="small" :scrollbar-tabindex="-1">
-          <el-table-column label="运行" min-width="180">
-            <template #default="{ row }">
-              <div class="primary-cell">
-                <strong>#{{ row.id }} · {{ row.dry_run ? '预览' : '执行' }}</strong>
-                <code>{{ row.trace_id }}</code>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="110">
-            <template #default="{ row }">
-              <el-tag :type="runStatusType(row.status)" effect="plain">
-                {{ runStatusLabel(row.status) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="统计" min-width="270">
-            <template #default="{ row }">
-              读取 {{ runStat(row, 'read') }}，新增 {{ runStat(row, 'created') }}，更新
-              {{ runStat(row, 'updated') }}，跳过 {{ runStat(row, 'skipped') }}
-            </template>
-          </el-table-column>
-          <el-table-column label="模型版本" width="110">
-            <template #default="{ row }">
-              {{ row.model_release_id ? `#${row.model_release_id}` : '历史未记录' }}
-            </template>
-          </el-table-column>
-          <el-table-column label="完成时间" min-width="170">
-            <template #default="{ row }">
-              {{ row.completed_at ? formatDateTime(row.completed_at) : '运行中' }}
-            </template>
-          </el-table-column>
-          <el-table-column label="错误" min-width="220" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.error_summary || '-' }}</template>
-          </el-table-column>
-        </el-table>
+        <div v-if="syncRuns.length" class="runtime-table-viewport">
+          <el-table :data="syncRuns" border size="small" :scrollbar-tabindex="-1">
+            <el-table-column label="运行" min-width="180">
+              <template #default="{ row }">
+                <div class="primary-cell">
+                  <strong>#{{ row.id }} · {{ row.dry_run ? '预览' : '执行' }}</strong>
+                  <code>{{ row.trace_id }}</code>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="110">
+              <template #default="{ row }">
+                <el-tag :type="runStatusType(row.status)" effect="plain">
+                  {{ runStatusLabel(row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="统计" min-width="270">
+              <template #default="{ row }">
+                读取 {{ runStat(row, 'read') }}，新增 {{ runStat(row, 'created') }}，更新
+                {{ runStat(row, 'updated') }}，跳过 {{ runStat(row, 'skipped') }}
+              </template>
+            </el-table-column>
+            <el-table-column label="模型版本" width="110">
+              <template #default="{ row }">
+                {{ row.model_release_id ? `#${row.model_release_id}` : '历史未记录' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="完成时间" min-width="170">
+              <template #default="{ row }">
+                {{ row.completed_at ? formatDateTime(row.completed_at) : '运行中' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="错误" min-width="220" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.error_summary || '-' }}</template>
+            </el-table-column>
+          </el-table>
+        </div>
         <el-empty v-else description="暂无同步运行记录" :image-size="72" />
       </section>
         </el-tab-pane>
@@ -283,78 +287,82 @@
                 <el-button v-if="canManage" type="primary" :icon="Plus" @click="openObjectDialog()">新建实例</el-button>
               </div>
             </div>
-            <el-table :data="objects" border class="runtime-data-table" v-loading="runtimeViewLoading">
-              <el-table-column label="对象" min-width="220">
-                <template #default="{ row }">
-                  <div class="primary-cell"><strong>{{ row.display_name }}</strong><code>{{ row.primary_value }}</code></div>
-                </template>
-              </el-table-column>
-              <el-table-column prop="object_type_name" label="对象类型" min-width="150" />
-              <el-table-column label="状态来源" min-width="170">
-                <template #default="{ row }">
-                  <div class="object-state-source">
-                    <el-tag :type="row.source_kind === 'database' ? 'success' : 'info'" effect="plain">
-                      {{ objectStateSourceLabel(row) }}
-                    </el-tag>
-                    <small v-if="objectOverlayCount(row)">平台变更 {{ objectOverlayCount(row) }} 项，尚未写回业务库</small>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="属性" min-width="420">
-                <template #default="{ row }">
-                  <el-tooltip
-                    v-if="objectPropertyEntries(row.properties).length"
-                    placement="top-start"
-                    effect="light"
-                    :show-after="120"
-                    :hide-after="80"
-                    transition="object-property-popover-fade"
-                    popper-class="object-property-tooltip"
-                  >
-                    <div
-                      class="audit-field-list object-property-list object-property-trigger"
-                      role="note"
-                      tabindex="0"
-                      :aria-label="objectPropertyAriaLabel(row.properties)"
-                    >
-                      <div class="object-property-preview-heading">
-                        <span>关键属性</span>
-                        <small>{{ objectPropertyEntries(row.properties).length }} 项</small>
-                      </div>
-                      <div v-for="entry in objectPropertyPreview(row.properties)" :key="entry.key" class="audit-field-row">
-                        <span :class="['audit-field-key', `tone-${entry.tone}`]">{{ entry.key }}</span>
-                        <span class="audit-field-value object-property-value">{{ formatStateValue(entry.value, entry.key) }}</span>
-                      </div>
-                      <span v-if="hiddenPropertyCount(row.properties)" class="object-property-more">+{{ hiddenPropertyCount(row.properties) }} 项</span>
+            <div class="runtime-table-viewport">
+              <el-table :data="objects" border class="runtime-data-table" v-loading="runtimeViewLoading">
+                <el-table-column label="对象" min-width="220">
+                  <template #default="{ row }">
+                    <div class="primary-cell"><strong>{{ row.display_name }}</strong><code>{{ row.primary_value }}</code></div>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="object_type_name" label="对象类型" min-width="150" />
+                <el-table-column label="状态来源" min-width="170">
+                  <template #default="{ row }">
+                    <div class="object-state-source">
+                      <el-tag :type="row.source_kind === 'database' ? 'success' : 'info'" effect="plain">
+                        {{ objectStateSourceLabel(row) }}
+                      </el-tag>
+                      <small v-if="objectOverlayCount(row)">平台变更 {{ objectOverlayCount(row) }} 项，尚未写回业务库</small>
                     </div>
-                    <template #content>
-                      <div class="object-property-tooltip-content">
-                        <div class="object-property-tooltip-heading">
-                          <span>完整属性</span>
-                          <b>{{ objectPropertyEntries(row.properties).length }} 项</b>
+                  </template>
+                </el-table-column>
+                <el-table-column label="属性" min-width="420">
+                  <template #default="{ row }">
+                    <el-tooltip
+                      v-if="objectPropertyEntries(row.properties).length"
+                      placement="top-start"
+                      effect="light"
+                      :show-after="120"
+                      :hide-after="80"
+                      transition="object-property-popover-fade"
+                      popper-class="object-property-tooltip"
+                    >
+                      <div
+                        class="audit-field-list object-property-list object-property-trigger"
+                        role="note"
+                        tabindex="0"
+                        :aria-label="objectPropertyAriaLabel(row.properties)"
+                      >
+                        <div class="object-property-preview-heading">
+                          <span>关键属性</span>
+                          <small>{{ objectPropertyEntries(row.properties).length }} 项</small>
                         </div>
-                        <div class="audit-field-list object-property-tooltip-list">
-                          <div v-for="entry in objectPropertyEntries(row.properties)" :key="entry.key" class="audit-field-row">
+                        <div class="object-property-preview-items">
+                          <div v-for="entry in objectPropertyPreview(row.properties)" :key="entry.key" class="audit-field-row object-property-preview-row">
                             <span :class="['audit-field-key', `tone-${entry.tone}`]">{{ entry.key }}</span>
-                            <span class="audit-field-value">{{ formatStateValue(entry.value, entry.key) }}</span>
+                            <span class="audit-field-value object-property-value">{{ formatStateValue(entry.value, entry.key) }}</span>
                           </div>
                         </div>
+                        <span v-if="hiddenPropertyCount(row.properties)" class="object-property-more">+{{ hiddenPropertyCount(row.properties) }} 项</span>
                       </div>
-                    </template>
-                  </el-tooltip>
-                  <span v-else class="audit-empty">-</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="版本" width="80"><template #default="{ row }">v{{ row.version }}</template></el-table-column>
-              <el-table-column v-if="canManage" label="操作" width="120" fixed="right" align="center">
-                <template #default="{ row }">
-                  <span class="row-actions">
-                    <el-button text :icon="Edit" :aria-label="`编辑对象实例 ${row.display_name || row.primary_value}`" @click="openObjectDialog(row)" />
-                    <el-button text type="danger" :icon="Delete" :aria-label="`删除对象实例 ${row.display_name || row.primary_value}`" @click="removeObject(row)" />
-                  </span>
-                </template>
-              </el-table-column>
-            </el-table>
+                      <template #content>
+                        <div class="object-property-tooltip-content">
+                          <div class="object-property-tooltip-heading">
+                            <span>完整属性</span>
+                            <b>{{ objectPropertyEntries(row.properties).length }} 项</b>
+                          </div>
+                          <div class="audit-field-list object-property-tooltip-list">
+                            <div v-for="entry in objectPropertyEntries(row.properties)" :key="entry.key" class="audit-field-row">
+                              <span :class="['audit-field-key', `tone-${entry.tone}`]">{{ entry.key }}</span>
+                              <span class="audit-field-value">{{ formatStateValue(entry.value, entry.key) }}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </template>
+                    </el-tooltip>
+                    <span v-else class="audit-empty">-</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="版本" width="80"><template #default="{ row }">v{{ row.version }}</template></el-table-column>
+                <el-table-column v-if="canManage" label="操作" width="120" fixed="right" align="center">
+                  <template #default="{ row }">
+                    <span class="row-actions">
+                      <el-button text :icon="Edit" :aria-label="`编辑对象实例 ${row.display_name || row.primary_value}`" @click="openObjectDialog(row)" />
+                      <el-button text type="danger" :icon="Delete" :aria-label="`删除对象实例 ${row.display_name || row.primary_value}`" @click="removeObject(row)" />
+                    </span>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
             <el-empty v-if="!runtimeViewLoading && objects.length === 0" description="暂无对象实例" />
             <div v-if="instanceTotal > 0" class="instance-pagination">
               <span>共 {{ instanceTotal }} 条</span>
@@ -384,31 +392,65 @@
                 <el-button v-if="canManage" type="primary" :icon="Connection" :disabled="linkTypes.length === 0" @click="openLinkDialog">建立关系</el-button>
               </div>
             </div>
-            <el-table :data="links" border class="runtime-data-table" v-loading="runtimeViewLoading">
-              <el-table-column label="关系" min-width="190">
-                <template #default="{ row }"><div class="primary-cell"><strong>{{ row.link_type_name }}</strong><code>{{ row.link_key }}</code></div></template>
-              </el-table-column>
-              <el-table-column label="起点对象" min-width="220">
-                <template #default="{ row }"><strong>{{ row.source_name }}</strong><span class="cell-note">{{ row.source_primary_value }}</span></template>
-              </el-table-column>
-              <el-table-column label="终点对象" min-width="220">
-                <template #default="{ row }"><strong>{{ row.target_name }}</strong><span class="cell-note">{{ row.target_primary_value }}</span></template>
-              </el-table-column>
-              <el-table-column label="属性" min-width="300">
-                <template #default="{ row }">
-                  <div v-if="objectPropertyEntries(row.properties).length" class="audit-field-list compact-audit-list">
-                    <div v-for="entry in objectPropertyPreview(row.properties)" :key="entry.key" class="audit-field-row">
-                      <span :class="['audit-field-key', `tone-${entry.tone}`]">{{ entry.key }}</span>
-                      <span class="audit-field-value">{{ formatStateValue(entry.value, entry.key) }}</span>
+            <div class="runtime-table-viewport">
+              <el-table :data="links" border class="runtime-data-table" v-loading="runtimeViewLoading">
+                <el-table-column label="关系" min-width="190">
+                  <template #default="{ row }"><div class="primary-cell"><strong>{{ row.link_type_name }}</strong><code>{{ row.link_key }}</code></div></template>
+                </el-table-column>
+                <el-table-column label="起点对象" min-width="220">
+                  <template #default="{ row }">
+                    <div class="relation-endpoint">
+                      <span class="relation-endpoint-role">起点</span>
+                      <div class="relation-endpoint-copy">
+                        <strong class="relation-endpoint-name">{{ row.source_name }}</strong>
+                        <el-tooltip :content="relationIdentifier(row.source_primary_value)" placement="top" :show-after="160">
+                          <code
+                            class="relation-endpoint-id"
+                            tabindex="0"
+                            role="note"
+                            :title="relationIdentifier(row.source_primary_value)"
+                            :aria-label="`起点标识：${relationIdentifier(row.source_primary_value)}`"
+                          >{{ relationIdentifier(row.source_primary_value) }}</code>
+                        </el-tooltip>
+                      </div>
                     </div>
-                  </div>
-                  <span v-else class="audit-empty">-</span>
-                </template>
-              </el-table-column>
-              <el-table-column v-if="canManage" label="操作" width="80" fixed="right" align="center">
-                <template #default="{ row }"><span class="row-actions"><el-button text type="danger" :icon="Delete" :aria-label="`删除关系实例 ${row.link_type_name}：${row.source_name} 到 ${row.target_name}`" @click="removeLink(row)" /></span></template>
-              </el-table-column>
-            </el-table>
+                  </template>
+                </el-table-column>
+                <el-table-column label="终点对象" min-width="220">
+                  <template #default="{ row }">
+                    <div class="relation-endpoint">
+                      <span class="relation-endpoint-role">终点</span>
+                      <div class="relation-endpoint-copy">
+                        <strong class="relation-endpoint-name">{{ row.target_name }}</strong>
+                        <el-tooltip :content="relationIdentifier(row.target_primary_value)" placement="top" :show-after="160">
+                          <code
+                            class="relation-endpoint-id"
+                            tabindex="0"
+                            role="note"
+                            :title="relationIdentifier(row.target_primary_value)"
+                            :aria-label="`终点标识：${relationIdentifier(row.target_primary_value)}`"
+                          >{{ relationIdentifier(row.target_primary_value) }}</code>
+                        </el-tooltip>
+                      </div>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="属性" min-width="300">
+                  <template #default="{ row }">
+                    <div v-if="objectPropertyEntries(row.properties).length" class="audit-field-list compact-audit-list">
+                      <div v-for="entry in objectPropertyPreview(row.properties)" :key="entry.key" class="audit-field-row">
+                        <span :class="['audit-field-key', `tone-${entry.tone}`]">{{ entry.key }}</span>
+                        <span class="audit-field-value">{{ formatStateValue(entry.value, entry.key) }}</span>
+                      </div>
+                    </div>
+                    <span v-else class="audit-empty">-</span>
+                  </template>
+                </el-table-column>
+                <el-table-column v-if="canManage" label="操作" width="80" fixed="right" align="center">
+                  <template #default="{ row }"><span class="row-actions"><el-button text type="danger" :icon="Delete" :aria-label="`删除关系实例 ${row.link_type_name}：${row.source_name} 到 ${row.target_name}`" @click="removeLink(row)" /></span></template>
+                </el-table-column>
+              </el-table>
+            </div>
             <el-empty v-if="!runtimeViewLoading && links.length === 0" description="暂无关系实例" />
           </section>
         </el-tab-pane>
@@ -425,42 +467,44 @@
                 <el-button type="primary" :icon="VideoPlay" :disabled="!activeModelRelease || availableActions.length === 0" @click="openExecuteDialog">执行动作</el-button>
               </div>
             </div>
-            <el-table :data="actionRuns" border class="runtime-data-table" v-loading="runtimeViewLoading">
-              <el-table-column label="状态" width="100">
-                <template #default="{ row }"><el-tag :type="actionRunStatusType(row.status)" effect="plain">{{ actionRunStatusLabel(row.status) }}</el-tag></template>
-              </el-table-column>
-              <el-table-column label="动作 / 目标" min-width="230">
-                <template #default="{ row }"><div class="primary-cell"><strong>{{ row.action_name }}</strong><span>{{ row.target_name || '未指定目标' }}</span></div></template>
-              </el-table-column>
-              <el-table-column label="执行人" width="130"><template #default="{ row }">{{ row.user_name || row.username || '-' }}</template></el-table-column>
-              <el-table-column label="执行上下文" min-width="320">
-                <template #default="{ row }">
-                  <div v-if="decisionContextEntries(row.decision_context).length" class="audit-field-list compact-audit-list">
-                    <div v-for="entry in decisionContextEntries(row.decision_context)" :key="entry.key" class="audit-field-row">
-                      <span :class="['audit-field-key', `tone-${entry.tone}`]">{{ entry.key }}</span>
-                      <span class="audit-field-value">{{ formatStateValue(entry.value, entry.key) }}</span>
-                    </div>
-                  </div>
-                  <span v-else class="audit-empty">-</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="状态变化" min-width="460">
-                <template #default="{ row }">
-                  <div v-if="stateChangeEntries(row.before_state, row.after_state).length" class="state-change-list compact-state-list">
-                    <div v-for="change in stateChangeEntries(row.before_state, row.after_state)" :key="change.key" class="state-change-row">
-                      <span :class="['audit-field-key', `tone-${change.tone}`]">{{ change.key }}</span>
-                      <div class="state-change-values">
-                        <span class="state-value">{{ formatStateValue(change.before, change.key) }}</span>
-                        <span class="state-arrow">→</span>
-                        <span class="state-value is-after">{{ formatStateValue(change.after, change.key) }}</span>
+            <div class="runtime-table-viewport">
+              <el-table :data="actionRuns" border class="runtime-data-table" v-loading="runtimeViewLoading">
+                <el-table-column label="状态" width="100">
+                  <template #default="{ row }"><el-tag :type="actionRunStatusType(row.status)" effect="plain">{{ actionRunStatusLabel(row.status) }}</el-tag></template>
+                </el-table-column>
+                <el-table-column label="动作 / 目标" min-width="230">
+                  <template #default="{ row }"><div class="primary-cell"><strong>{{ row.action_name }}</strong><span>{{ row.target_name || '未指定目标' }}</span></div></template>
+                </el-table-column>
+                <el-table-column label="执行人" width="130"><template #default="{ row }">{{ row.user_name || row.username || '-' }}</template></el-table-column>
+                <el-table-column label="执行上下文" min-width="320">
+                  <template #default="{ row }">
+                    <div v-if="decisionContextEntries(row.decision_context).length" class="audit-field-list compact-audit-list">
+                      <div v-for="entry in decisionContextEntries(row.decision_context)" :key="entry.key" class="audit-field-row">
+                        <span :class="['audit-field-key', `tone-${entry.tone}`]">{{ entry.key }}</span>
+                        <span class="audit-field-value">{{ formatStateValue(entry.value, entry.key) }}</span>
                       </div>
                     </div>
-                  </div>
-                  <span v-else class="audit-empty">无属性变化</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="执行时间" min-width="170"><template #default="{ row }">{{ formatDateTime(row.created_at) }}</template></el-table-column>
-            </el-table>
+                    <span v-else class="audit-empty">-</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="状态变化" min-width="460">
+                  <template #default="{ row }">
+                    <div v-if="stateChangeEntries(row.before_state, row.after_state).length" class="state-change-list compact-state-list">
+                      <div v-for="change in stateChangeEntries(row.before_state, row.after_state)" :key="change.key" class="state-change-row">
+                        <span :class="['audit-field-key', `tone-${change.tone}`]">{{ change.key }}</span>
+                        <div class="state-change-values">
+                          <span class="state-value">{{ formatStateValue(change.before, change.key) }}</span>
+                          <span class="state-arrow">→</span>
+                          <span class="state-value is-after">{{ formatStateValue(change.after, change.key) }}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <span v-else class="audit-empty">无属性变化</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="执行时间" min-width="170"><template #default="{ row }">{{ formatDateTime(row.created_at) }}</template></el-table-column>
+              </el-table>
+            </div>
             <el-empty v-if="!runtimeViewLoading && actionRuns.length === 0" description="暂无动作执行记录" />
           </section>
         </el-tab-pane>
@@ -606,7 +650,7 @@ const actionTypeSelect = ref<FocusableControl>()
 let instanceRequestId = 0
 
 const INSTANCE_CHOICE_LIMIT = 200
-const PROPERTY_PREVIEW_LIMIT = 4
+const PROPERTY_PREVIEW_LIMIT = 2
 
 const currentDomain = computed(() => domains.value.find((item) => item.id === domainId.value) || null)
 const activeModelRelease = computed(() => context.value?.model_release || null)
@@ -1081,6 +1125,10 @@ function formatStateValue(value: unknown, key = '') {
   return typeof value === 'object' ? JSON.stringify(value) : String(value)
 }
 
+function relationIdentifier(value: unknown) {
+  return value === undefined || value === null || value === '' ? '-' : String(value)
+}
+
 function auditFieldTone(key: string) {
   const normalized = key.toLowerCase()
   if (normalized.endsWith('_status') || normalized.endsWith('_state') || normalized === 'status') return 'status'
@@ -1330,9 +1378,9 @@ function errorMessage(error: unknown) {
 
 .runtime-summary > div {
   min-width: 0;
-  padding: 10px 13px;
+  padding: 8px 12px;
   display: grid;
-  gap: 4px;
+  gap: 2px;
   border-right: 1px solid var(--wq-border);
 }
 
@@ -1348,12 +1396,12 @@ function errorMessage(error: unknown) {
 
 .runtime-summary strong {
   color: var(--wq-text);
-  font-size: 19px;
+  font-size: 16px;
   line-height: 1.25;
 }
 
-.runtime-flow-disclosure { margin: 6px 0 10px; border: 1px solid var(--wq-border); border-radius: 7px; background: var(--wq-surface); }
-.runtime-flow-disclosure > summary { padding: 7px 11px; color: var(--wq-muted); font-size: 12px; font-weight: 650; cursor: pointer; }
+.runtime-flow-disclosure { margin: 0 0 8px; border: 1px solid var(--wq-border); border-radius: 7px; background: var(--wq-surface); }
+.runtime-flow-disclosure > summary { padding: 5px 11px; color: var(--wq-muted); font-size: 12px; font-weight: 650; cursor: pointer; }
 .runtime-flow-disclosure[open] > summary { border-bottom: 1px solid var(--wq-border); color: var(--wq-primary-strong); }
 .runtime-flow-disclosure .runtime-flow { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
 
@@ -1379,7 +1427,7 @@ function errorMessage(error: unknown) {
 }
 
 .runtime-table-panel {
-  overflow: hidden;
+  overflow: visible;
 }
 
 .sync-actions {
@@ -1389,7 +1437,7 @@ function errorMessage(error: unknown) {
 
 .sync-history-panel {
   margin-top: 16px;
-  overflow: hidden;
+  overflow: visible;
   background: var(--wq-surface);
   border: 1px solid var(--wq-border);
   border-radius: var(--wq-radius);
@@ -1398,7 +1446,7 @@ function errorMessage(error: unknown) {
 
 .runtime-entity-panel {
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   background: var(--wq-surface);
   border: 1px solid var(--wq-border);
   border-radius: var(--wq-radius);
@@ -1440,6 +1488,23 @@ function errorMessage(error: unknown) {
   width: 100%;
 }
 
+.runtime-table-viewport {
+  width: 100%;
+  min-width: 0;
+  padding-bottom: 1px;
+  overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-gutter: stable;
+}
+
+.runtime-table-viewport :deep(.el-table) {
+  min-width: 100%;
+}
+
+.runtime-table-viewport :deep(.el-table__inner-wrapper) {
+  height: auto;
+}
+
 .runtime-data-table code {
   display: block;
   overflow: hidden;
@@ -1456,6 +1521,7 @@ function errorMessage(error: unknown) {
   align-items: center;
   justify-content: flex-end;
   gap: 18px;
+  flex-wrap: wrap;
   padding: 9px 16px;
   border-top: 1px solid var(--wq-border);
   background: var(--wq-surface);
@@ -1465,6 +1531,11 @@ function errorMessage(error: unknown) {
   color: var(--wq-muted);
   font-size: 12px;
   white-space: nowrap;
+}
+
+.instance-pagination :deep(.el-pagination) {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .audit-field-list,
@@ -1568,11 +1639,15 @@ function errorMessage(error: unknown) {
 
 .object-property-list {
   position: relative;
-  gap: 5px;
-  padding: 8px 10px;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
   background: #f8fbff;
   border: 1px solid #7489ca;
   border-radius: 6px;
+  overflow: hidden;
 }
 
 .object-property-trigger {
@@ -1591,20 +1666,56 @@ function errorMessage(error: unknown) {
 }
 
 .object-property-preview-heading {
+  flex: 0 0 auto;
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  padding-bottom: 2px;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
   color: #344054;
   font-size: 11px;
   font-weight: 680;
+  white-space: nowrap;
 }
 
 .object-property-preview-heading small {
   color: var(--wq-primary-strong);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px;
+}
+
+.object-property-preview-items {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.object-property-preview-row {
+  min-width: 0;
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.object-property-preview-row .audit-field-key {
+  min-height: 18px;
+  flex: 0 1 auto;
+  max-width: 45%;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.object-property-preview-row .object-property-value {
+  flex: 1 1 auto;
+  padding-top: 0;
+  line-height: 18px;
 }
 
 .object-property-value {
@@ -1617,12 +1728,71 @@ function errorMessage(error: unknown) {
 }
 
 .object-property-more {
-  padding-top: 1px;
+  flex: 0 0 auto;
+  padding-top: 0;
   color: var(--wq-primary-strong);
   cursor: help;
   font-size: 12px;
   font-weight: 650;
   line-height: 1.5;
+  white-space: nowrap;
+}
+
+.relation-endpoint {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.relation-endpoint-role {
+  min-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  color: var(--wq-primary-strong);
+  background: var(--wq-primary-soft);
+  border: 1px solid #bfdbfe;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.relation-endpoint-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.relation-endpoint-name,
+.relation-endpoint-id {
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.relation-endpoint-name {
+  color: var(--wq-text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.relation-endpoint-id {
+  color: #31506f;
+  cursor: help;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.relation-endpoint-id:focus-visible {
+  outline: 2px solid var(--wq-primary);
+  outline-offset: 2px;
 }
 
 :global(.object-property-tooltip.el-popper) {
@@ -1940,7 +2110,7 @@ function errorMessage(error: unknown) {
   }
 
   .runtime-entity-panel {
-    overflow-x: auto;
+    overflow: visible;
   }
 
   .runtime-data-table {
@@ -1948,8 +2118,13 @@ function errorMessage(error: unknown) {
   }
 
   .instance-pagination {
-    min-width: 840px;
     justify-content: flex-start;
+    gap: 8px 12px;
+    padding-inline: 12px;
+  }
+
+  .instance-pagination :deep(.el-pagination) {
+    flex: 1 1 auto;
     overflow-x: auto;
   }
 

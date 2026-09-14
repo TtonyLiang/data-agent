@@ -116,6 +116,21 @@ async def list_invocation_audits(
     return {"invocations": audits}
 
 
+@router.get("/v1/capabilities")
+async def list_capabilities(
+    domain_id: int = Query(..., gt=0),
+    client: dict = Depends(get_capability_client),
+):
+    try:
+        return await get_capability_access_service().list_granted_capabilities(
+            client, domain_id
+        )
+    except CapabilityAuthorizationError as exc:
+        raise HTTPException(status_code=403, detail=_error_detail(exc)) from exc
+    except CapabilityConfigurationError as exc:
+        raise HTTPException(status_code=409, detail=_error_detail(exc)) from exc
+
+
 @router.post(
     "/v1/capabilities/{capability_key}:invoke",
     response_model=CapabilityInvocationResponse,

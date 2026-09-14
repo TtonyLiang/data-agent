@@ -215,7 +215,6 @@ async function handleRegister() {
 }
 
 .brand-copy h2 {
-  max-width: 9ch;
   margin: 0;
   color: var(--auth-ink);
   font-size: 28px;

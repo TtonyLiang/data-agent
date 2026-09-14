@@ -161,20 +161,62 @@ def extract_table_references(sql: str) -> list[str]:
     """Return physical table names referenced by FROM/JOIN clauses."""
     tokens = tokenize_sql(sql)
     tables: list[str] = []
-    for index, token in enumerate(tokens):
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
         if token.kind != "word" or token.upper not in TABLE_SOURCE_KEYWORDS:
             continue
-        table_token = next_meaningful(tokens, index + 1)
-        if not table_token or table_token.value == "(":
-            continue
-        if table_token.kind not in {"word", "identifier"}:
-            continue
-        name = table_token.value
-        if "." in name:
-            name = name.split(".")[-1]
-        if name and name not in tables:
-            tables.append(name)
+        while index < len(tokens):
+            current = next_meaningful(tokens, index)
+            if current is None or current.value == "(":
+                break
+            name = _physical_table_name(current)
+            if not name:
+                break
+            if name not in tables:
+                tables.append(name)
+            index = token_index(tokens, current) + 1
+            index = _skip_table_alias(tokens, index)
+            comma = next_meaningful(tokens, index)
+            if comma is None or comma.value != ",":
+                break
+            index = token_index(tokens, comma) + 1
     return tables
+
+
+def _physical_table_name(token: SqlToken) -> str | None:
+    if token.kind not in {"word", "identifier"}:
+        return None
+    if token.kind == "word" and (
+        token.upper in TABLE_SOURCE_KEYWORDS
+        or token.upper in TABLE_SOURCE_STOPWORDS
+        or token.upper == "AS"
+    ):
+        return None
+    name = token.value.split(".")[-1]
+    return name or None
+
+
+def _skip_table_alias(tokens: list[SqlToken], start: int) -> int:
+    token = next_meaningful(tokens, start)
+    if token is None:
+        return start
+    position = token_index(tokens, token)
+    if token.kind == "word" and token.upper == "AS":
+        alias = next_meaningful(tokens, position + 1)
+        if alias is None:
+            return position + 1
+        return token_index(tokens, alias) + 1
+    if token.value == ",":
+        return start
+    if token.kind not in {"word", "identifier"}:
+        return start
+    if token.kind == "word" and (
+        token.upper in TABLE_SOURCE_KEYWORDS or token.upper in TABLE_SOURCE_STOPWORDS
+    ):
+        return start
+    return position + 1
 
 
 def tokenize_sql(sql: str) -> list[SqlToken]:

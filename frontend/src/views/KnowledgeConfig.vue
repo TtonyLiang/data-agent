@@ -124,58 +124,108 @@
     </template>
 
     <template v-else>
-      <div class="binding-summary" aria-label="数据绑定完成情况">
-        <div><span>对象数据源</span><strong>{{ boundObjectCount }} / {{ ontologyObjectTypes.length }}</strong></div>
-        <div><span>指标计算</span><strong>{{ boundMetricCount }} / {{ assetCounts.metric }}</strong></div>
-        <div><span>关系连接</span><strong>{{ boundRelationCount }} / {{ ontologyLinkTypes.length }}</strong></div>
-        <div><span>字段映射</span><strong>{{ assetCounts.mapping }}</strong></div>
+      <div class="binding-summary" role="group" aria-label="数据绑定统计概览">
+        <div><span>对象绑定进度</span><strong>{{ boundObjectCount }} / {{ ontologyObjectTypes.length }}</strong></div>
+        <div><span>指标绑定进度</span><strong>{{ boundMetricCount }} / {{ assetCounts.metric }}</strong></div>
+        <div><span>关系绑定进度</span><strong>{{ boundRelationCount }} / {{ ontologyLinkTypes.length }}</strong></div>
+        <div><span>映射项总数</span><strong>{{ assetCounts.mapping }}</strong></div>
       </div>
       <el-alert v-if="!currentDomain?.datasource_id" class="datasource-warning" type="warning" :closable="false" title="当前业务领域尚未绑定默认数据源，请先到领域管理或数据源页面完成连接与 Schema 采集。" />
 
       <div class="binding-layout">
-        <nav class="binding-steps" aria-label="数据绑定步骤">
-          <button v-for="step in bindingSteps" :key="step.key" type="button" :class="{ active: bindingSection === step.key }" :aria-current="bindingSection === step.key ? 'step' : undefined" @click="bindingSection = step.key">
+        <nav class="binding-steps" aria-label="数据绑定任务步骤">
+          <button v-for="step in bindingSteps" :key="step.key" type="button" :class="{ active: bindingSection === step.key }" :aria-label="`${step.label}：${step.description}`" :aria-current="bindingSection === step.key ? 'step' : undefined" @click="bindingSection = step.key">
             <span>{{ step.label }}</span><small>{{ step.description }}</small>
           </button>
         </nav>
         <section class="binding-workspace">
-          <ObjectDataBindingPanel v-if="bindingSection === 'object'" :domain-id="domainId" :current-domain="currentDomain" @updated="loadOntologyObjectOptions" />
+          <div v-if="bindingSection === 'object'" class="binding-section binding-section-object">
+            <ObjectDataBindingPanel :domain-id="domainId" :current-domain="currentDomain" @updated="loadOntologyObjectOptions" />
+          </div>
 
-          <template v-else-if="bindingSection === 'metric'">
+          <div v-else-if="bindingSection === 'metric'" class="binding-section">
             <div class="binding-section-heading"><div><h3>指标计算</h3><p>业务口径在业务模型中维护，这里只确认基础表、时间字段和计算公式。</p></div></div>
-            <el-table :data="assets.metric || []" size="small" class="binding-table">
-              <el-table-column label="业务对象" min-width="150"><template #default="{ row }">{{ objectName(metricObjectKeys(row)[0]) }}</template></el-table-column>
-              <el-table-column label="指标" min-width="180"><template #default="{ row }"><div class="primary-cell"><strong>{{ row.name }}</strong><code>{{ row.metric_key }}</code></div></template></el-table-column>
-              <el-table-column label="基础表" min-width="190"><template #default="{ row }"><code>{{ row.base_table || '未配置' }}</code></template></el-table-column>
-              <el-table-column label="时间字段" min-width="190"><template #default="{ row }"><code>{{ row.time_field || '未配置' }}</code></template></el-table-column>
-              <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="metricBindingComplete(row) ? 'success' : 'warning'" effect="plain">{{ metricBindingComplete(row) ? '已绑定' : '待补充' }}</el-tag></template></el-table-column>
-              <el-table-column label="操作" width="150" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openAssetDetail('metric', row)">详情</el-button><el-button v-if="canManageTechnical" link type="primary" @click="openEditAsset('metric', row)">配置</el-button></template></el-table-column>
-            </el-table>
-          </template>
+            <div class="binding-table-frame">
+              <el-table :data="assets.metric || []" size="small" class="binding-table" height="100%">
+                <el-table-column label="业务对象" min-width="150"><template #default="{ row }">{{ objectName(metricObjectKeys(row)[0]) }}</template></el-table-column>
+                <el-table-column label="指标" min-width="180"><template #default="{ row }"><div class="primary-cell"><strong>{{ row.name }}</strong><code :title="String(row.metric_key || '')">{{ row.metric_key }}</code></div></template></el-table-column>
+                <el-table-column label="基础表" min-width="190">
+                  <template #default="{ row }">
+                    <el-tooltip :disabled="!row.base_table" :content="String(row.base_table || '未配置')" placement="top" popper-class="binding-identifier-tooltip">
+                      <code class="technical-identifier" :tabindex="row.base_table ? 0 : -1">{{ row.base_table || '未配置' }}</code>
+                    </el-tooltip>
+                  </template>
+                </el-table-column>
+                <el-table-column label="时间字段" min-width="190">
+                  <template #default="{ row }">
+                    <el-tooltip :disabled="!row.time_field" :content="String(row.time_field || '未配置')" placement="top" popper-class="binding-identifier-tooltip">
+                      <code class="technical-identifier" :tabindex="row.time_field ? 0 : -1">{{ row.time_field || '未配置' }}</code>
+                    </el-tooltip>
+                  </template>
+                </el-table-column>
+                <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="metricBindingComplete(row) ? 'success' : 'warning'" effect="plain">{{ metricBindingComplete(row) ? '已绑定' : '待补充' }}</el-tag></template></el-table-column>
+                <el-table-column label="操作" width="150" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openAssetDetail('metric', row)">详情</el-button><el-button v-if="canManageTechnical" link type="primary" @click="openEditAsset('metric', row)">配置</el-button></template></el-table-column>
+              </el-table>
+            </div>
+          </div>
 
-          <template v-else-if="bindingSection === 'relation'">
+          <div v-else-if="bindingSection === 'relation'" class="binding-section">
             <div class="binding-section-heading"><div><h3>关系连接</h3><p>业务关系只维护一次，这里为已有本体关系补充数据库 JOIN。</p></div></div>
-            <el-table :data="relationBindingRows" size="small" class="binding-table">
-              <el-table-column label="业务关系" min-width="210"><template #default="{ row }"><div class="primary-cell"><strong>{{ row.name }}</strong><code>{{ row.link_key }}</code></div></template></el-table-column>
-              <el-table-column label="关系方向" min-width="250"><template #default="{ row }"><code>{{ row.source_object_key }}</code><span class="relation-inline-arrow">→</span><code>{{ row.target_object_key }}</code></template></el-table-column>
-              <el-table-column label="物理连接" min-width="300"><template #default="{ row }">{{ relationJoinLabel(row.semantic_relation) }}</template></el-table-column>
-              <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="relationHasJoin(row.semantic_relation) ? 'success' : 'warning'" effect="plain">{{ relationHasJoin(row.semantic_relation) ? '已绑定' : '待配置' }}</el-tag></template></el-table-column>
-              <el-table-column label="操作" width="130" fixed="right"><template #default="{ row }"><el-button v-if="canManageTechnical" link type="primary" @click="openRelationForLink(row)">{{ row.semantic_relation ? '编辑' : '配置' }}</el-button><span v-else class="muted-copy">技术人员配置</span></template></el-table-column>
-            </el-table>
-          </template>
+            <div class="binding-table-frame">
+              <el-table :data="relationBindingRows" size="small" class="binding-table" height="100%">
+                <el-table-column label="业务关系" min-width="210"><template #default="{ row }"><div class="primary-cell"><strong>{{ row.name }}</strong><code :title="String(row.link_key || '')">{{ row.link_key }}</code></div></template></el-table-column>
+                <el-table-column label="关系方向" min-width="250">
+                  <template #default="{ row }">
+                    <div class="relation-direction" :aria-label="`关系方向：${row.source_object_key} 到 ${row.target_object_key}`">
+                      <el-tooltip :content="String(row.source_object_key || '-')" placement="top" popper-class="binding-identifier-tooltip">
+                        <code class="technical-identifier" tabindex="0">{{ row.source_object_key }}</code>
+                      </el-tooltip>
+                      <span class="relation-inline-arrow" aria-hidden="true">→</span>
+                      <el-tooltip :content="String(row.target_object_key || '-')" placement="top" popper-class="binding-identifier-tooltip">
+                        <code class="technical-identifier" tabindex="0">{{ row.target_object_key }}</code>
+                      </el-tooltip>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="物理连接" min-width="300">
+                  <template #default="{ row }">
+                    <el-tooltip :disabled="!relationHasJoin(row.semantic_relation)" :content="relationJoinLabel(row.semantic_relation)" placement="top" popper-class="binding-identifier-tooltip">
+                      <code class="technical-identifier" :tabindex="relationHasJoin(row.semantic_relation) ? 0 : -1">{{ relationJoinLabel(row.semantic_relation) }}</code>
+                    </el-tooltip>
+                  </template>
+                </el-table-column>
+                <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="relationHasJoin(row.semantic_relation) ? 'success' : 'warning'" effect="plain">{{ relationHasJoin(row.semantic_relation) ? '已绑定' : '待配置' }}</el-tag></template></el-table-column>
+                <el-table-column label="操作" width="130" fixed="right"><template #default="{ row }"><el-button v-if="canManageTechnical" link type="primary" @click="openRelationForLink(row)">{{ row.semantic_relation ? '编辑' : '配置' }}</el-button><span v-else class="muted-copy">技术人员配置</span></template></el-table-column>
+              </el-table>
+            </div>
+          </div>
 
-          <template v-else-if="bindingSection === 'mapping'">
+          <div v-else-if="bindingSection === 'mapping'" class="binding-section">
             <div class="binding-section-heading"><div><h3>字段映射</h3><p>从已采集 Schema 选择表和字段，将维度、过滤项和对象属性绑定到真实数据。</p></div><el-button v-if="canManageTechnical" type="primary" size="small" @click="openAssetDialog('mapping')">新增映射</el-button></div>
-            <el-table :data="assets.mapping || []" size="small" class="binding-table">
-              <el-table-column label="业务字段" min-width="180"><template #default="{ row }"><div class="primary-cell"><strong>{{ semanticLabel(String(row.asset_key || '')) }}</strong><code>{{ row.asset_key }}</code></div></template></el-table-column>
-              <el-table-column label="查询角色" width="120"><template #default="{ row }">{{ roleLabel(String(row.role || '')) }}</template></el-table-column>
-              <el-table-column label="物理表" min-width="180"><template #default="{ row }"><code>{{ row.table_name }}</code></template></el-table-column>
-              <el-table-column label="字段或表达式" min-width="250"><template #default="{ row }"><code>{{ row.column_name || row.expression_sql || '未配置' }}</code></template></el-table-column>
-              <el-table-column label="操作" width="150" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openAssetDetail('mapping', row)">详情</el-button><el-button v-if="canManageTechnical" link type="primary" @click="openEditAsset('mapping', row)">编辑</el-button></template></el-table-column>
-            </el-table>
-          </template>
+            <div class="binding-table-frame">
+              <el-table :data="assets.mapping || []" size="small" class="binding-table" height="100%">
+                <el-table-column label="业务字段" min-width="180"><template #default="{ row }"><div class="primary-cell"><strong>{{ semanticLabel(String(row.asset_key || '')) }}</strong><code :title="String(row.asset_key || '')">{{ row.asset_key }}</code></div></template></el-table-column>
+                <el-table-column label="查询角色" width="120"><template #default="{ row }">{{ roleLabel(String(row.role || '')) }}</template></el-table-column>
+                <el-table-column label="物理表" min-width="180">
+                  <template #default="{ row }">
+                    <el-tooltip :content="String(row.table_name || '未配置')" placement="top" popper-class="binding-identifier-tooltip">
+                      <code class="technical-identifier" :tabindex="row.table_name ? 0 : -1">{{ row.table_name || '未配置' }}</code>
+                    </el-tooltip>
+                  </template>
+                </el-table-column>
+                <el-table-column label="字段或表达式" min-width="250">
+                  <template #default="{ row }">
+                    <el-tooltip :disabled="!(row.column_name || row.expression_sql)" :content="String(row.column_name || row.expression_sql || '未配置')" placement="top" popper-class="binding-identifier-tooltip">
+                      <code class="technical-identifier" :tabindex="row.column_name || row.expression_sql ? 0 : -1">{{ row.column_name || row.expression_sql || '未配置' }}</code>
+                    </el-tooltip>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="150" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openAssetDetail('mapping', row)">详情</el-button><el-button v-if="canManageTechnical" link type="primary" @click="openEditAsset('mapping', row)">编辑</el-button></template></el-table-column>
+              </el-table>
+            </div>
+          </div>
 
-          <template v-else>
+          <div v-else class="binding-section binding-section-scrollable">
             <div class="binding-section-heading"><div><h3>高级查询配置</h3><p>仅用于查询改写、召回和 LogicForm 调试，不属于业务建模主流程。</p></div></div>
             <el-collapse>
               <el-collapse-item title="查询运行规则" name="rules">
@@ -196,7 +246,7 @@
                 </el-table>
               </el-collapse-item>
             </el-collapse>
-          </template>
+          </div>
         </section>
       </div>
     </template>
@@ -2205,7 +2255,7 @@ function columnNameLabel(assetKey: string, columnName: string) {
 .binding-table :deep(.el-table__body tr:hover > td.el-table__cell) { background: #f5f9ff !important; }
 .primary-cell { min-width: 0; display: grid; gap: 3px; }
 .primary-cell strong { overflow: hidden; color: var(--wq-text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.primary-cell code { color: var(--wq-subtle); font-size: 10px; }
+.primary-cell code { max-width: 100%; overflow: hidden; color: var(--wq-subtle); font-size: 10px; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; word-break: normal; }
 
 .datasource-warning { margin-bottom: 10px; }
 .binding-layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 230px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--wq-border); border-radius: 8px; background: var(--wq-surface); box-shadow: var(--wq-shadow); }
@@ -2216,10 +2266,20 @@ function columnNameLabel(assetKey: string, columnName: string) {
 .binding-steps button.active { color: var(--wq-primary-strong); background: var(--wq-primary-soft); border-color: #b2ccff; }
 .binding-steps span { font-size: 13px; font-weight: 650; }
 .binding-steps small { color: var(--wq-subtle); font-size: 11px; line-height: 1.4; }
-.binding-workspace { min-width: 0; padding: 14px; overflow: auto; }
-.binding-section-heading { margin-bottom: 14px; }
-.relation-inline-arrow { display: inline-block; margin: 0 8px; color: var(--wq-primary); }
+.binding-workspace { min-width: 0; min-height: 0; padding: 14px; overflow: hidden; }
+.binding-section { width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.binding-section-scrollable { overflow: auto; scrollbar-gutter: stable; }
+.binding-section-heading { flex: 0 0 auto; margin-bottom: 14px; }
+.binding-table-frame { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; }
+.binding-table { height: 100%; }
+.binding-table :deep(.el-scrollbar__wrap) { scrollbar-gutter: stable; }
+.technical-identifier { display: block; min-width: 0; max-width: 100%; overflow: hidden; color: #344054; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; word-break: normal; cursor: help; }
+.relation-direction { min-width: 0; display: flex; align-items: center; }
+.relation-direction .technical-identifier { flex: 1 1 0; }
+.relation-inline-arrow { flex: 0 0 auto; display: inline-block; margin: 0 8px; color: var(--wq-primary); }
 .advanced-section-action { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+
+:global(.binding-identifier-tooltip) { max-width: min(560px, calc(100vw - 32px)); overflow-wrap: anywhere; }
 
 .header-actions {
   display: flex;
@@ -2993,6 +3053,9 @@ function columnNameLabel(assetKey: string, columnName: string) {
   .binding-steps button { flex: 0 0 205px; margin-bottom: 0; }
   .object-model-surface,
   .binding-workspace { padding: 16px; overflow: visible; }
+  .binding-section { height: auto; overflow: visible; }
+  .binding-table-frame { flex: 0 0 auto; overflow-x: auto; scrollbar-gutter: stable; }
+  .binding-table { min-width: 820px; height: auto !important; }
   .object-context-strip,
   .binding-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .object-context-strip > div:nth-child(3),

@@ -117,6 +117,28 @@ def test_build_query_context_has_unified_fields_and_stable_grouped_capabilities(
     ]
 
 
+def test_query_loan_application_glossary_is_runtime_named_and_sql_free():
+    result = build_query_context(
+        "查看贷款申请和客户数量",
+        _runtime(),
+        _ontology_context(),
+        {"object_types": [], "link_types": [], "actions": [], "count": 0},
+    )
+
+    loan_capability = next(
+        item for item in result["query_capabilities"] if item["key"] == "query_loan_application"
+    )
+    assert loan_capability["supported_metrics"] == ["application_count"]
+    metrics = loan_capability["glossary"]["metrics"]
+    application_count = next(item for item in metrics if item["key"] == "application_count")
+    assert application_count["name"] == "申请笔数"
+    glossary_text = str(loan_capability["glossary"])
+    assert "formula_sql" not in glossary_text
+    assert "base_table" not in glossary_text
+    assert "COUNT(*)" not in glossary_text
+    assert "SELECT" not in glossary_text
+
+
 def test_unowned_metric_only_produces_warning_and_is_not_exposed():
     result = build_query_context("查看指标", _runtime(), _ontology_context())
 

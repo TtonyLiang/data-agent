@@ -43,13 +43,13 @@ async def test_seed_default_prompt_templates_only_inserts_missing_global_templat
     class FakeDB:
         def __init__(self):
             self.inserted = []
+            self.queries = []
 
         async def execute_scalar(self, sql: str, params: dict | None = None):
             return 1 if params and params["prompt_key"] == existing_key else 0
 
         async def execute_query(self, sql: str, params: dict | None = None):
-            assert "UPDATE prompt_template SET description" in sql
-            assert params and params["new_term"] == "企业模型语义未命中可执行指标时"
+            self.queries.append((sql, params or {}))
             return []
 
         async def execute_transaction(self, statements):
@@ -64,3 +64,9 @@ async def test_seed_default_prompt_templates_only_inserts_missing_global_templat
     assert existing_key not in inserted_keys
     assert "nl2lf_generate.system" in inserted_keys
     assert "phase3_report_generator.user" in inserted_keys
+    assert any("REPLACE(description" in sql for sql, _ in db.queries)
+    assert any(
+        "template_text = :template_text" in sql
+        and params.get("prompt_key") == "nl2lf_generate.system"
+        for sql, params in db.queries
+    )

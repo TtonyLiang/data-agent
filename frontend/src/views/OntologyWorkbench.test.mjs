@@ -380,9 +380,19 @@ assert.ok(
 
 assert.ok(
   source.includes("initLayout: 'circular'") &&
-    source.includes('top: 24, right: 24, bottom: 60, left: 24') &&
+    source.includes('function graphViewportInsets(width: number, height: number)') &&
+    source.includes('const graphInsets = graphViewportInsets(width, height)') &&
+    source.includes('top: graphInsets.top') &&
+    source.includes('bottom: graphInsets.bottom') &&
+    source.includes('const forceScale = graphForceScale(width, height)') &&
+    source.includes('const initialZoom = graphInitialZoom(width, height, nodes.length)') &&
+    source.includes('zoom: initialZoom') &&
+    source.includes('repulsion: Math.round(480 * forceScale)') &&
+    source.includes('gravity: 0.06') &&
+    source.includes('roam: true') &&
+    source.includes('draggable: true') &&
     source.includes('height: 100%; min-height: 0; overflow: hidden;'),
-  'ontology graph should use a stable centered layout and remain inside the workspace',
+  'ontology graph should reserve viewport-safe force-layout space while retaining drag and zoom interactions',
 )
 
 assert.ok(
@@ -394,6 +404,12 @@ assert.ok(
 assert.ok(
   !source.includes('height="calc(100vh - 312px)"') &&
     source.includes('class="ontology-table"') &&
-    source.includes('.table-section { height: 100%; min-height: 0; display: grid;'),
-  'ontology definition tables should stay within the tab viewport',
+    (templateSource.match(/class="table-scroll-frame"/g) || []).length === 3 &&
+    source.includes('.workspace-tabs { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; }') &&
+    source.includes('.workspace-tabs :deep(.el-tabs__content) { min-width: 0; min-height: 0; height: auto; flex: 1; overflow: hidden; }') &&
+    source.includes('.table-section { height: 100%; min-height: 0; display: grid;') &&
+    source.includes('.table-scroll-frame { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }') &&
+    source.includes('overscroll-behavior: contain') &&
+    source.includes('scrollbar-gutter: stable'),
+  'ontology definition tables should use stable internal scrolling without clipping the bottom rows',
 )

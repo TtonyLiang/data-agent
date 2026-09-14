@@ -289,7 +289,7 @@
           <div class="snapshot-meta">{{ formatSnapshotCounts(item.asset_counts) }}</div>
           <div class="snapshot-actions">
             <el-button size="small" @click="handleDiffSnapshot(item)">查看差异</el-button>
-            <el-button size="small" type="warning" plain :disabled="!canEditModelRole" @click="handleRollbackSnapshot(item)">
+            <el-button v-if="canPublishModelRole" size="small" type="warning" plain @click="handleRollbackSnapshot(item)">
               恢复为当前草稿
             </el-button>
           </div>
@@ -586,7 +586,7 @@ async function handleDiffSnapshot(item: SemanticDomainSnapshot) {
 }
 
 async function handleRollbackSnapshot(item: SemanticDomainSnapshot) {
-  if (!currentDomain.value) return
+  if (!currentDomain.value || !canPublishModelRole.value) return
   try {
     await ElMessageBox.confirm(
       `确定把「${currentDomain.value.name}」的当前语义草稿恢复到快照「${item.name}」？当前草稿会被覆盖，已创建和已激活的企业模型版本不会改变。`,

@@ -74,10 +74,12 @@ assert.ok(
 )
 
 assert.ok(
-  source.includes('grid-template-rows: minmax(0, 1fr) 320px') &&
-    source.includes('grid-template-rows: minmax(0, 1fr) minmax(260px, 44dvh)') &&
-    source.includes('label="SQL 细节"'),
-  'ChatView should keep query details available below the main conversation on smaller screens',
+  source.includes('v-model="insightOpen"') &&
+    source.includes("openInsight('sql')") &&
+    source.includes('label="SQL 细节"') &&
+    source.includes('分析与结果') &&
+    source.includes('v-if="!hasConversation"'),
+  'ChatView should keep query details in a side drawer and hide quick prompts after a conversation starts',
 )
 
 assert.ok(!source.includes('v-html'), 'ChatView should not render chat content with v-html')

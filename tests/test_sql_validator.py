@@ -1,4 +1,8 @@
-from app.utils.sql_validator import normalize_sql_for_execution, validate_sql
+from app.utils.sql_validator import (
+    extract_table_references,
+    normalize_sql_for_execution,
+    validate_sql,
+)
 
 
 def test_validate_sql_allows_semicolon_inside_string_and_injects_limit():
@@ -49,3 +53,16 @@ def test_validate_sql_blocks_mysql_file_keywords():
 
         assert not result.ok
         assert "禁止操作" in result.reason
+
+
+def test_extract_table_references_includes_comma_joined_tables():
+    assert extract_table_references(
+        "SELECT * FROM allowed_table, secret_table"
+    ) == ["allowed_table", "secret_table"]
+    assert extract_table_references(
+        "SELECT t0.id, t1.id FROM allowed_table AS t0, secret_table t1 WHERE t0.id = t1.id"
+    ) == ["allowed_table", "secret_table"]
+    assert extract_table_references(
+        "SELECT t0.region FROM loan_application_indicator t0 "
+        "JOIN loan_account_indicator a ON a.id=t0.id"
+    ) == ["loan_application_indicator", "loan_account_indicator"]
