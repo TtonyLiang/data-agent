@@ -7,9 +7,7 @@
           {{ domainName }}。对象定义来自业务模型，这里只配置业务库的只读数据来源。
         </p>
       </div>
-      <el-button :icon="Refresh" :disabled="!domainId || loading" @click="loadObjects">
-        刷新
-      </el-button>
+      <el-button text :icon="Refresh" :disabled="!domainId || loading" @click="loadObjects">刷新</el-button>
     </header>
 
     <section class="binding-guide" role="note" aria-label="数据绑定说明">
@@ -82,16 +80,6 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="主属性" min-width="150">
-          <template #default="{ row }">
-            <div class="property-identity">
-              <strong>{{ primaryPropertyName(row) }}</strong>
-              <el-tooltip :disabled="!row.primary_property" :content="row.primary_property || '未设置'" placement="top" popper-class="binding-identifier-tooltip">
-                <code class="technical-identifier" :tabindex="row.primary_property ? 0 : -1">{{ row.primary_property }}</code>
-              </el-tooltip>
-            </div>
-          </template>
-        </el-table-column>
 
         <el-table-column label="数据读取" width="132">
           <template #default="{ row }">
@@ -234,12 +222,12 @@
               选择表和字段
             </button>
             <button type="button" role="tab" :aria-selected="bindingMode === 'sql'" :class="{ active: bindingMode === 'sql' }" @click="bindingMode = 'sql'">
-              高级 SQL
+              高级查询语句
             </button>
           </div>
 
           <template v-if="bindingMode === 'guided'">
-            <el-alert v-if="schemaTables.length === 0" type="warning" :closable="false" title="当前数据源没有已采集 Schema，请先采集表结构，或切换到高级 SQL。" />
+            <el-alert v-if="schemaTables.length === 0" type="warning" :closable="false" title="当前数据源没有已采集表结构，请先采集表结构，或切换到高级查询语句。" />
             <div class="guided-binding-heading">
               <div><strong>选择业务表并绑定字段</strong><span>平台根据属性标识和字段名自动推荐，仍可逐项调整。</span></div>
               <el-button size="small" :disabled="!canManageTechnical || !selectedTableName" @click="autoMapFields">重新自动匹配</el-button>
@@ -493,7 +481,7 @@ async function loadSchema() {
     return
   }
   try {
-    schemaTables.value = await fetchDatasourceSchema(Number(datasourceId))
+    schemaTables.value = await fetchDatasourceSchema(Number(datasourceId), domainId.value)
   } catch {
     schemaTables.value = []
   }
@@ -803,7 +791,7 @@ function errorMessage(error: unknown) {
   border-bottom: 1px solid var(--wq-border);
 }
 
-.binding-title { min-width: 0; }
+.binding-title { display: none; min-width: 0; }
 .binding-title h2 { margin: 0; color: var(--wq-text); font-size: 20px; line-height: 1.25; }
 .binding-title p { margin: 4px 0 0; color: var(--wq-muted); font-size: 12px; line-height: 1.45; }
 

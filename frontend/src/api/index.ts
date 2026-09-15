@@ -627,8 +627,13 @@ export async function uncollectSchema(dsId: number, tableNames: string[]) {
   return data
 }
 
-export async function fetchDatasourceSchema(dsId: number): Promise<DatasourceTableMeta[]> {
-  const { data } = await api.get<{ tables: DatasourceTableMeta[] }>(`/datasource/${dsId}/schema`)
+export async function fetchDatasourceSchema(
+  dsId: number,
+  domainId?: number | null,
+): Promise<DatasourceTableMeta[]> {
+  const { data } = await api.get<{ tables: DatasourceTableMeta[] }>(`/datasource/${dsId}/schema`, {
+    ...(domainId ? { params: { domain_id: domainId } } : {}),
+  })
   return data.tables || []
 }
 
@@ -1458,6 +1463,7 @@ export interface TwinSyncRun {
   sync_links: boolean
   statistics_json: Record<string, number | boolean>
   error_summary?: string | null
+  created_at?: string | null
   completed_at?: string | null
 }
 

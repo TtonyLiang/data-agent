@@ -57,6 +57,16 @@
   line-height: 1.35 !important;
 }
 
+.header-domain-field {
+  display: grid;
+  gap: 4px;
+}
+.header-domain-field > span {
+  color: var(--wq-muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
 .page-header p,
 .page-head p {
   color: var(--wq-muted) !important;
@@ -434,6 +444,14 @@ button:focus-visible {
   .page-header h2,
   .page-head h2 {
     font-size: 20px !important;
+  }
+
+  .header-domain-field {
+    width: min(100%, 360px);
+  }
+
+  .header-domain-field .domain-select {
+    width: 100%;
   }
 
   .el-dialog {

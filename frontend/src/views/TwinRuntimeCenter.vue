@@ -6,18 +6,18 @@
         <p>把业务数据库中的记录同步成可识别、可关联、可追踪的企业对象。</p>
       </div>
       <div class="header-actions">
-        <el-select v-model="domainId" class="domain-select" placeholder="选择业务领域" aria-label="选择业务领域">
-          <el-option
-            v-for="domain in domains"
-            :key="domain.id"
-            :label="`${domain.name} · ${domain.domain_key}`"
-            :value="domain.id"
-          />
-        </el-select>
-        <el-button :disabled="!domainId" @click="loadRuntime">
-          <el-icon><Refresh /></el-icon>
-          刷新状态
-        </el-button>
+        <label class="header-domain-field">
+          <span>业务领域</span>
+          <el-select v-model="domainId" class="domain-select" placeholder="选择业务领域" aria-label="选择业务领域">
+            <el-option
+              v-for="domain in domains"
+              :key="domain.id"
+              :label="`${domain.name} · ${domain.domain_key}`"
+              :value="domain.id"
+            />
+          </el-select>
+        </label>
+        <el-button text :disabled="!domainId" @click="loadRuntime">刷新状态</el-button>
       </div>
     </header>
 
@@ -218,7 +218,7 @@
           <el-alert
             type="info"
             :closable="false"
-            title="当前页面是手动运行入口，不表示已经接入 CDC 或自动调度。"
+            title="当前页面是手动运行入口，不表示已经接入变更捕获或自动调度。"
           />
         </aside>
       </section>
@@ -227,7 +227,7 @@
         <div class="panel-heading">
           <div>
             <h3>最近同步记录</h3>
-            <p>预览不会写入对象；执行记录可按 trace 定位同步数量和错误。</p>
+            <p>预览不会写入对象；执行记录可按追踪编号定位同步数量和错误。</p>
           </div>
         </div>
         <div v-if="syncRuns.length" class="runtime-table-viewport">
@@ -283,7 +283,7 @@
                 <el-select v-model="instanceTypeId" clearable placeholder="全部对象类型" aria-label="筛选对象类型" @change="handleInstanceTypeChange">
                   <el-option v-for="item in objectTypes" :key="item.id" :label="item.name" :value="item.id" />
                 </el-select>
-                <el-button :icon="Refresh" :loading="runtimeViewLoading" @click="loadObjects">刷新</el-button>
+                <el-button text :icon="Refresh" :loading="runtimeViewLoading" @click="loadObjects">刷新</el-button>
                 <el-button v-if="canManage" type="primary" :icon="Plus" @click="openObjectDialog()">新建实例</el-button>
               </div>
             </div>
@@ -388,7 +388,7 @@
                 <p>查看当前对象之间已经建立的业务关联。</p>
               </div>
               <div class="view-actions">
-                <el-button :icon="Refresh" :loading="runtimeViewLoading" @click="loadLinks">刷新</el-button>
+                <el-button text :icon="Refresh" :loading="runtimeViewLoading" @click="loadLinks">刷新</el-button>
                 <el-button v-if="canManage" type="primary" :icon="Connection" :disabled="linkTypes.length === 0" @click="openLinkDialog">建立关系</el-button>
               </div>
             </div>
@@ -463,7 +463,7 @@
                 <p>记录受控 Ontology Action 对孪生对象的状态变化；当前属于平台叠加状态，不代表业务数据库已经写回，也不代表通用 Decision Capability 已完成。</p>
               </div>
               <div class="view-actions">
-                <el-button :icon="Refresh" :loading="runtimeViewLoading" @click="loadActionRuns">刷新</el-button>
+                <el-button text :icon="Refresh" :loading="runtimeViewLoading" @click="loadActionRuns">刷新</el-button>
                 <el-button type="primary" :icon="VideoPlay" :disabled="!activeModelRelease || availableActions.length === 0" @click="openExecuteDialog">执行动作</el-button>
               </div>
             </div>
@@ -666,17 +666,37 @@ const executeTargets = computed(() => objectChoices.value.filter((item) => item.
 const instancePageSizes = computed(() => [20, 50, 100])
 const syncEnabledCount = computed(() => objectTypes.value.filter((item) => item.sync_enabled).length)
 const sourceObjectCount = computed(() => runtimeObjectCount.value)
-const lastSyncedAt = computed(() => objectTypes.value
-  .map((item) => item.last_synced_at)
-  .filter((value): value is string => Boolean(value))
-  .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || '')
+const latestExecutedRun = computed(() => syncRuns.value
+  .filter((run) => !run.dry_run)
+  .slice()
+  .sort((a, b) => syncRunTimestamp(b) - syncRunTimestamp(a))[0] || null)
+const lastSyncedAt = computed(() => {
+  const run = latestExecutedRun.value
+  if (run) return run.completed_at || run.created_at || ''
+  return objectTypes.value
+    .map((item) => item.last_synced_at)
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || ''
+})
 const lastSyncStatusText = computed(() => {
+  const latest = latestExecutedRun.value
+  if (latest?.status === 'running') return '同步运行中'
+  if (latest?.status === 'failed') return '最近任务失败'
+  if (latest?.status === 'partial') return '最近任务部分成功'
+  if (latest?.status === 'succeeded') return '最近任务运行成功'
+  if (syncRuns.value.some((run) => run.dry_run)) return '已有预览，尚未执行同步'
   const synced = objectTypes.value.filter((item) => item.last_sync_status)
   if (!synced.length) return '等待首次运行'
   if (synced.some((item) => item.last_sync_status === 'failed')) return '存在同步失败'
   if (synced.some((item) => item.last_sync_status === 'partial')) return '存在部分成功'
   return '最近任务运行成功'
 })
+
+function syncRunTimestamp(run: TwinSyncRun) {
+  const value = run.completed_at || run.created_at
+  const timestamp = value ? new Date(value).getTime() : 0
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
 
 function focusControl(control: FocusableControl | undefined) {
   requestAnimationFrame(() => control?.focus())
@@ -1292,6 +1312,15 @@ function errorMessage(error: unknown) {
   gap: 10px;
 }
 
+.header-domain-field {
+  display: grid;
+  gap: 4px;
+}
+.header-domain-field > span {
+  color: var(--wq-muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
 .domain-select {
   width: 280px;
 }

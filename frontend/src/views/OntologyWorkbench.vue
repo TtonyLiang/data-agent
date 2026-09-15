@@ -7,10 +7,13 @@
       </div>
       <div class="toolbar-actions">
         <div class="model-version-status" aria-label="本体版本状态">
-          <el-tag v-if="summary?.latest_release" type="success" effect="plain">
-            V{{ summary.latest_release.version }} 已发布
+          <el-tag v-if="activeEnterpriseRelease" type="success" effect="plain">
+            企业模型 V{{ activeEnterpriseRelease.version }} 运行中
           </el-tag>
-          <el-tag v-else type="info" effect="plain">未发布</el-tag>
+          <el-tag v-if="summary?.latest_release" type="info" effect="plain">
+            最新本体 V{{ summary.latest_release.version }}
+          </el-tag>
+          <el-tag v-if="!activeEnterpriseRelease && !summary?.latest_release" type="info" effect="plain">未发布</el-tag>
         </div>
         <input v-if="canManage" ref="importInput" class="file-input" type="file" accept="application/json,.json" tabindex="-1" aria-hidden="true" @change="handleImport" />
         <el-button v-if="canManage" :icon="CircleCheck" :disabled="!domainId" @click="handleValidate">
@@ -128,7 +131,7 @@
                         <span>{{ property.name }}</span>
                         <el-tag size="small" effect="plain">{{ typeLabel(property.data_type) }}</el-tag>
                         <el-tag v-if="property.property_key === row.primary_property" size="small" type="warning">主属性</el-tag>
-                        <el-tag v-if="property.required" size="small" type="danger" effect="plain">必填</el-tag>
+                        <el-tag v-if="property.required" size="small" type="info" effect="plain">必填</el-tag>
                       </div>
                     </div>
                   </div>
@@ -277,7 +280,7 @@
               <el-table-column label="授权角色" min-width="140">
                 <template #default="{ row }">
                   <div v-if="row.allowed_roles?.length" class="role-tags">
-                    <el-tag v-for="role in row.allowed_roles" :key="role" size="small" effect="plain">{{ role }}</el-tag>
+                    <el-tag v-for="role in row.allowed_roles" :key="role" size="small" effect="plain">{{ allowedRoleLabel(role) }}</el-tag>
                   </div>
                   <span v-else class="muted">未配置</span>
                 </template>
@@ -534,17 +537,17 @@
           <div class="form-grid three"><el-form-item label="状态属性"><el-select v-model="actionTypeForm.status_property" clearable placeholder="选择目标对象的状态属性"><el-option v-for="property in targetStatusProperties" :key="property.property_key" :label="propertyOptionLabel(property)" :value="property.property_key" /></el-select></el-form-item><el-form-item label="执行前状态"><el-input v-model="actionTypeForm.from_status" placeholder="如 manual_review" /></el-form-item><el-form-item label="执行后状态"><el-input v-model="actionTypeForm.to_status" placeholder="如 approved" /></el-form-item></div>
           <span class="form-help">保存时自动转换为动作的状态前置条件和状态效果，不需要业务人员编写表达式。</span>
         </section>
-        <div class="subsection-title"><div><strong>输入参数</strong><span>只有 Agent 或业务应用需要提供的输入才添加。</span></div><el-button text type="primary" :icon="Plus" @click="addActionParameter">添加参数</el-button></div>
+        <div class="subsection-title"><div><strong>输入参数</strong><span>只有智能体或业务应用需要提供的输入才添加。</span></div><el-button text type="primary" :icon="Plus" @click="addActionParameter">添加参数</el-button></div>
         <div class="builder-list"><div v-for="(parameter, index) in actionTypeForm.parameters" :key="index" class="builder-row parameter-builder"><el-input v-model="parameter.name" placeholder="业务名称，如 审批金额" /><el-select v-model="parameter.data_type"><el-option v-for="item in propertyTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select><el-checkbox v-model="parameter.required">必填</el-checkbox><el-input v-model="parameter.parameter_key" placeholder="技术标识（留空自动生成）" /><el-input v-model="parameter.options_text" placeholder="可选值，逗号分隔" /><el-button text type="danger" :icon="Delete" :aria-label="`移除动作参数 ${parameter.name || parameter.parameter_key || index + 1}`" @click="actionTypeForm.parameters.splice(index, 1)" /></div></div>
         <details class="advanced-model-settings">
           <summary>高级执行与治理配置</summary>
-          <div class="advanced-section-note">供技术人员配置权限、复杂条件和执行效果；基础业务动作通常保持默认即可。业务人员可以查看这些配置，但只有技术人员可编辑；当前 `admin` 兼容账号保留完整配置能力。</div>
+          <div class="advanced-section-note">供技术人员配置权限、复杂条件和执行效果；基础业务动作通常保持默认即可。业务人员可以查看这些配置，但只有技术人员可编辑；当前兼容管理员账号保留完整配置能力。</div>
           <div class="form-grid three advanced-model-grid"><el-form-item label="授权角色"><el-select v-model="actionTypeForm.allowed_roles" :disabled="!canManageData" multiple><el-option label="技术人员" value="admin" /><el-option label="业务人员" value="user" /></el-select></el-form-item><el-form-item label="模型状态"><el-select v-model="actionTypeForm.status" :disabled="!canManageData"><el-option label="草稿" value="draft" /><el-option label="生效" value="active" /><el-option label="废弃" value="deprecated" /></el-select></el-form-item><el-form-item label="审批单号要求"><el-switch v-model="actionTypeForm.requires_approval" :disabled="!canManageData" active-text="需要审批单号" inactive-text="不要求审批单号" /></el-form-item></div>
           <div class="subsection-title"><strong>前置条件</strong><el-button text type="primary" :icon="Plus" :disabled="!canManageData" @click="addPrecondition">添加条件</el-button></div>
           <div class="builder-list"><div v-for="(condition, index) in actionTypeForm.preconditions" :key="index" class="builder-row condition-builder"><el-select v-model="condition.property" :disabled="!canManageData" placeholder="对象属性"><el-option v-for="p in targetProperties" :key="p.property_key" :label="p.name" :value="p.property_key" /></el-select><el-select v-model="condition.operator" :disabled="!canManageData"><el-option v-for="item in operators" :key="item.value" :label="item.label" :value="item.value" /></el-select><el-input v-model="condition.value_text" :disabled="!canManageData" placeholder="期望值或 $param.x" /><el-input v-model="condition.message" :disabled="!canManageData" placeholder="不满足时提示" /><el-button text type="danger" :icon="Delete" :disabled="!canManageData" :aria-label="`移除前置条件 ${index + 1}`" @click="actionTypeForm.preconditions.splice(index, 1)" /></div></div>
           <div class="subsection-title"><strong>状态效果</strong><el-button text type="primary" :icon="Plus" :disabled="!canManageData" @click="addEffect">添加效果</el-button></div>
           <div class="builder-list"><div v-for="(effect, index) in actionTypeForm.effects" :key="index" class="builder-row effect-builder"><el-select v-model="effect.property" :disabled="!canManageData" placeholder="写入属性"><el-option v-for="p in targetProperties" :key="p.property_key" :label="p.name" :value="p.property_key" /></el-select><el-input v-model="effect.value_text" :disabled="!canManageData" placeholder="常量、$param.x、$now、$user.name" /><el-button text type="danger" :icon="Delete" :disabled="!canManageData" :aria-label="`移除状态效果 ${index + 1}`" @click="actionTypeForm.effects.splice(index, 1)" /></div></div>
-          <el-form-item label="技术标识"><el-input v-model="actionTypeForm.action_key" :disabled="!canManageData" placeholder="留空则根据动作与目标对象自动生成" /><span class="form-help">供 API、版本和 Agent 能力调用，通常不需要业务人员填写。</span></el-form-item>
+          <el-form-item label="技术标识"><el-input v-model="actionTypeForm.action_key" :disabled="!canManageData" placeholder="留空则根据动作与目标对象自动生成" /><span class="form-help">供接口、版本和智能体能力调用，通常不需要业务人员填写。</span></el-form-item>
         </details>
       </el-form>
       <template #footer><el-button @click="actionTypeDialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveActionType">保存业务动作</el-button></template>
@@ -570,6 +573,7 @@ import {
   deleteOntologyLinkType,
   deleteOntologyObjectType,
   exportOntologyBundle,
+  fetchEnterpriseModelReleases,
   fetchOntologyActionTypes,
   fetchOntologyLinkTypes,
   fetchOntologyObjectTypes,
@@ -583,6 +587,7 @@ import {
   saveOntologyObjectType,
   validateOntology,
   type OntologyActionType,
+  type EnterpriseModelRelease,
   type OntologyLinkType,
   type OntologyObjectType,
   type OntologyMappingPreviewResult,
@@ -606,6 +611,7 @@ const objectTypes = ref<OntologyObjectType[]>([])
 const linkTypes = ref<OntologyLinkType[]>([])
 const actionTypes = ref<OntologyActionType[]>([])
 const releases = ref<Record<string, unknown>[]>([])
+const enterpriseReleases = ref<EnterpriseModelRelease[]>([])
 const activeTab = ref('graph')
 const loading = ref(false)
 const saving = ref(false)
@@ -624,6 +630,7 @@ let resizeFrame: number | null = null
 const canManage = computed(() => canEditModel())
 const canPublish = computed(() => canPublishModel())
 const canManageData = computed(() => isTechnicalUser())
+const activeEnterpriseRelease = computed(() => enterpriseReleases.value.find((item) => item.status === 'active') || null)
 const metrics = computed(() => [
   { label: '对象类型', value: summary.value?.counts.object_types || 0, icon: 'Box', target: 'objects' },
   { label: '关系类型', value: summary.value?.counts.link_types || 0, icon: 'Connection', target: 'relations' },
@@ -714,6 +721,12 @@ function clearLinkProperties(side: 'source' | 'target') { linkTypeForm[`${side}_
 function cardinalityLabel(value: string) { return cardinalities.find((item) => item.value === value)?.label || value }
 function statusLabel(value: string) { return ({ draft: '草稿', active: '生效', deprecated: '废弃' } as any)[value] || value }
 function statusType(value: string) { return value === 'active' ? 'success' : value === 'deprecated' ? 'info' : 'warning' }
+function allowedRoleLabel(role: string) {
+  if (role === 'admin' || role === 'technical') return '技术人员'
+  if (role === 'user' || role === 'business') return '业务人员'
+  return role
+}
+
 function syncStatusLabel(row: OntologyObjectType) {
   if (!row.last_sync_status) return '待同步'
   return ({ succeeded: '同步成功', partial: '部分成功', failed: '同步失败' } as Record<string, string>)[row.last_sync_status] || row.last_sync_status
@@ -833,13 +846,13 @@ async function refreshAll() {
   loading.value = true
   try {
     const id = domainId.value
-    const [nextSummary, nextObjects, nextLinks, nextActions, nextReleases] = await Promise.all([
+    const [nextSummary, nextObjects, nextLinks, nextActions, nextReleases, nextEnterpriseReleases] = await Promise.all([
       fetchOntologySummary(id), fetchOntologyObjectTypes(id), fetchOntologyLinkTypes(id),
-      fetchOntologyActionTypes(id), fetchOntologyReleases(id),
+      fetchOntologyActionTypes(id), fetchOntologyReleases(id), fetchEnterpriseModelReleases(id),
     ])
     if (domainId.value !== id) return
     summary.value = nextSummary; objectTypes.value = nextObjects; linkTypes.value = nextLinks
-    actionTypes.value = nextActions; releases.value = nextReleases
+    actionTypes.value = nextActions; releases.value = nextReleases; enterpriseReleases.value = nextEnterpriseReleases
     await nextTick(); renderGraph()
   } catch (error) { ElMessage.error(String(errorMessage(error))) } finally { loading.value = false }
 }
@@ -1149,7 +1162,7 @@ function handleModelCommand(command: string) {
   if (command === 'import') importInput.value?.click()
   else if (command === 'export') void handleExport()
 }
-async function handlePublish() { if (!domainId.value) return; try { await ElMessageBox.confirm('发布后将生成不可变版本，可供业务动作运行。', '发布 Ontology', { type: 'warning', confirmButtonText: '发布' }); const result = await publishOntology(domainId.value, { description: '从 Ontology 工作台发布' }); ElMessage.success(`V${result.version} 已发布`); await refreshAll() } catch (error: any) { if (error === 'cancel' || error === 'close') return; const detail = error?.response?.data?.detail; if (detail?.errors) { validationResult.value = detail; validationDrawer.value = true } else ElMessage.error(String(errorMessage(error))) } }
+async function handlePublish() { if (!domainId.value) return; try { await ElMessageBox.confirm('发布后将生成不可变版本，可供业务动作运行。', '发布本体版本', { type: 'warning', confirmButtonText: '发布' }); const result = await publishOntology(domainId.value, { description: '从业务模型工作台发布' }); ElMessage.success(`V${result.version} 已发布`); await refreshAll() } catch (error: any) { if (error === 'cancel' || error === 'close') return; const detail = error?.response?.data?.detail; if (detail?.errors) { validationResult.value = detail; validationDrawer.value = true } else ElMessage.error(String(errorMessage(error))) } }
 
 function handleResize() { graph?.resize() }
 watch(domainId, () => {
@@ -1159,6 +1172,7 @@ watch(domainId, () => {
     return
   }
   summary.value = null
+  enterpriseReleases.value = []
   objectTypes.value = []
   linkTypes.value = []
   actionTypes.value = []
@@ -1181,11 +1195,12 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ontology-page { width: 100%; max-width: var(--wq-page-max-width); height: 100%; min-height: 0; min-width: 0; margin: 0 auto; padding-inline: var(--wq-page-gutter); padding-bottom: var(--wq-page-bottom-gap); display: flex; flex-direction: column; overflow: hidden; color: var(--wq-text); }
-.page-toolbar { min-height: 48px; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding-bottom: 7px; border-bottom: 1px solid var(--wq-border); }
+.page-toolbar { min-height: 48px; display: flex; align-items: center; justify-content: flex-end; gap: 16px; padding-bottom: 7px; border-bottom: 1px solid var(--wq-border); }
+.title-group { display: none; }
 .toolbar-actions, .section-toolbar, .subsection-title { display: flex; align-items: center; }
 .file-input { display: none; }
 .title-group { min-width: 0; }.title-group h2 { color: var(--wq-text); font-size: 18px; line-height: 1.2; }.title-group p { margin-top: 2px; color: var(--wq-muted); font-size: 11px; line-height: 1.25; }.toolbar-actions { justify-content: flex-end; gap: 6px; flex-wrap: nowrap; min-width: 0; }.toolbar-actions :deep(.el-button) { margin-left: 0; white-space: nowrap; }.toolbar-actions :deep(.el-dropdown) { flex: 0 0 auto; }.model-version-status { display: inline-flex; flex: 0 0 auto; align-items: center; min-height: 28px; padding-right: 2px; }.model-more-button { min-width: 68px; }
-.metric-strip { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 1px; margin: 5px 0 3px; background: var(--wq-border); border: 1px solid var(--wq-border); border-radius: 7px; overflow: hidden; }.metric-item { position: relative; min-height: 42px; padding: 6px 12px; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; appearance: none; background: var(--wq-surface); transition: background-color 140ms ease; }.metric-item:hover { background: var(--wq-primary-soft); }.metric-item:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--wq-primary); outline-offset: -2px; }.metric-item span { display: block; color: var(--wq-muted); font-size: 10px; }.metric-item strong { display: block; margin-top: 1px; font-size: 18px; font-weight: 680; }.metric-item .el-icon { position: absolute; right: 10px; top: 14px; color: var(--wq-subtle); font-size: 24px; display: none; }
+.metric-strip { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 1px; margin: 5px 0 3px; background: var(--wq-border); border: 1px solid var(--wq-border); border-radius: 7px; overflow: hidden; }.metric-item { position: relative; min-height: 42px; padding: 6px 12px; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; appearance: none; background: var(--wq-surface); transition: background-color 140ms ease; }.metric-item:hover { background: var(--wq-primary-soft); }.metric-item:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--wq-primary); outline-offset: -2px; }.metric-item span { display: block; color: var(--wq-muted); font-size: 12px; }.metric-item strong { display: block; margin-top: 1px; font-size: 18px; font-weight: 680; }.metric-item .el-icon { position: absolute; right: 10px; top: 14px; color: var(--wq-subtle); font-size: 24px; display: none; }
 .workspace-tabs { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .workspace-tabs :deep(.el-tabs__header) { height: 32px; margin: 0; flex: 0 0 32px; }
 .workspace-tabs :deep(.el-tabs__item) { height: 32px; line-height: 32px; font-size: 13px; }
@@ -1202,7 +1217,7 @@ onBeforeUnmount(() => {
 .graph-guide-items { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .graph-guide-item { display: grid; grid-template-columns: 6px minmax(0, 1fr); align-items: center; gap: 6px; min-width: 0; min-height: 0; padding: 4px 8px; background: #fff; border: 1px solid #dbe4ef; border-radius: 6px; }
 .graph-guide-item > span:last-child { display: grid; gap: 0; min-width: 0; }
-.graph-guide-item b { color: var(--wq-text); font-size: 12px; font-weight: 700; line-height: 1.2; }.graph-guide-item small { display: none; overflow: hidden; color: #667085; font-size: 10px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.graph-guide-item b { color: var(--wq-text); font-size: 12px; font-weight: 700; line-height: 1.2; }.graph-guide-item small { display: none; overflow: hidden; color: #667085; font-size: 12px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .graph-guide-dot { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: #98a2b3; }
 .graph-guide-item.guide-object { border-color: #a6e4c9; background: #f4fbf7; }
 .graph-guide-item.guide-object .graph-guide-dot { background: #067647; }
@@ -1216,7 +1231,7 @@ onBeforeUnmount(() => {
 .graph-guide-example-label { color: #475467; font-size: 11px; font-weight: 700; }
 .graph-guide-example > span:not(.graph-guide-example-label) { display: inline-flex; align-items: center; gap: 6px; min-height: 22px; padding: 2px 8px; background: #fff; border: 1px solid #d0d5dd; border-radius: 6px; white-space: nowrap; }
 .graph-guide-example b { color: var(--wq-text); font-size: 11px; font-weight: 650; }
-.graph-guide-example small { color: #667085; font-size: 10px; }
+.graph-guide-example small { color: #667085; font-size: 12px; }
 .graph-guide-example .guide-object { border-color: #a6e4c9; background: #effaf4; }
 .graph-guide-example .guide-state { border-color: #b2ddff; background: #eff8ff; }
 .graph-guide-example .guide-action { border-color: #f7c58b; background: #fff7ed; }
@@ -1267,7 +1282,7 @@ onBeforeUnmount(() => {
 .form-help { display: block; margin-top: 5px; color: var(--wq-muted); font-size: 12px; line-height: 1.45; }
 .business-definition-form { display: grid; gap: 16px; }.model-editor-guide { display: grid; gap: 4px; padding: 11px 13px; background: #f5f9ff; border: 1px solid #b2ddff; border-left: 3px solid var(--wq-primary); border-radius: 6px; }.model-editor-guide strong { color: var(--wq-text); font-size: 13px; }.model-editor-guide span { color: var(--wq-muted); font-size: 12px; line-height: 1.5; }.advanced-model-settings { padding: 0 12px 12px; border: 1px solid var(--wq-border); border-radius: 6px; background: #fafbfc; }.advanced-model-settings summary { padding: 11px 0; color: var(--wq-primary-strong); cursor: pointer; font-size: 13px; font-weight: 650; }.advanced-model-settings[open] summary { margin-bottom: 9px; border-bottom: 1px solid var(--wq-border); }.advanced-model-grid { padding-top: 2px; }
 .default-mapping-summary { display: grid; gap: 5px; padding: 11px 13px; border: 1px solid #d0d5dd; border-radius: 6px; background: #fafbfc; }.default-mapping-summary > div { display: flex; align-items: center; gap: 8px; }.default-mapping-summary strong { color: var(--wq-text); font-size: 12px; }.default-mapping-summary code { color: var(--wq-primary-strong); overflow-wrap: anywhere; }.default-mapping-summary > span, .advanced-section-note { color: var(--wq-muted); font-size: 12px; line-height: 1.5; }.business-action-section { display: grid; gap: 10px; }.business-action-section .subsection-title { margin-top: 0; }.advanced-section-note { margin: 0 0 10px; padding: 8px 10px; border-left: 3px solid var(--wq-border-strong); background: #f5f7fa; }
-@media (max-width: 1100px) { .page-toolbar { align-items: flex-start; }.toolbar-actions { max-width: 64%; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }.metric-strip { grid-template-columns: repeat(3, 1fr); }.form-grid.three { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 1100px) { .page-toolbar { align-items: flex-start; flex-wrap: wrap; }.toolbar-actions { max-width: none; flex-wrap: wrap; overflow: visible; padding-bottom: 2px; }.metric-strip { grid-template-columns: repeat(3, 1fr); }.form-grid.three { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 760px) { .ontology-page { padding-inline: 16px; padding-bottom: 16px; overflow: auto; }.page-toolbar { flex-direction: column; }.toolbar-actions { width: 100%; max-width: none; justify-content: flex-start; overflow-x: auto; padding-bottom: 4px; }.metric-strip { grid-template-columns: repeat(2, 1fr); }.form-grid.two, .form-grid.three { grid-template-columns: 1fr; }.property-builder, .parameter-builder, .condition-builder, .effect-builder { grid-template-columns: 1fr; }.property-builder-head { display: none; }.object-form-guide-title { align-items: flex-start; flex-direction: column; gap: 2px; }.object-form-steps { grid-template-columns: 1fr; }.object-form-steps li { padding: 8px 0; }.object-form-steps li + li { border-top: 1px solid #c9d8ea; border-left: 0; }.object-form-section-heading { align-items: flex-start; }.object-dialog-footer { align-items: stretch; flex-direction: column; }.object-dialog-footer > div { justify-content: flex-end; }.section-toolbar { flex-wrap: wrap; } }
 
 /* Dense workbench surfaces use hierarchy, not more decoration, to separate scan paths. */
@@ -1301,13 +1316,13 @@ onBeforeUnmount(() => {
 
 .relation-flow { display: grid; grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr); align-items: center; gap: 8px; min-width: 320px; }
 .relation-endpoint { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.relation-endpoint > span { color: var(--wq-muted); font-size: 10px; line-height: 1; }
+.relation-endpoint > span { color: var(--wq-muted); font-size: 12px; line-height: 1; }
 .relation-endpoint code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .relation-arrow { justify-self: center; color: var(--wq-primary); font-size: 17px; }
 .action-counts { display: flex; align-items: stretch; gap: 10px; }
 .action-counts > span { display: inline-flex; align-items: baseline; gap: 4px; min-width: 42px; padding: 3px 6px; border-left: 2px solid var(--wq-border-strong); background: #f8fafc; }
 .action-counts b { color: var(--wq-text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
-.action-counts small { color: var(--wq-muted); font-size: 10px; }
+.action-counts small { color: var(--wq-muted); font-size: 12px; }
 .role-tags { display: flex; flex-wrap: wrap; gap: 5px; }
 .approval-tag { font-weight: 650; }
 

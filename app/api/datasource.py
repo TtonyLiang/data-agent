@@ -5,9 +5,9 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.deps import require_data_engineer
+from app.api.deps import get_current_user, require_data_engineer, require_domain_access
 from app.db.mysql import get_management_db
 from app.models.datasource import DatasourceCreate, DatasourceUpdate
 from app.models.permission import DatasourcePermissionReplace
@@ -302,8 +302,23 @@ async def get_collected_table_detail(
 
 
 @router.get("/{ds_id}/schema")
-async def get_collected_schema(ds_id: int, _: PublicUser = Depends(require_data_engineer)):
-    """获取完整已采集 schema(表 + 字段)。"""
+async def get_collected_schema(
+    ds_id: int,
+    domain_id: int | None = Query(default=None, gt=0),
+    current_user: PublicUser = Depends(get_current_user),
+):
+    """获取已采集 schema；业务领域读取必须经过领域表/列权限过滤。"""
     meta_svc = get_metadata_service()
-    tables = await meta_svc.get_schema(ds_id)
+    if domain_id is None:
+        await require_data_engineer(current_user)
+        tables = await meta_svc.get_schema(ds_id)
+        return {"tables": tables}
+
+    await require_domain_access(domain_id, current_user)
+    await _validate_domain_permission_scope(ds_id, domain_id)
+    tables = await meta_svc.get_authorized_schema(
+        ds_id,
+        domain_id=domain_id,
+        allow_agent_fallback=False,
+    )
     return {"tables": tables}

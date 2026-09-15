@@ -509,11 +509,23 @@ async def upsert_object_type(
 async def preview_object_type_mapping(
     domain_id: int,
     payload: OntologyObjectTypePayload,
-    current_user: PublicUser = Depends(require_data_engineer),
+    current_user: PublicUser = Depends(require_model_editor),
 ):
     """Test an object source mapping without publishing or writing instances."""
     if payload.domain_id != domain_id:
         raise HTTPException(status_code=400, detail="请求路径与领域 ID 不一致")
+    if not is_technical_role(current_user.role):
+        if payload.id is None:
+            raise HTTPException(status_code=403, detail="业务人员只能预览已保存的数据绑定")
+        saved = await get_ontology_service().get_object_type(
+            domain_id,
+            object_type_id=payload.id,
+        )
+        if saved is None:
+            raise HTTPException(status_code=404, detail="对象类型不存在")
+        # Business personnel may verify the persisted technical mapping, but
+        # cannot submit an alternate SQL or permission-sensitive definition.
+        payload = OntologyObjectTypePayload.model_validate(saved)
     # Keep the domain access check here so the endpoint cannot be used for a
     # foreign domain when the role model evolves.
     access_agent_id = await require_domain_access(domain_id, current_user)

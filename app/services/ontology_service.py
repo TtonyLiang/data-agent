@@ -113,6 +113,14 @@ _VOLATILE_DEFINITION_FIELDS = {
     "last_synced_at",
 }
 
+_SYNC_TELEMETRY_FIELDS = (
+    "last_sync_status",
+    "last_sync_count",
+    "last_sync_total",
+    "last_sync_error",
+    "last_synced_at",
+)
+
 
 def _stable_release_definition(bundle: dict[str, Any]) -> dict[str, Any]:
     """Remove storage/runtime fields before hashing an Ontology definition.
@@ -410,6 +418,7 @@ class OntologyService:
                     **_normalize_row(released),
                     "id": int(live["id"]),
                     "domain_id": domain_id,
+                    **{field: live.get(field) for field in _SYNC_TELEMETRY_FIELDS},
                 }
             )
 

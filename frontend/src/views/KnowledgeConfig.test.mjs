@@ -108,13 +108,13 @@ assert.ok(
     source.includes('class="technical-identifier"') &&
     source.includes('overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; word-break: normal;') &&
     objectBindingSource.includes(':content="row.object_key"') &&
-    objectBindingSource.includes(':content="row.primary_property || \'未设置\'"') &&
     objectBindingSource.includes('.technical-identifier { display: block; min-width: 0; max-width: 100%; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; word-break: normal;'),
   'long technical identifiers should stay on one line, truncate visually, and expose their complete value',
 )
 
 assert.ok(
   source.includes('fetchDatasourceSchema') &&
+    source.includes('fetchDatasourceSchema(Number(datasourceId), props.domainId)') &&
     source.includes('tableOptions') &&
     source.includes('qualifiedColumnOptions') &&
     source.includes('mappingColumnOptions') &&
@@ -125,8 +125,9 @@ assert.ok(
 
 assert.ok(
   objectBindingSource.includes('选择表和字段') &&
-    objectBindingSource.includes('高级 SQL') &&
+    objectBindingSource.includes('高级查询语句') &&
     objectBindingSource.includes('fetchDatasourceSchema') &&
+    objectBindingSource.includes('fetchDatasourceSchema(Number(datasourceId), domainId.value)') &&
     objectBindingSource.includes('autoMapFields') &&
     objectBindingSource.includes('buildGuidedSourceQuery') &&
     objectBindingSource.includes('AS ${quoteIdentifier(item.property.property_key)}') &&

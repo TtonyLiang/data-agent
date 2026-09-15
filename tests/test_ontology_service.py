@@ -66,6 +66,11 @@ async def test_prepare_release_sync_definition_keeps_released_values_and_binds_s
                 "object_key": "LoanApplication",
                 "name": "草稿中的新名称",
                 "source_query": "SELECT new_id FROM loan_application ORDER BY new_id",
+                "last_sync_status": "succeeded",
+                "last_sync_count": 120,
+                "last_sync_total": 30240,
+                "last_sync_error": "",
+                "last_synced_at": "2026-09-15T08:30:00+00:00",
             }
         ]
 
@@ -91,6 +96,8 @@ async def test_prepare_release_sync_definition_keeps_released_values_and_binds_s
                 ),
                 "properties": [{"property_key": "application_id"}],
                 "primary_property": "application_id",
+                "last_sync_status": "failed",
+                "last_sync_count": 0,
             }
         ],
         "link_types": [
@@ -117,6 +124,13 @@ async def test_prepare_release_sync_definition_keeps_released_values_and_binds_s
     assert prepared["object_types"][0]["name"] == "已发布贷款申请"
     assert prepared["object_types"][0]["source_query"].startswith(
         "SELECT application_id"
+    )
+    assert prepared["object_types"][0]["last_sync_status"] == "succeeded"
+    assert prepared["object_types"][0]["last_sync_count"] == 120
+    assert prepared["object_types"][0]["last_sync_total"] == 30240
+    assert prepared["object_types"][0]["last_sync_error"] == ""
+    assert prepared["object_types"][0]["last_synced_at"] == (
+        "2026-09-15T08:30:00+00:00"
     )
     assert prepared["link_types"][0]["id"] == 22
     assert prepared["link_types"][0]["source_property"] == "application_id"

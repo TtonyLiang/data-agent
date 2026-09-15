@@ -7,6 +7,7 @@ from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 
 from app import main
+from app.api import datasource as datasource_api
 from app.api import deps
 from app.api import ontology as ontology_api
 from app.api import risk_workflow as risk_api
@@ -52,6 +53,56 @@ def regular_user_app():
     finally:
         app.dependency_overrides.clear()
         app.dependency_overrides.update(previous)
+
+
+@pytest.fixture
+def business_user_app():
+    previous = dict(app.dependency_overrides)
+
+    async def current_user() -> PublicUser:
+        return BUSINESS
+
+    app.dependency_overrides[deps.get_current_user] = current_user
+    try:
+        yield
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous)
+
+
+def object_mapping_payload(**overrides):
+    payload = {
+        "id": 11,
+        "domain_id": 4,
+        "object_key": "LoanApplication",
+        "name": "贷款申请",
+        "primary_property": "application_id",
+        "display_property": "application_no",
+        "sync_enabled": True,
+        "source_query": (
+            "SELECT application_id, application_no FROM loan_application "
+            "ORDER BY application_id"
+        ),
+        "sync_limit": 200,
+        "status": "active",
+        "properties": [
+            {
+                "property_key": "application_id",
+                "name": "申请 ID",
+                "data_type": "integer",
+                "required": True,
+                "unique": True,
+            },
+            {
+                "property_key": "application_no",
+                "name": "申请编号",
+                "data_type": "string",
+                "required": True,
+            },
+        ],
+    }
+    payload.update(overrides)
+    return payload
 
 
 def test_regular_user_product_routes_are_authenticated_without_admin_dependency():
@@ -120,6 +171,130 @@ async def test_product_roles_split_model_editing_from_data_and_publish():
         await deps.require_data_engineer(BUSINESS)
     with pytest.raises(HTTPException, match="技术人员"):
         await deps.require_model_publisher(BUSINESS)
+
+
+@pytest.mark.asyncio
+async def test_business_reads_only_domain_authorized_datasource_schema(
+    monkeypatch,
+    business_user_app,
+):
+    domain_access = AsyncMock(return_value=None)
+    metadata_service = AsyncMock()
+    metadata_service.get_authorized_schema.return_value = [
+        {
+            "table_name": "loan_application",
+            "columns": [{"column_name": "application_id"}],
+        }
+    ]
+    semantic_service = AsyncMock()
+    semantic_service.get_domain.return_value = SimpleNamespace(
+        id=4,
+        datasource_id=8,
+    )
+    datasource_service = AsyncMock()
+    datasource_service.get.return_value = SimpleNamespace(id=8)
+
+    monkeypatch.setattr(datasource_api, "require_domain_access", domain_access)
+    monkeypatch.setattr(
+        datasource_api,
+        "get_metadata_service",
+        lambda: metadata_service,
+    )
+    monkeypatch.setattr(
+        datasource_api,
+        "get_semantic_runtime_service",
+        lambda: semantic_service,
+    )
+    monkeypatch.setattr(
+        datasource_api,
+        "get_datasource_service",
+        lambda: datasource_service,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        allowed = await client.get("/api/datasource/8/schema?domain_id=4")
+        unscoped = await client.get("/api/datasource/8/schema")
+        wrong_datasource = await client.get(
+            "/api/datasource/9/schema?domain_id=4"
+        )
+
+    assert allowed.status_code == 200
+    assert allowed.json()["tables"][0]["table_name"] == "loan_application"
+    assert unscoped.status_code == 403
+    assert wrong_datasource.status_code == 400
+    assert wrong_datasource.json()["detail"] == "业务领域未绑定当前数据源"
+    domain_access.assert_any_await(4, BUSINESS)
+    metadata_service.get_authorized_schema.assert_awaited_once_with(
+        8,
+        domain_id=4,
+        allow_agent_fallback=False,
+    )
+    metadata_service.get_schema.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_business_mapping_preview_uses_persisted_technical_binding(
+    monkeypatch,
+    business_user_app,
+):
+    saved_payload = object_mapping_payload()
+    submitted_payload = object_mapping_payload(
+        source_query="SELECT secret_value AS application_id FROM restricted_table",
+        sync_limit=999,
+    )
+    ontology_service = AsyncMock()
+    ontology_service.get_object_type.return_value = saved_payload
+    preview_service = AsyncMock()
+    preview_service.preview.return_value = {
+        "valid": True,
+        "object_type_id": 11,
+        "query": {"tables": ["loan_application"]},
+    }
+    domain_access = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(ontology_api, "require_domain_access", domain_access)
+    monkeypatch.setattr(
+        ontology_api,
+        "get_ontology_service",
+        lambda: ontology_service,
+    )
+    monkeypatch.setattr(
+        ontology_api,
+        "get_ontology_mapping_preview_service",
+        lambda: preview_service,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        allowed = await client.post(
+            "/api/ontology/domains/4/object-types/mapping-preview",
+            json=submitted_payload,
+        )
+        unsaved = await client.post(
+            "/api/ontology/domains/4/object-types/mapping-preview",
+            json=object_mapping_payload(id=None),
+        )
+        ontology_service.get_object_type.return_value = None
+        missing = await client.post(
+            "/api/ontology/domains/4/object-types/mapping-preview",
+            json=object_mapping_payload(id=999),
+        )
+
+    assert allowed.status_code == 200
+    assert allowed.json()["query"]["tables"] == ["loan_application"]
+    assert unsaved.status_code == 403
+    assert missing.status_code == 404
+    preview_payload = preview_service.preview.await_args.args[0]
+    assert preview_payload.source_query == saved_payload["source_query"]
+    assert preview_payload.sync_limit == saved_payload["sync_limit"]
+    assert "restricted_table" not in preview_payload.source_query
+    domain_access.assert_awaited_once_with(4, BUSINESS)
+    preview_service.preview.assert_awaited_once()
 
 
 @pytest.mark.asyncio

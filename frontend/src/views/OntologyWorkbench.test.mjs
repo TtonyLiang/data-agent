@@ -47,8 +47,16 @@ assert.ok(
     refreshAllSource.includes('fetchOntologyLinkTypes(id)') &&
     refreshAllSource.includes('fetchOntologyActionTypes(id)') &&
     refreshAllSource.includes('fetchOntologyReleases(id)') &&
+    refreshAllSource.includes('fetchEnterpriseModelReleases(id)') &&
     domainWatchSource.includes("activeTab.value = 'graph'"),
   'ontology refresh should load definition assets and reset domain changes to the graph tab',
+)
+
+assert.ok(
+  source.includes('企业模型 V{{ activeEnterpriseRelease.version }} 运行中') &&
+    source.includes('最新本体 V{{ summary.latest_release.version }}') &&
+    source.includes("enterpriseReleases.value.find((item) => item.status === 'active')"),
+  'ontology status should distinguish the running enterprise release from the latest ontology-only release',
 )
 
 for (const tab of ['本体图谱', '对象类型', '关系类型', '动作类型']) {
@@ -343,7 +351,7 @@ assert.ok(
     actionDialogSource.indexOf('动作名称') < actionDialogSource.indexOf('高级执行与治理配置') &&
     actionDialogSource.includes('业务状态变化（可选）') &&
     actionDialogSource.includes('保存时自动转换为动作的状态前置条件和状态效果') &&
-    actionDialogSource.includes('只有 Agent 或业务应用需要提供的输入才添加') &&
+    actionDialogSource.includes('只有智能体或业务应用需要提供的输入才添加') &&
     actionDialogSource.includes('技术标识（留空自动生成）') &&
     actionDialogSource.includes('供技术人员配置权限、复杂条件和执行效果'),
   'action creation should expose intent, state transition, and business inputs before folded governance and execution DSL settings',

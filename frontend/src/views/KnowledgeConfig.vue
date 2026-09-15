@@ -226,7 +226,7 @@
           </div>
 
           <div v-else class="binding-section binding-section-scrollable">
-            <div class="binding-section-heading"><div><h3>高级查询配置</h3><p>仅用于查询改写、召回和 LogicForm 调试，不属于业务建模主流程。</p></div></div>
+            <div class="binding-section-heading"><div><h3>高级查询配置</h3><p>仅用于查询改写、召回和查询模板调试，不属于业务建模主流程。</p></div></div>
             <el-collapse>
               <el-collapse-item title="查询运行规则" name="rules">
                 <el-table :data="technicalRules" size="small">
@@ -236,7 +236,7 @@
                   <el-table-column label="操作" width="90"><template #default="{ row }"><el-button link type="primary" @click="openAssetDetail('rule', row)">查看</el-button></template></el-table-column>
                 </el-table>
               </el-collapse-item>
-              <el-collapse-item title="LogicForm 模板" name="templates">
+              <el-collapse-item title="查询模板" name="templates">
                 <div class="advanced-section-action"><el-button v-if="canManageTechnical" size="small" @click="openAssetDialog('template')">新增模板</el-button></div>
                 <el-table :data="assets.template || []" size="small">
                   <el-table-column label="模板" min-width="190"><template #default="{ row }"><div class="primary-cell"><strong>{{ row.name }}</strong><code>{{ row.template_key }}</code></div></template></el-table-column>
@@ -669,7 +669,7 @@ const assetTabs = [
   { name: 'metric', label: '指标', description: '业务人员确认口径；技术人员绑定表、字段和 SQL 公式。' },
   { name: 'rule', label: '规则', description: '过滤规则、时间规则、权限边界和动作约束。' },
   { name: 'mapping', label: '数据映射', description: '技术人员将既有语义资产绑定到物理表字段或受控 SQL 表达式。' },
-  { name: 'template', label: 'LogicForm 模板', description: '自然语言意图到结构化槽位的模板。' },
+  { name: 'template', label: '查询模板', description: '自然语言意图到结构化槽位的模板。' },
 ]
 
 const DOMAIN_METRICS_KEY = '__domain_metrics__'
@@ -679,7 +679,7 @@ const bindingSteps = [
   { key: 'metric', label: '指标计算', description: '指标如何从数据计算' },
   { key: 'relation', label: '关系连接', description: '对象在数据库中如何关联' },
   { key: 'mapping', label: '字段映射', description: '维度和过滤项对应哪些字段' },
-  { key: 'advanced', label: '高级查询配置', description: '规则改写与 LogicForm' },
+  { key: 'advanced', label: '高级查询配置', description: '规则改写与查询模板' },
 ] as const
 
 const assetGuidePages: Record<string, AssetGuidePage> = {
@@ -1010,7 +1010,7 @@ const assetGuidePages: Record<string, AssetGuidePage> = {
     ],
   },
   template: {
-    title: 'LogicForm 模板填写说明',
+    title: '查询模板填写说明',
     subtitle: '用于定义自然语言意图如何转成结构化槽位，例如指标、维度、过滤、时间范围。',
     fields: [
       {
@@ -1313,7 +1313,7 @@ async function loadDatasourceSchema() {
     return
   }
   try {
-    datasourceSchema.value = await fetchDatasourceSchema(Number(datasourceId))
+    datasourceSchema.value = await fetchDatasourceSchema(Number(datasourceId), props.domainId)
   } catch {
     datasourceSchema.value = []
   }
@@ -2098,12 +2098,7 @@ function columnNameLabel(assetKey: string, columnName: string) {
 }
 
 .page-header {
-  flex: 0 0 auto;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 20px;
-  margin-bottom: 12px;
+  display: none;
 }
 
 .page-header h2 {
@@ -2183,8 +2178,8 @@ function columnNameLabel(assetKey: string, columnName: string) {
 .object-index button.active { color: var(--wq-primary-strong); background: var(--wq-primary-soft); border-color: #b2ccff; }
 .object-index button > span { min-width: 0; display: grid; gap: 2px; }
 .object-index button b { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.object-index button code { color: inherit; font-size: 10px; }
-.object-index button small { flex: 0 0 auto; color: var(--wq-subtle); font-size: 10px; }
+.object-index button code { color: inherit; font-size: 12px; }
+.object-index button small { flex: 0 0 auto; color: var(--wq-subtle); font-size: 12px; }
 
 .object-model-surface {
   min-width: 0;
@@ -2231,17 +2226,18 @@ function columnNameLabel(assetKey: string, columnName: string) {
 .binding-summary strong { display: block; margin-top: 2px; color: var(--wq-text); font-size: 17px; }
 
 .model-block {
-  margin-top: 14px;
-  padding: 16px;
-  border: 1px solid var(--wq-border);
-  border-radius: 7px;
-  background: #fff;
+  margin-top: 16px;
+  padding: 16px 0 0;
+  border: 0;
+  border-top: 1px solid var(--wq-border);
+  border-radius: 0;
+  background: transparent;
 }
 
 .model-block-heading { margin-bottom: 12px; }
 .model-block-heading h4 { margin: 0; color: var(--wq-text); font-size: 15px; }
 .model-block-heading .el-button { flex: 0 0 auto; margin-left: 0; }
-.vocabulary-block { background: #f8fbff; }
+.vocabulary-block { background: transparent; }
 .technical-rule-note { margin-top: 10px; }
 .vocabulary-content { display: flex; align-items: center; gap: 16px; min-height: 34px; }
 .vocabulary-content > strong { flex: 0 0 auto; color: var(--wq-text); font-size: 13px; }
@@ -2255,7 +2251,7 @@ function columnNameLabel(assetKey: string, columnName: string) {
 .binding-table :deep(.el-table__body tr:hover > td.el-table__cell) { background: #f5f9ff !important; }
 .primary-cell { min-width: 0; display: grid; gap: 3px; }
 .primary-cell strong { overflow: hidden; color: var(--wq-text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.primary-cell code { max-width: 100%; overflow: hidden; color: var(--wq-subtle); font-size: 10px; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; word-break: normal; }
+.primary-cell code { max-width: 100%; overflow: hidden; color: var(--wq-subtle); font-size: 12px; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; word-break: normal; }
 
 .datasource-warning { margin-bottom: 10px; }
 .binding-layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 230px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--wq-border); border-radius: 8px; background: var(--wq-surface); box-shadow: var(--wq-shadow); }
