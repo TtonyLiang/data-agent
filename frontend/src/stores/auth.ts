@@ -90,8 +90,13 @@ export async function register(username: string, password: string, displayName?:
 }
 
 export async function logout() {
-  await logoutUser()
-  authState.token = ''
-  authState.currentUser = null
-  authState.initialized = true
+  try {
+    await logoutUser()
+  } catch {
+    // Local logout must still complete when the token is already invalid.
+  } finally {
+    authState.token = ''
+    authState.currentUser = null
+    authState.initialized = true
+  }
 }

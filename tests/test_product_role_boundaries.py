@@ -90,6 +90,7 @@ def test_regular_user_product_routes_are_authenticated_without_admin_dependency(
         ("GET", "/api/chat/sessions/{agent_id}"),
         ("GET", "/api/chat/history/{agent_id}/{session_id}"),
         ("DELETE", "/api/chat/sessions/{agent_id}/{session_id}"),
+        ("POST", "/api/auth/logout"),
     )
 
     for method, path in routes:

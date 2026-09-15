@@ -459,7 +459,7 @@ The Planner automatically infers analysis mode based on result data characterist
 
 #### Authentication & Authorization
 
-- **JWT-based auth**: Register/login to obtain access_token, all API requests carry Bearer Token
+- **JWT-based auth**: Technical personnel create accounts; users log in to obtain an access_token, and protected API requests carry a Bearer Token
 - **Product roles**: Business personnel and technical personnel (including database engineers)
 - **Compatibility accounts**: `admin` currently carries development-validation access; `user` retains only the legacy read-only validation-Agent authorization path
 - **Session isolation**: Chat history is user-scoped; legacy `user` accounts only see authorized validation agents
@@ -571,7 +571,8 @@ sequenceDiagram
 
 | Page | Route | Function |
 |------|-------|----------|
-| Chat Validation | `/` | Built-in validation Agent surface with query pipeline, SQL, result table, and reports |
+| Default entry | `/` | Redirects to the Enterprise Model; the built-in validation client is available at `/chat` |
+| Chat Validation | `/chat` | Built-in validation Agent surface with query pipeline, SQL, result table, and reports |
 | Enterprise Model | `/enterprise-model` | Follow Business Model → Data Binding → Validate & Release; metrics and rules are object-centered and physical fields come from collected Schema |
 | Twin Runtime | `/twin-runtime` | View sync tasks, object/link instances, and action-run records; not a background scheduler |
 | Capability Center | `/capability-center` | Manage external Query callers, grants, and audits; object queries and Actions are labeled as internal validation tools |
@@ -581,7 +582,7 @@ sequenceDiagram
 | Risk Delivery | `/risk-delivery` | Vertical finance/tax and lending validation: risk, evidence, review, reports, and audit |
 | System Parameters | `/system-parameter` | System parameters, Prompt templates, user management |
 | Login | `/login` | User login |
-| Register | `/register` | User registration |
+| Legacy register path | `/register` | Redirects to `/login`; self-registration is disabled |
 
 **Tech Stack**: Vue 3 + TypeScript + Element Plus + Vite + ECharts
 
@@ -593,7 +594,7 @@ The backend provides REST APIs in the following categories:
 |----------|--------|-------------|
 | Health | `/health` | Service health check |
 | Chat | `/api/chat` | Sync/streaming queries, SQL confirmation, session management |
-| Auth | `/api/auth` | Register, login, current user |
+| Auth | `/api/auth` | Login, logout, current user; self-registration is disabled |
 | Internal compatibility container | `/api/workspaces` | Single-company legacy read path; not a product entry |
 | Validation Agent | `/api/agent` | Built-in validation Agent configuration and compatibility bindings |
 | Datasource | `/api/datasource` | Datasource CRUD, connectivity test, schema collection |
@@ -606,7 +607,7 @@ The backend provides REST APIs in the following categories:
 | User Management | `/api/users` | User CRUD, permission management |
 | Feedback | `/api/feedback` | User feedback collection |
 
-All `/api/*` endpoints (except `/api/auth/login` and `/api/auth/register`) require Bearer Token authentication. `/health` is publicly accessible.
+All `/api/*` endpoints (except `/api/auth/login`) require Bearer Token authentication, including logout. Third-party capability endpoints additionally require capability-client credentials. `/health` is publicly accessible.
 
 ### 7. Configuration
 
@@ -665,13 +666,14 @@ Configured via `.env` file or environment variables. All configurations have sen
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ADMIN_API_KEY` | - | API auth key (required in production) |
 | `JWT_SECRET_KEY` | - | JWT signing key (production >= 32 bytes) |
 | `SECRET_ENCRYPTION_KEY` | - | Encryption key for secrets (required in production) |
 | `INITIAL_ADMIN_USERNAME` | - | Initial admin username |
 | `INITIAL_ADMIN_PASSWORD` | - | Initial admin password |
 | `API_RATE_LIMIT_PER_MINUTE` | `120` | Requests per minute limit |
 | `CHAT_STREAM_MAX_CONCURRENT` | `8` | Max concurrent streaming sessions |
+
+`ADMIN_API_KEY` is retained only as a legacy environment-variable compatibility field and is ignored by the application. Configure any network-level API key at the gateway or reverse-proxy layer.
 
 #### Schema Recall
 

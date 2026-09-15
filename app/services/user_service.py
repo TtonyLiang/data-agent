@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
+_DEBUG_JWT_SECRET = ""
 
 
 class AuthError(ValueError):
@@ -140,6 +141,8 @@ class UserService:
         return payload
 
     def _jwt_secret(self) -> str:
+        global _DEBUG_JWT_SECRET
+
         settings = get_settings()
         secret = (settings.jwt_secret_key or "").strip()
         if len(secret.encode("utf-8")) >= 32:
@@ -148,8 +151,10 @@ class UserService:
             raise AuthError("服务未配置安全的 JWT 密钥")
         if secret:
             logger.warning("configured JWT secret is too short; using local debug JWT secret")
-        # Generate a random secret for debug mode (changes on each restart)
-        return secrets.token_hex(32)
+        # Keep one process-local fallback so a debug login can be decoded later.
+        if not _DEBUG_JWT_SECRET:
+            _DEBUG_JWT_SECRET = secrets.token_hex(32)
+        return _DEBUG_JWT_SECRET
 
     async def get_user_by_token(self, token: str) -> PublicUser:
         payload = self.decode_access_token(token)

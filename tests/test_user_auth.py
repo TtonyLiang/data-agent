@@ -1,9 +1,11 @@
 from types import SimpleNamespace
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
 from app import main
 from app.api import agent as agent_api
+from app.api import deps
 from app.db import migrations
 from app.models.user import PublicUser
 from app.services import user_service
@@ -193,6 +195,21 @@ def test_user_service_rejects_short_jwt_secret_outside_debug(monkeypatch):
         )
 
 
+def test_user_service_debug_jwt_fallback_is_stable_within_process(monkeypatch):
+    monkeypatch.setattr(
+        user_service,
+        "get_settings",
+        lambda: SimpleNamespace(jwt_secret_key="", debug=True),
+    )
+    monkeypatch.setattr(user_service, "_DEBUG_JWT_SECRET", "")
+    service = UserService()
+    user = PublicUser(id=1, username="admin", role="admin", status="active")
+
+    token = service.create_access_token(user)
+
+    assert UserService().decode_access_token(token)["sub"] == "1"
+
+
 @pytest.mark.asyncio
 async def test_seed_default_admin_user_hashes_password_and_is_idempotent(monkeypatch):
     db = FakeSeedDB()
@@ -306,3 +323,32 @@ async def test_register_api_rejects_self_service():
         )
     assert exc.value.status_code == 403
     assert "不开放自助注册" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_logout_requires_jwt_and_returns_success_for_authenticated_user():
+    async with AsyncClient(
+        transport=ASGITransport(app=main.app),
+        base_url="http://test",
+    ) as client:
+        unauthenticated = await client.post("/api/auth/logout")
+        assert unauthenticated.status_code == 401
+
+        previous = dict(main.app.dependency_overrides)
+
+        async def current_user() -> PublicUser:
+            return PublicUser(id=1, username="admin", role="admin", status="active")
+
+        main.app.dependency_overrides[deps.get_current_user] = current_user
+        try:
+            authenticated = await client.post("/api/auth/logout")
+        finally:
+            main.app.dependency_overrides.clear()
+            main.app.dependency_overrides.update(previous)
+
+    assert authenticated.status_code == 200
+    assert authenticated.json() == {"message": "已退出"}
+
+
+def test_disabled_register_route_is_hidden_from_openapi():
+    assert "/api/auth/register" not in main.app.openapi()["paths"]

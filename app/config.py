@@ -14,14 +14,16 @@ Settings 类通过 pydantic-settings 从 .env 文件和环境变量读取配置�
 - Phase3:Python 执行器后端和资源限制。
 
 生产安全校验(``validate_startup_safety``):
-debug=False 时,缺少 ADMIN_API_KEY、SECRET_ENCRYPTION_KEY 或仍使用默认 MySQL 密码
+debug=False 时,缺少 JWT_SECRET_KEY、SECRET_ENCRYPTION_KEY 或仍使用默认 MySQL 密码
 会拒绝启动。
 """
 
+import json
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, NoDecode
 
 
 class Settings(BaseSettings):
@@ -101,13 +103,15 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 4400
     debug: bool = True
+    # Deprecated compatibility setting. Application authentication uses JWT;
+    # network-level API keys belong at the gateway/reverse-proxy layer.
     admin_api_key: str = ""
     jwt_secret_key: str = ""
     secret_encryption_key: str = ""
     initial_admin_username: str = ""
     initial_admin_password: str = ""
     initial_admin_password_hash: str = ""
-    cors_allowed_origins: list[str] = [
+    cors_allowed_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:4399",
         "http://127.0.0.1:4399",
         "http://localhost:5173",
@@ -139,9 +143,19 @@ class Settings(BaseSettings):
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
     def parse_cors_allowed_origins(cls, value):
-        """支持逗号分隔的字符串形式(兼容 .env 文件和环境变量)。"""
+        """支持 JSON 数组和逗号分隔的环境变量形式。"""
         if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
+            raw = value.strip()
+            if not raw:
+                return []
+            if raw.startswith("["):
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            return [item.strip() for item in raw.split(",") if item.strip()]
         return value
 
     def validate_startup_safety(self) -> None:

@@ -1,9 +1,11 @@
-"""安全中间件 —— Bearer 鉴权与进程内限流。
+"""安全中间件 —— 进程内限流与流式并发控制。
 
 本模块在 FastAPI 层提供最小运行保护:
-1. Bearer 鉴权:配置了 ADMIN_API_KEY 后,除 /health 外所有 /api/* 端点要求 Authorization 头。
-2. 进程内限流:按 token/IP + 路径控制请求频率,滑动窗口算法。
-3. 流式并发控制:chat_stream 端点额外限制同时运行的 stream 数。
+1. 进程内限流:按 token/IP + 路径控制请求频率,滑动窗口算法。
+2. 流式并发控制:chat_stream 端点额外限制同时运行的 stream 数。
+
+用户认证和第三方调用方认证分别由 API 路由依赖处理:用户使用 JWT,
+第三方调用方使用 capability client 凭据。网络级 API Key 应由网关或反向代理负责。
 
 限流策略:
 - ``check_request``:滑动窗口,在 window_seconds 内最多允许 limit 次请求。
@@ -13,7 +15,6 @@
 
 from __future__ import annotations
 
-import logging
 import time
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
@@ -22,11 +23,8 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
-from app.utils.logging_helpers import redact_text
 
-logger = logging.getLogger(__name__)
-
-# 公开端点(不要求登录)
+# 中间件免限流端点；认证仍由各 API 路由依赖负责。
 PUBLIC_PATHS = {"/health", "/api/auth/login"}
 
 
@@ -84,7 +82,7 @@ async def auth_and_rate_limit_middleware(
     request: Request,
     call_next: Callable[[Request], Awaitable],
 ):
-    """FastAPI HTTP 中间件:Bearer 鉴权 + 路径级限流 + 流式并发控制。"""
+    """FastAPI HTTP 中间件:路径级限流与流式并发控制。"""
     settings = get_settings()
     path = request.url.path
 
@@ -125,38 +123,6 @@ async def auth_and_rate_limit_middleware(
         # 流式请求完成或异常时释放配额
         if session_key:
             rate_limiter.release_session(session_key)
-
-
-def validate_admin_authorization(request: Request) -> JSONResponse | None:
-    """验证 Bearer token。返回 None 表示通过,返回 JSONResponse 表示拒绝。"""
-    settings = get_settings()
-    expected = (settings.admin_api_key or "").strip()
-
-    if not expected:
-        if not settings.debug:
-            # 生产模式必须配置 ADMIN_API_KEY
-            return JSONResponse(
-                status_code=503,
-                content={"detail": "服务未配置 ADMIN_API_KEY"},
-            )
-        # debug 模式无 key 时跳过鉴权
-        return None
-
-    authorization = request.headers.get("authorization", "")
-    prefix = "Bearer "
-    if not authorization.startswith(prefix):
-        return JSONResponse(status_code=401, content={"detail": "缺少访问令牌"})
-    token = authorization[len(prefix) :].strip()
-    if token != expected:
-        # token 不匹配:记录脱敏后的 token 用于排查
-        logger.warning(
-            "admin auth failed path=%s token=%s",
-            request.url.path,
-            redact_text(token),
-        )
-        return JSONResponse(status_code=401, content={"detail": "访问令牌无效"})
-    return None
-
 
 def build_stream_session_key(request: Request) -> str:
     """构建流式请求的 session key(用于并发控制)。"""

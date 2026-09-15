@@ -5,6 +5,7 @@ const source = readFileSync(new URL('./App.vue', import.meta.url), 'utf8')
 const themeSource = readFileSync(new URL('./theme.css', import.meta.url), 'utf8')
 const loginSource = readFileSync(new URL('./views/LoginView.vue', import.meta.url), 'utf8')
 const registerSource = readFileSync(new URL('./views/RegisterView.vue', import.meta.url), 'utf8')
+const authStoreSource = readFileSync(new URL('./stores/auth.ts', import.meta.url), 'utf8')
 const contrastViewSources = [
   './views/OntologyWorkbench.vue',
   './views/TwinRuntimeCenter.vue',
@@ -150,6 +151,14 @@ assert.ok(
   !loginSource.includes('/register') &&
     !loginSource.includes('注册公司内部账号'),
   'login should not offer self-service registration',
+)
+
+assert.ok(
+  authStoreSource.includes('} catch {') &&
+    authStoreSource.includes('authState.token = \'\'') &&
+    authStoreSource.includes('authState.currentUser = null') &&
+    authStoreSource.includes('authState.initialized = true'),
+  'logout should clear local authentication state even when the server rejects an expired token',
 )
 
 const palette = {

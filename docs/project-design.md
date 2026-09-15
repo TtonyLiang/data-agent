@@ -1,6 +1,6 @@
 # 问渠 WenQu 企业运营数字孪生与智能决策平台总体设计
 
-> 文档基准日期：2026-09-10
+> 文档基准日期：2026-09-15
 
 ## 1. 项目定位
 
@@ -221,11 +221,11 @@ P0 实现对应：`semantic_domain` 保存公司内部业务领域，`agent_sema
 后端在 FastAPI 层提供最小运行保护：
 
 - `/health` 保持公开，用于本地和部署探活。
-- 其他 `/api/*` 端点在配置 `ADMIN_API_KEY` 后要求 `Authorization: Bearer <token>`；开发环境可留空跳过，生产环境 `DEBUG=false` 时必须配置。
+- 用户 API 由路由依赖校验 JWT，第三方能力 API 使用独立的 capability client 凭据；网络级 API Key 如有需要应由网关或反向代理校验。
 - CORS 来源由 `CORS_ALLOWED_ORIGINS` 白名单控制，不允许 `* + credentials` 的危险组合。
 - 进程内限流按 token/IP 与接口路径控制请求频率，流式问数接口额外限制同时运行的 stream 数。
 - `datasource.password` 与 `model_config.api_key` 使用 `enc:v1:` 前缀密文落盘，旧明文数据兼容读取，重新保存后转为密文。
-- 生产模式缺少 `ADMIN_API_KEY`、`SECRET_ENCRYPTION_KEY` 或仍使用默认 MySQL 密码时拒绝启动。
+- 生产模式缺少 `JWT_SECRET_KEY`、`SECRET_ENCRYPTION_KEY` 或仍使用默认 MySQL 密码时拒绝启动。
 
 SQL 与 Python 执行阶段继续采用纵深防护：
 

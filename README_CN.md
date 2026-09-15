@@ -463,7 +463,7 @@ Planner 根据结果数据特征自动推断分析模式：
 
 #### 认证与授权
 
-- **JWT 登录态**：注册/登录获取 access_token，所有 API 请求携带 Bearer Token
+- **JWT 登录态**：由技术人员创建账号，用户登录获取 access_token，受保护 API 请求携带 Bearer Token；不开放自助注册
 - **产品角色**：业务人员、技术人员（包含数据库工程师）
 - **兼容账号**：`admin` 当前承载开发验证权限，`user` 仅保留按验证 Agent 授权的历史只读链路
 - **会话隔离**：对话历史按用户隔离，旧 `user` 兼容账号只能看到已授权的验证 Agent
@@ -576,7 +576,8 @@ sequenceDiagram
 
 | 页面 | 路由 | 功能 |
 |------|------|------|
-| 对话验证 | `/` | 内置验证 Agent 能力演示界面，含问数链路、SQL、结果表和报告展示 |
+| 默认入口 | `/` | 重定向到企业模型；内置验证客户端位于 `/chat` |
+| 对话验证 | `/chat` | 内置验证 Agent 能力演示界面，含问数链路、SQL、结果表和报告展示 |
 | 企业模型 | `/enterprise-model` | 按“业务模型 → 数据绑定 → 校验发布”推进；指标与规则按对象组织，表字段优先从已采集 Schema 选择 |
 | 孪生运行 | `/twin-runtime` | 查看同步任务、对象实例、关系实例和动作执行记录；不是后台定时同步 |
 | 能力发布中心 | `/capability-center` | 管理外部 Query 调用方、授权和审计；对象查询/Action 标记为内部验证 |
@@ -586,7 +587,7 @@ sequenceDiagram
 | 风险交付 | `/risk-delivery` | 财税/贷款垂直验证场景：风险、证据、复核、报告和审计 |
 | 系统参数 | `/system-parameter` | 系统参数、Prompt 模板、用户管理 |
 | 登录 | `/login` | 用户登录 |
-| 注册 | `/register` | 用户注册 |
+| 历史注册地址 | `/register` | 重定向到 `/login`；不开放自助注册 |
 
 **技术栈**：Vue 3 + TypeScript + Element Plus + Vite + ECharts
 
@@ -598,7 +599,7 @@ sequenceDiagram
 |------|------|------|
 | 健康检查 | `/health` | 服务探活 |
 | 对话 | `/api/chat` | 同步/流式问数、SQL 确认、会话管理 |
-| 认证 | `/api/auth` | 注册、登录、当前用户 |
+| 认证 | `/api/auth` | 登录、登出、当前用户；不开放自助注册 |
 | 内部兼容容器 | `/api/workspaces` | 单公司历史兼容读取，不是业务产品入口 |
 | 验证智能体 | `/api/agent` | 内置验证 Agent CRUD、数据源绑定和领域消费绑定 |
 | 数据源 | `/api/datasource` | 数据源 CRUD、连通性测试、Schema 采集 |
@@ -611,7 +612,7 @@ sequenceDiagram
 | 用户管理 | `/api/users` | 用户 CRUD、权限管理 |
 | 反馈 | `/api/feedback` | 用户反馈回流 |
 
-所有 `/api/*` 端点（除 `/api/auth/login`、`/api/auth/register`）需要 Bearer Token 认证。`/health` 公开访问。
+所有 `/api/*` 端点（除 `/api/auth/login`）需要 Bearer Token 认证，包含登出接口。第三方能力接口还需要调用方凭据。`/health` 公开访问。
 
 ### 7. 配置参考
 
@@ -670,13 +671,14 @@ sequenceDiagram
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `ADMIN_API_KEY` | - | API 鉴权 Key（生产必须配置） |
 | `JWT_SECRET_KEY` | - | JWT 签名密钥（生产 >= 32 字节） |
 | `SECRET_ENCRYPTION_KEY` | - | 密钥加密密钥（生产必须配置） |
 | `INITIAL_ADMIN_USERNAME` | - | 初始管理员用户名 |
 | `INITIAL_ADMIN_PASSWORD` | - | 初始管理员密码 |
 | `API_RATE_LIMIT_PER_MINUTE` | `120` | 每分钟请求限制 |
 | `CHAT_STREAM_MAX_CONCURRENT` | `8` | 最大并发流式会话数 |
+
+`ADMIN_API_KEY` 仅作为历史环境变量兼容字段保留，应用不再读取它做鉴权；如需网络级 API Key，请在网关或反向代理层配置。
 
 #### 数据定位召回
 

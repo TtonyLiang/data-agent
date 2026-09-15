@@ -1,6 +1,6 @@
 # 问渠 WenQu 企业本体数字孪生平台产品路线图（公司内部版）
 
-> 基准日期：2026-09-14
+> 基准日期：2026-09-15
 
 > **维护准绳：本文件是平台唯一的方向、优先级、阶段状态和验收口径。**
 
@@ -85,7 +85,7 @@ V1 定位为“可验证的本地运营本体闭环”，用于业务试点和�
 | ONT-009 | 动作运行审计 | 查看执行人、参数、上下文、前后状态、结果和时间 | action-runs API、孪生运行“动作执行记录”、E2E 回放 | 已开发；通用 Decision Capability 与完整 release/trace 血缘列入 P3 |
 | ONT-010 | Ontology 工作台 | 企业模型保留图谱、对象类型、关系类型和动作类型；实例、关系实例与动作记录进入孪生运行 | `frontend/src/views/OntologyWorkbench.vue`、`TwinRuntimeCenter.vue`、前端测试与构建 | 已验证（桌面端） |
 | ONT-011 | 导入导出与示例 | UI 导入/导出 bundle；供应链样例覆盖对象、关系、动作和实例 | `scripts/verify_ontology_e2e.py` 已完成 API 导入、校验、发布、动作、审计和导出回放；UI 导入/导出及关系实例完整计数仍需浏览器验收 | API 回放已验证；UI 验收待补 |
-| ONT-012 | 自动化验证 | 后端单测、API 路由、前端契约、类型检查、生产构建和全项目 Ruff 通过 | `uv run pytest -q`（615 passed）、`uv run ruff check app tests scripts`、`npm test`、`npm run build`、`git diff --check` | 已验证 |
+| ONT-012 | 自动化验证 | 后端单测、API 路由、前端契约、类型检查、生产构建和全项目 Ruff 通过 | `uv run pytest -q`（632 passed）、`uv run ruff check app tests scripts`、`npm test`、`npm run build`、`git diff --check` | 已验证 |
 | ONT-013 | Agent/应用上下文 | 为应用和 Agent 提供已发布对象定义、对象查询和受控动作工具 | `app/agent/ontology_tools.py`、`/agent-context` 和 `/agent-tools` API、`tests/test_ontology_tools.py` | 已验证 |
 
 ### 3.1 P0 平台兼容骨架
@@ -197,6 +197,7 @@ GitHub 调研结论是保留现有 FastAPI/MySQL 运营运行时，按边界引�
 
 | 日期 | 迭代 | 状态 | 验证依据 |
 |---|---|---|---|
+| 2026-09-15 | 配置与认证收口：修复 `.env.example` 的 CORS 列表加载、稳定开发模式 JWT 回退密钥、移除未生效的应用层 `ADMIN_API_KEY` 语义、为登出增加 JWT 依赖并同步文档；登录限流按计划暂缓 | 代码与文档已同步；真实业务 UAT、目标服务器 Docker 构建和现场验收仍未完成 | 后端全量 `632 passed`；认证/配置定向测试通过；Ruff、前端测试、`vue-tsc`、生产构建、依赖检查和 `git diff --check` 通过；Ontology/贷款风险/完整平台回放通过 |
 | 2026-09-14 | Query 合同补业务词典：第三方凭据可列出已授权能力的指标/维度/别名/示例 LogicForm，不必复制验证智能体提示词；旧授权仅词典增量时自动补齐 | 代码与核心文档已同步；真实业务 UAT 仍安排在开发封板后 | 后端全量 `627 passed`；Ruff、前端测试和 `vue-tsc` 通过；合同抽屉契约覆盖业务词典 |
 | 2026-09-14 | 封板收口与验证智能体定位：登录默认进入企业模型，对话改到 `/chat`；快照「恢复为当前草稿」与发布权限对齐；表白名单识别逗号连接表；关闭自助注册；部署包强制 `DEBUG=false` | 代码与核心文档已同步；真实业务 UAT 仍安排在开发封板后 | 表白名单、注册关闭定向测试通过；`npm test` 通过；前端契约覆盖默认首页、验证智能体文案和注册入口关闭 |
 | 2026-09-11 | 1.0 交付收口：修复无 active release 的严格运行上下文 500，新增 Docker 后端/前端部署包；部署连接公司已有 MySQL，不启动或覆盖业务库；补充管理员初始化和部署说明 | 代码与部署文件已完成；真实业务 UAT、目标服务器镜像构建和现场验收安排在开发封板后，由业务人员和技术人员共同执行 | 后端全量 `615 passed`，前端测试、Ruff 和构建通过；Dockerfile、Compose、Nginx 配置已静态核对；目标环境需执行 `docker compose -f docker-compose.deploy.yml up -d --build` 验证；当前管理员仍由项目开发者负责 |

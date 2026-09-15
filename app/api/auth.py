@@ -1,4 +1,4 @@
-"""登录注册 API。"""
+"""登录与会话 API。"""
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -9,7 +9,7 @@ from app.services.user_service import AuthError, PermissionDenied, get_user_serv
 router = APIRouter()
 
 
-@router.post("/register")
+@router.post("/register", include_in_schema=False)
 async def register(_payload: RegisterRequest):
     """自助注册已关闭；账号由技术人员在系统参数中创建。"""
     raise HTTPException(status_code=403, detail="账号由技术人员在系统参数中创建，不开放自助注册")
@@ -28,7 +28,7 @@ async def login(payload: LoginRequest):
 
 
 @router.post("/logout")
-async def logout():
+async def logout(_: PublicUser = Depends(get_current_user)):
     """JWT 第一版由前端清理 token，后端保持无状态。"""
     return {"message": "已退出"}
 
