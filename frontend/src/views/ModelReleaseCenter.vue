@@ -6,9 +6,9 @@
           校验发布与企业模型版本
           <span v-if="currentDomain">· {{ currentDomain.name }}</span>
         </h2>
-        <p>先检查当前草稿，再固化语义快照并绑定 Ontology 版本，最后激活供运行时和外部能力使用。</p>
+        <p>先检查当前草稿，再固化语义快照并绑定本体版本，最后激活供运行时和外部能力使用。</p>
       </div>
-      <el-button :disabled="!domainId" @click="loadAll">刷新</el-button>
+      <el-button text :disabled="!domainId" @click="loadAll">刷新</el-button>
     </header>
 
     <el-empty v-if="!loading && !domainId" description="请先选择业务领域" />
@@ -22,7 +22,7 @@
         <i aria-hidden="true">›</i>
         <div :class="{ ready: semanticSnapshots.length > 0 }">
           <span>2</span>
-          <p><strong>固化模型版本</strong><small>语义快照绑定 Ontology 发布</small></p>
+          <p><strong>固化模型版本</strong><small>语义快照绑定本体发布</small></p>
         </div>
         <i aria-hidden="true">›</i>
         <div :class="{ ready: Boolean(activeRelease) }">
@@ -35,7 +35,7 @@
         <div class="section-heading">
           <div>
             <h3>固化并管理企业模型版本</h3>
-            <p>语义快照保存指标、规则和数据映射，统一版本再将它与已发布的 Ontology 定义绑定。</p>
+            <p>语义快照保存指标、规则和数据映射，统一版本再将它与已发布的本体定义绑定。</p>
           </div>
           <div class="section-actions">
             <el-button :disabled="!canEditModelRole" @click="handleCreateSnapshot">创建语义快照</el-button>
@@ -65,7 +65,7 @@
             <small>{{ latestSnapshotText }}</small>
           </div>
           <div>
-            <span>Ontology 发布</span>
+            <span>本体发布</span>
             <strong>{{ ontologyReleases.length }}</strong>
             <small>对象、关系、状态和动作定义</small>
           </div>
@@ -74,7 +74,7 @@
         <div v-if="!canCreateUnifiedRelease && canEditModelRole" class="release-prerequisite">
           <strong>创建统一版本前：</strong>
           <span v-if="semanticSnapshots.length === 0">请先创建语义快照。</span>
-          <span v-if="ontologyReleases.length === 0">请先在“业务模型”中发布 Ontology 版本。</span>
+          <span v-if="ontologyReleases.length === 0">请先在“业务模型”中发布本体版本。</span>
         </div>
 
         <div class="release-table-panel">
@@ -83,7 +83,7 @@
               <template #default="{ row }">
                 <div class="primary-cell">
                   <strong>V{{ row.version }} · {{ row.name }}</strong>
-                  <code>{{ shortHash(row.model_hash) }}</code>
+                  <code :title="row.model_hash || ''">{{ shortHash(row.model_hash) }}</code>
                 </div>
               </template>
             </el-table-column>
@@ -108,9 +108,14 @@
             <el-table-column label="说明" min-width="200" show-overflow-tooltip>
               <template #default="{ row }">{{ row.description || '-' }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="238" fixed="right">
+            <el-table-column label="操作" width="286" fixed="right">
               <template #default="{ row }">
                 <div class="table-actions">
+                  <el-button
+                    link
+                    type="primary"
+                    @click="handleDiffRelease(row)"
+                  >查看差异</el-button>
                   <el-button
                     v-if="row.status === 'draft' && canEditModelRole"
                     link
@@ -139,7 +144,7 @@
               </template>
             </el-table-column>
           </el-table>
-          <el-empty v-else description="暂无统一企业模型版本，请先创建语义快照并发布 Ontology 版本" />
+          <el-empty v-else description="暂无统一企业模型版本，请先创建语义快照并发布本体版本" />
         </div>
 
         <el-alert
@@ -243,8 +248,8 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="Ontology 版本" required>
-          <el-select v-model="form.ontology_release_id" placeholder="选择已发布的 Ontology 版本">
+        <el-form-item label="本体版本" required>
+          <el-select v-model="form.ontology_release_id" placeholder="选择已发布的本体版本">
             <el-option
               v-for="item in ontologyReleases"
               :key="item.id"
@@ -332,6 +337,35 @@
         <el-button @click="showSnapshotDiffDialog = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="showReleaseDiffDialog" title="企业模型版本差异与影响" width="820px" append-to-body>
+      <div v-if="releaseDiff" class="snapshot-diff">
+        <div class="snapshot-diff-summary">
+          <div><span>对比版本</span><strong>{{ releaseDiffCurrentLabel }}</strong></div>
+          <div><span>基线版本</span><strong>{{ releaseDiffBaselineLabel }}</strong></div>
+          <div><span>新增 / 删除</span><strong>{{ releaseDiffSummary.added }} / {{ releaseDiffSummary.removed }}</strong></div>
+          <div><span>内容变更</span><strong>{{ releaseDiffSummary.changed }}</strong></div>
+        </div>
+        <section class="snapshot-diff-section">
+          <h4>影响范围</h4>
+          <p>受影响对象 {{ releaseImpact.affected_objects.length }} 个，指标 {{ releaseImpact.affected_metrics.length }} 个，查询能力 {{ releaseImpact.affected_capabilities.length }} 个{{ releaseImpact.datasource_changed ? '；默认数据源已变化' : '' }}。</p>
+          <div v-if="releaseImpact.affected_objects.length" class="snapshot-key-list"><strong>对象：</strong>{{ releaseImpact.affected_objects.join('、') }}</div>
+          <div v-if="releaseImpact.affected_metrics.length" class="snapshot-key-list"><strong>指标：</strong>{{ releaseImpact.affected_metrics.join('、') }}</div>
+          <div v-if="releaseImpact.affected_capabilities.length" class="snapshot-key-list"><strong>查询能力：</strong>{{ releaseImpact.affected_capabilities.join('、') }}</div>
+        </section>
+        <section v-for="section in releaseOntologyDiffSections" :key="section.type" class="snapshot-diff-section">
+          <h4>{{ section.title }}</h4>
+          <p>新增 {{ section.added.length }} 项，删除 {{ section.removed.length }} 项，变更 {{ section.changed.length }} 项</p>
+          <div v-if="section.added.length" class="snapshot-key-list"><strong>当前新增：</strong>{{ section.added.join('、') }}</div>
+          <div v-if="section.removed.length" class="snapshot-key-list"><strong>基线中存在：</strong>{{ section.removed.join('、') }}</div>
+          <div v-if="section.changed.length" class="snapshot-key-list"><strong>内容变更：</strong>{{ snapshotChangedKeys(section.changed) }}</div>
+        </section>
+        <el-empty v-if="!releaseDiffHasChanges" :description="releaseDiff?.baseline ? '与基线版本没有差异' : '没有可对比的上一激活版本'" />
+      </div>
+      <template #footer>
+        <el-button @click="showReleaseDiffDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -344,6 +378,7 @@ import {
   createEnterpriseModelRelease,
   createSemanticSnapshot,
   deactivateEnterpriseModelRelease,
+  diffEnterpriseModelRelease,
   diffSemanticSnapshot,
   fetchEnterpriseModelReleases,
   fetchOntologyReleases,
@@ -379,6 +414,36 @@ interface SnapshotDiff {
   }>
 }
 
+interface ReleaseDiffSummary {
+  id?: number
+  version?: number
+  name?: string
+  status?: string
+}
+
+interface KeyedDiff {
+  added?: string[]
+  removed?: string[]
+  changed?: Array<Record<string, unknown>>
+}
+
+interface ReleaseDiff {
+  current?: ReleaseDiffSummary
+  baseline?: ReleaseDiffSummary | null
+  summary?: { added?: number; removed?: number; changed?: number }
+  ontology?: {
+    object_types?: KeyedDiff
+    link_types?: KeyedDiff
+    action_types?: KeyedDiff
+  }
+  impact?: {
+    affected_objects?: string[]
+    affected_metrics?: string[]
+    affected_capabilities?: string[]
+    datasource_changed?: boolean
+  }
+}
+
 const props = defineProps<{
   domainId: number | null
   currentDomain: SemanticDomain | null
@@ -394,6 +459,8 @@ const showCreate = ref(false)
 const showSnapshotDrawer = ref(false)
 const showSnapshotDiffDialog = ref(false)
 const snapshotDiff = ref<SnapshotDiff | null>(null)
+const showReleaseDiffDialog = ref(false)
+const releaseDiff = ref<ReleaseDiff | null>(null)
 const semanticValidationState = ref<OperationState>('idle')
 const semanticValidationResult = ref<SemanticValidationResult | null>(null)
 const runtimeState = ref<OperationState>('idle')
@@ -438,6 +505,47 @@ const snapshotDiffSummary = computed(() => ({
   domain_changed: Boolean(snapshotDiff.value?.summary?.domain_changed),
 }))
 const snapshotDomainChanges = computed(() => Array.isArray(snapshotDiff.value?.domain) ? snapshotDiff.value.domain : [])
+const releaseDiffSummary = computed(() => ({
+  added: Number(releaseDiff.value?.summary?.added || 0),
+  removed: Number(releaseDiff.value?.summary?.removed || 0),
+  changed: Number(releaseDiff.value?.summary?.changed || 0),
+}))
+const releaseDiffCurrentLabel = computed(() => {
+  const current = releaseDiff.value?.current
+  return current ? `V${current.version} · ${current.name}` : '-'
+})
+const releaseDiffBaselineLabel = computed(() => {
+  const baseline = releaseDiff.value?.baseline
+  return baseline ? `V${baseline.version} · ${baseline.name}` : '无基线版本'
+})
+const releaseImpact = computed(() => ({
+  affected_objects: Array.isArray(releaseDiff.value?.impact?.affected_objects) ? releaseDiff.value.impact.affected_objects : [],
+  affected_metrics: Array.isArray(releaseDiff.value?.impact?.affected_metrics) ? releaseDiff.value.impact.affected_metrics : [],
+  affected_capabilities: Array.isArray(releaseDiff.value?.impact?.affected_capabilities) ? releaseDiff.value.impact.affected_capabilities : [],
+  datasource_changed: Boolean(releaseDiff.value?.impact?.datasource_changed),
+}))
+const releaseOntologyDiffSections = computed(() => {
+  const ontology = releaseDiff.value?.ontology || {}
+  return [
+    { type: 'object_types', title: '对象类型', ...(ontology.object_types || { added: [], removed: [], changed: [] }) },
+    { type: 'link_types', title: '关系类型', ...(ontology.link_types || { added: [], removed: [], changed: [] }) },
+    { type: 'action_types', title: '动作类型', ...(ontology.action_types || { added: [], removed: [], changed: [] }) },
+  ].map((section) => ({
+    ...section,
+    added: Array.isArray(section.added) ? section.added : [],
+    removed: Array.isArray(section.removed) ? section.removed : [],
+    changed: Array.isArray(section.changed) ? section.changed : [],
+  })).filter((section) => section.added.length || section.removed.length || section.changed.length)
+})
+const releaseDiffHasChanges = computed(() => Boolean(
+  releaseDiffSummary.value.added
+  || releaseDiffSummary.value.removed
+  || releaseDiffSummary.value.changed
+  || releaseOntologyDiffSections.value.length
+  || releaseImpact.value.affected_objects.length
+  || releaseImpact.value.affected_metrics.length
+  || releaseImpact.value.affected_capabilities.length,
+))
 const snapshotAssetDiffSections = computed(() => {
   const assets = snapshotDiff.value?.assets || {}
   return ['concept', 'relation', 'metric', 'rule', 'mapping', 'template']
@@ -575,6 +683,16 @@ async function openSnapshots() {
   }
 }
 
+async function handleDiffRelease(item: EnterpriseModelRelease) {
+  if (!domainId.value) return
+  try {
+    releaseDiff.value = await diffEnterpriseModelRelease(domainId.value, item.id) as ReleaseDiff
+    showReleaseDiffDialog.value = true
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '版本差异加载失败'))
+  }
+}
+
 async function handleDiffSnapshot(item: SemanticDomainSnapshot) {
   if (!domainId.value) return
   try {
@@ -613,7 +731,7 @@ function openCreate() {
 
 async function createRelease() {
   if (!domainId.value || !form.semantic_snapshot_id || !form.ontology_release_id) {
-    ElMessage.warning('请选择语义快照和 Ontology 版本')
+    ElMessage.warning('请选择语义快照和本体版本')
     return
   }
   saving.value = true
@@ -695,6 +813,7 @@ function resetOperationStates() {
   vectorState.value = 'idle'
   vectorMessage.value = ''
   snapshotDiff.value = null
+  releaseDiff.value = null
 }
 
 function statusLabel(status: EnterpriseModelRelease['status']) {
@@ -720,7 +839,7 @@ function semanticSnapshotLabel(snapshotId: number) {
 
 function ontologyReleaseLabel(releaseId: number) {
   const item = ontologyReleases.value.find((release) => release.id === releaseId)
-  return item ? `Ontology V${item.version} · ${item.name}` : `Ontology #${releaseId}`
+  return item ? `本体 V${item.version} · ${item.name}` : `本体 #${releaseId}`
 }
 
 function releaseValidationText(release: EnterpriseModelRelease) {
@@ -808,9 +927,9 @@ function errorMessage(error: unknown, fallback = '企业模型版本操作失败
   gap: 18px;
 }
 
-.release-header { align-items: flex-end; padding-bottom: 10px; border-bottom: 1px solid var(--wq-border); }
-.release-header h2 { margin: 0; color: var(--wq-text); font-size: 20px; line-height: 1.3; }
-.release-header h2 span { color: var(--wq-muted); font-weight: 560; }
+.release-header { align-items: center; justify-content: flex-end; padding-bottom: 10px; border-bottom: 1px solid var(--wq-border); }
+.release-header h2,
+.release-header p { display: none; }
 .release-header p,
 .section-heading p,
 .operation-main > p,
@@ -844,7 +963,7 @@ function errorMessage(error: unknown, fallback = '企业模型版本操作失败
 .release-flow > div.ready > span { border-color: var(--wq-primary); color: var(--wq-primary-strong); background: var(--wq-primary-soft); }
 .release-flow p { display: grid; gap: 2px; margin: 0; min-width: 0; }
 .release-flow strong { font-size: 12px; }
-.release-flow small { overflow: hidden; color: var(--wq-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.release-flow small { overflow: hidden; color: var(--wq-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .release-flow i { color: var(--wq-subtle); font-size: 18px; font-style: normal; }
 
 .release-section { margin-top: 10px; border: 1px solid var(--wq-border); border-radius: 7px; background: var(--wq-surface); }

@@ -371,9 +371,67 @@ async def test_release_lifecycle_switches_active_and_supports_rollback(monkeypat
     assert rolled_back["previous_active_release_id"] == second["id"]
     assert db.releases[second["id"]]["status"] == "retired"
 
+    diff = await service.diff_releases(9, second["id"])
+    assert diff["baseline"]["id"] == first["id"]
+    assert diff["baseline_source"] == "previous_active"
+    assert "LoanAccount" in diff["ontology"]["object_types"]["added"]
+    assert "LoanApplication" in diff["ontology"]["object_types"]["removed"]
+    assert "account_count" in diff["impact"]["affected_metrics"]
+    assert diff["summary"]["model_changed"] is True
+
     retired = await service.deactivate_release(9, first["id"], retired_by=3)
     assert retired["status"] == "retired"
     assert not any(row["status"] == "active" for row in db.releases.values())
+
+
+@pytest.mark.asyncio
+async def test_diff_releases_infers_baseline_and_supports_explicit_compare(monkeypatch):
+    db = ModelReleaseDB()
+    monkeypatch.setattr(model_release_service, "get_management_db", lambda: db)
+    service = ModelReleaseService()
+
+    first = await service.create_draft(
+        9,
+        EnterpriseModelReleaseCreatePayload(
+            semantic_snapshot_id=10,
+            ontology_release_id=20,
+            name="贷款模型 V1",
+        ),
+        created_by=1,
+    )
+    empty = await service.diff_releases(9, first["id"])
+    assert empty["baseline"] is None
+    assert empty["baseline_source"] is None
+    assert empty["summary"]["has_baseline"] is False
+    assert empty["summary"]["model_changed"] is False
+
+    first = await service.validate_release(
+        9, first["id"], EnterpriseModelValidationPayload(), validated_by=1
+    )
+    first = await service.activate_release(9, first["id"], activated_by=1)
+    second = await service.create_draft(
+        9,
+        EnterpriseModelReleaseCreatePayload(
+            semantic_snapshot_id=11,
+            ontology_release_id=21,
+            name="贷款模型 V2",
+        ),
+        created_by=2,
+    )
+
+    against_active = await service.diff_releases(9, second["id"])
+    assert against_active["baseline"]["id"] == first["id"]
+    assert against_active["baseline_source"] == "active"
+    assert against_active["summary"]["has_baseline"] is True
+    assert against_active["summary"]["model_changed"] is True
+    assert "LoanAccount" in against_active["ontology"]["object_types"]["added"]
+    assert "LoanApplication" in against_active["ontology"]["object_types"]["removed"]
+    assert "account_count" in against_active["impact"]["affected_metrics"]
+
+    requested = await service.diff_releases(9, second["id"], against_release_id=first["id"])
+    assert requested["baseline_source"] == "requested"
+    assert requested["baseline"]["id"] == first["id"]
+    assert requested["ontology"] == against_active["ontology"]
 
 
 @pytest.mark.asyncio

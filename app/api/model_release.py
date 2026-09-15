@@ -1,6 +1,6 @@
 """Administrative API for unified enterprise model release lifecycle."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import require_model_editor, require_model_publisher
 from app.models.model_release import (
@@ -44,6 +44,25 @@ async def get_release(
         return {"release": await get_model_release_service().get_release(domain_id, release_id)}
     except ModelReleaseNotFound as exc:
         raise _not_found(exc) from exc
+
+
+@router.get("/domains/{domain_id}/releases/{release_id}/diff")
+async def diff_release(
+    domain_id: int,
+    release_id: int,
+    against_release_id: int | None = Query(default=None, gt=0),
+    _: PublicUser = Depends(require_model_editor),
+):
+    try:
+        return await get_model_release_service().diff_releases(
+            domain_id,
+            release_id,
+            against_release_id,
+        )
+    except ModelReleaseNotFound as exc:
+        raise _not_found(exc) from exc
+    except ModelReleaseConflict as exc:
+        raise _conflict(exc) from exc
 
 
 @router.post("/domains/{domain_id}/releases", status_code=201)

@@ -726,6 +726,303 @@ class ModelReleaseService:
             "ontology_definition": ontology_definition,
         }
 
+    async def diff_releases(
+        self,
+        domain_id: int,
+        release_id: int,
+        against_release_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Compare one unified release with an explicit or inferred baseline.
+
+        The baseline defaults to the previous active release when present,
+        otherwise the current active release.  The result is a product-facing
+        version diff plus the Query/object impact of activating the compared
+        version.
+        """
+        current = await self.get_release(domain_id, release_id)
+        baseline = None
+        inferred_from = None
+        if against_release_id is not None:
+            baseline = await self.get_release(domain_id, against_release_id)
+            inferred_from = "requested"
+        else:
+            previous_id = current.get("previous_active_release_id")
+            if previous_id:
+                baseline = await self.get_release(domain_id, int(previous_id))
+                inferred_from = "previous_active"
+            else:
+                active = await self.get_active_release(domain_id)
+                if active is not None and int(active["id"]) != int(current["id"]):
+                    baseline = active
+                    inferred_from = "active"
+
+        async def callback(session: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
+            current_components = await self._load_components(
+                session,
+                domain_id,
+                int(current["semantic_snapshot_id"]),
+                int(current["ontology_release_id"]),
+            )
+            baseline_components = None
+            if baseline is not None:
+                baseline_components = await self._load_components(
+                    session,
+                    domain_id,
+                    int(baseline["semantic_snapshot_id"]),
+                    int(baseline["ontology_release_id"]),
+                )
+            return current_components, baseline_components
+
+        current_components, baseline_components = (
+            await get_management_db().execute_in_transaction(callback)
+        )
+        if baseline is None or baseline_components is None:
+            return {
+                "current": _release_summary(current),
+                "baseline": None,
+                "baseline_source": None,
+                "summary": {
+                    "has_baseline": False,
+                    "model_changed": False,
+                    "added": 0,
+                    "removed": 0,
+                    "changed": 0,
+                    "total_changes": 0,
+                },
+                "semantic": {"summary": {}, "domain": [], "assets": {}},
+                "ontology": {
+                    "object_types": _empty_keyed_diff(),
+                    "link_types": _empty_keyed_diff(),
+                    "action_types": _empty_keyed_diff(),
+                },
+                "impact": {
+                    "query_capabilities": _empty_keyed_diff(),
+                    "affected_objects": [],
+                    "affected_metrics": [],
+                    "affected_capabilities": [],
+                    "datasource_changed": False,
+                },
+            }
+
+        from app.services.semantic_runtime import SemanticRuntimeService
+
+        semantic_service = SemanticRuntimeService()
+        current_semantic = current_components["semantic_snapshot"] or {}
+        baseline_semantic = baseline_components["semantic_snapshot"] or {}
+        semantic = {
+            "summary": semantic_service._diff_summary(current_semantic, baseline_semantic),
+            "domain": semantic_service._diff_domain(
+                current_semantic.get("domain") or {},
+                baseline_semantic.get("domain") or {},
+            ),
+            "assets": semantic_service._diff_assets(
+                current_semantic.get("assets") or {},
+                baseline_semantic.get("assets") or {},
+            ),
+        }
+        ontology = {
+            "object_types": _diff_keyed_records(
+                (current_components["ontology_definition"] or {}).get("object_types") or [],
+                (baseline_components["ontology_definition"] or {}).get("object_types") or [],
+                "object_key",
+            ),
+            "link_types": _diff_keyed_records(
+                (current_components["ontology_definition"] or {}).get("link_types") or [],
+                (baseline_components["ontology_definition"] or {}).get("link_types") or [],
+                "link_key",
+            ),
+            "action_types": _diff_keyed_records(
+                (current_components["ontology_definition"] or {}).get("action_types") or [],
+                (baseline_components["ontology_definition"] or {}).get("action_types") or [],
+                "action_key",
+            ),
+        }
+        current_capabilities = _query_capabilities_from_components(current_components)
+        baseline_capabilities = _query_capabilities_from_components(baseline_components)
+        capability_diff = _diff_keyed_records(
+            current_capabilities,
+            baseline_capabilities,
+            "key",
+        )
+        affected_objects = sorted(
+            set(ontology["object_types"]["added"])
+            | set(ontology["object_types"]["removed"])
+            | {item["key"] for item in ontology["object_types"]["changed"]}
+        )
+        metric_assets = semantic["assets"].get("metric") or {}
+        affected_metrics = sorted(
+            set(metric_assets.get("added") or [])
+            | set(metric_assets.get("removed") or [])
+            | {item["key"] for item in metric_assets.get("changed") or []}
+        )
+        affected_capabilities = sorted(
+            {
+                item.get("key")
+                for item in current_capabilities + baseline_capabilities
+                if str(item.get("key") or "")
+                and (
+                    str(item.get("target_object") or "") in set(affected_objects)
+                    or set(item.get("supported_metrics") or []) & set(affected_metrics)
+                    or str(item.get("key") or "")
+                    in set(capability_diff["added"] + capability_diff["removed"])
+                    or str(item.get("key") or "")
+                    in {changed["key"] for changed in capability_diff["changed"]}
+                )
+            }
+        )
+        current_domain = current_semantic.get("domain") or {}
+        baseline_domain = baseline_semantic.get("domain") or {}
+        added = (
+            semantic["summary"].get("added", 0)
+            + len(ontology["object_types"]["added"])
+            + len(ontology["link_types"]["added"])
+            + len(ontology["action_types"]["added"])
+        )
+        removed = (
+            semantic["summary"].get("removed", 0)
+            + len(ontology["object_types"]["removed"])
+            + len(ontology["link_types"]["removed"])
+            + len(ontology["action_types"]["removed"])
+        )
+        changed = (
+            semantic["summary"].get("changed", 0)
+            + int(bool(semantic["summary"].get("domain_changed")))
+            + len(ontology["object_types"]["changed"])
+            + len(ontology["link_types"]["changed"])
+            + len(ontology["action_types"]["changed"])
+        )
+        return {
+            "current": _release_summary(current),
+            "baseline": _release_summary(baseline),
+            "baseline_source": inferred_from,
+            "summary": {
+                "has_baseline": True,
+                "model_changed": current.get("model_hash") != baseline.get("model_hash"),
+                "added": added,
+                "removed": removed,
+                "changed": changed,
+                "total_changes": added + removed + changed,
+            },
+            "semantic": semantic,
+            "ontology": ontology,
+            "impact": {
+                "query_capabilities": capability_diff,
+                "affected_objects": affected_objects,
+                "affected_metrics": affected_metrics,
+                "affected_capabilities": affected_capabilities,
+                "datasource_changed": current_domain.get("datasource_id")
+                != baseline_domain.get("datasource_id"),
+            },
+        }
+
+
+def _release_summary(release: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": release.get("id"),
+        "version": release.get("version"),
+        "name": release.get("name"),
+        "status": release.get("status"),
+        "model_hash": release.get("model_hash"),
+        "semantic_snapshot_id": release.get("semantic_snapshot_id"),
+        "ontology_release_id": release.get("ontology_release_id"),
+    }
+
+
+def _empty_keyed_diff() -> dict[str, list[Any]]:
+    return {"added": [], "removed": [], "changed": []}
+
+
+def _normalize_record_for_diff(item: dict[str, Any]) -> dict[str, Any]:
+    ignored = {
+        "id",
+        "domain_id",
+        "object_type_id",
+        "created_at",
+        "updated_at",
+        "last_sync_status",
+        "last_sync_count",
+        "last_sync_total",
+        "last_sync_error",
+        "last_synced_at",
+    }
+    normalized: dict[str, Any] = {}
+    for key in sorted(item):
+        if key in ignored:
+            continue
+        value = item[key]
+        if isinstance(value, list) and value and isinstance(value[0], dict):
+            normalized[key] = [_normalize_record_for_diff(child) for child in value]
+        else:
+            normalized[key] = value
+    return normalized
+
+
+def _diff_keyed_records(
+    current_items: list[Any],
+    baseline_items: list[Any],
+    key_field: str,
+) -> dict[str, list[Any]]:
+    current_map = {
+        str(item.get(key_field) or ""): _normalize_record_for_diff(item)
+        for item in current_items
+        if isinstance(item, dict) and item.get(key_field)
+    }
+    baseline_map = {
+        str(item.get(key_field) or ""): _normalize_record_for_diff(item)
+        for item in baseline_items
+        if isinstance(item, dict) and item.get(key_field)
+    }
+    current_keys = set(current_map)
+    baseline_keys = set(baseline_map)
+    return {
+        "added": sorted(current_keys - baseline_keys),
+        "removed": sorted(baseline_keys - current_keys),
+        "changed": [
+            {
+                "key": key,
+                "current": current_map[key],
+                "baseline": baseline_map[key],
+            }
+            for key in sorted(current_keys & baseline_keys)
+            if current_map[key] != baseline_map[key]
+        ],
+    }
+
+
+def _query_capabilities_from_components(components: dict[str, Any]) -> list[dict[str, Any]]:
+    snapshot = components.get("semantic_snapshot") or {}
+    definition = components.get("ontology_definition") or {}
+    assets = snapshot.get("assets") or {}
+    runtime_payload = {
+        "domain": snapshot.get("domain") or {},
+        "concepts": assets.get("concept") or [],
+        "relations": assets.get("relation") or [],
+        "metrics": assets.get("metric") or [],
+        "rules": assets.get("rule") or [],
+        "mappings": assets.get("mapping") or [],
+        "templates": assets.get("template") or [],
+    }
+    ontology_payload = {
+        "domain": definition.get("domain") or {},
+        "object_types": [
+            item
+            for item in definition.get("object_types") or []
+            if isinstance(item, dict) and item.get("status") == "active"
+        ],
+        "link_types": [
+            item
+            for item in definition.get("link_types") or []
+            if isinstance(item, dict) and item.get("status") == "active"
+        ],
+        "actions": [
+            item
+            for item in definition.get("action_types") or []
+            if isinstance(item, dict) and item.get("status") == "active"
+        ],
+    }
+    capabilities = build_query_context("", runtime_payload, ontology_payload)
+    return list(capabilities.get("query_capabilities") or [])
+
 
 _service: ModelReleaseService | None = None
 

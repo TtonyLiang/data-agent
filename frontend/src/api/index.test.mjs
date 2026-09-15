@@ -278,9 +278,10 @@ function stripAxiosConfig(calls) {
   await api.fetchSemanticSnapshot(8, 3)
   await api.diffSemanticSnapshot(8, 3)
   await api.rollbackSemanticSnapshot(8, 3)
+  await api.diffEnterpriseModelRelease(8, 12)
   await api.deleteSemanticAsset(8, 'metric', 11)
 
-  assert.deepEqual(stripAxiosConfig(axiosCalls).slice(0, 26), [
+  assert.deepEqual(stripAxiosConfig(axiosCalls).slice(0, 27), [
     ['put', '/agent/3', {
       name: '编辑后智能体',
       description: '',
@@ -352,6 +353,7 @@ function stripAxiosConfig(calls) {
     ['get', '/semantic/domains/8/snapshots/3'],
     ['get', '/semantic/domains/8/snapshots/3/diff'],
     ['post', '/semantic/domains/8/snapshots/3/rollback', undefined],
+    ['get', '/model-releases/domains/8/releases/12/diff'],
     ['delete', '/semantic/assets/8/metric/11'],
   ])
 }

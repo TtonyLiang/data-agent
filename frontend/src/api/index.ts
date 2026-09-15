@@ -901,6 +901,20 @@ export async function rollbackEnterpriseModelRelease(
   return data.release
 }
 
+export async function diffEnterpriseModelRelease(
+  domainId: number,
+  releaseId: number,
+  againstReleaseId?: number | null,
+) {
+  const { data } = await api.get(
+    `/model-releases/domains/${domainId}/releases/${releaseId}/diff`,
+    {
+      ...(againstReleaseId ? { params: { against_release_id: againstReleaseId } } : {}),
+    },
+  )
+  return data
+}
+
 export async function fetchSemanticSnapshot(domainId: number, snapshotId: number) {
   const { data } = await api.get(`/semantic/domains/${domainId}/snapshots/${snapshotId}`)
   return data.snapshot

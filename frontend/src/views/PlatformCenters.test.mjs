@@ -115,6 +115,9 @@ assert.ok(
     releaseSource.includes('validateEnterpriseModelRelease') &&
     releaseSource.includes('activateEnterpriseModelRelease') &&
     releaseSource.includes('rollbackEnterpriseModelRelease') &&
+    releaseSource.includes('diffEnterpriseModelRelease') &&
+    releaseSource.includes('查看差异') &&
+    releaseSource.includes('没有可对比的上一激活版本') &&
     releaseSource.includes('v-if="canPublishModelRole"') &&
     releaseSource.includes('handleRollbackSnapshot') &&
     !releaseSource.includes(':disabled="!canEditModelRole" @click="handleRollbackSnapshot') &&
@@ -138,7 +141,7 @@ assert.ok(
     twinSource.includes('去企业模型校验发布') &&
     twinSource.includes('只有技术人员可以执行写入型同步') &&
     twinSource.includes('当前领域没有激活的统一企业模型版本') &&
-    twinSource.includes('当前页面是手动运行入口，不表示已经接入 CDC 或自动调度') &&
+    twinSource.includes('当前页面是手动运行入口，不表示已经接入变更捕获或自动调度') &&
     twinSource.includes('对象身份合并与状态历史'),
   'twin runtime should expose real manual synchronization without an unnamed scrollbar stop and state its current limits',
 )

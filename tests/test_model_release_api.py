@@ -7,7 +7,7 @@ from app.api import model_release as model_release_api
 from app.main import app
 from app.models.model_release import EnterpriseModelReleaseCreatePayload
 from app.models.user import PublicUser
-from app.services.model_release_service import ModelReleaseConflict
+from app.services.model_release_service import ModelReleaseConflict, ModelReleaseNotFound
 
 ADMIN = PublicUser(id=7, username="admin", role="admin", status="active")
 
@@ -45,6 +45,20 @@ async def test_activate_release_maps_state_conflict_to_http_409(monkeypatch):
     assert exc_info.value.detail == "版本尚未通过校验"
 
 
+@pytest.mark.asyncio
+async def test_diff_release_maps_not_found_to_http_404(monkeypatch):
+    service = AsyncMock()
+    service.diff_releases.side_effect = ModelReleaseNotFound("企业模型版本不存在")
+    monkeypatch.setattr(model_release_api, "get_model_release_service", lambda: service)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await model_release_api.diff_release(9, 12, None, ADMIN)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "企业模型版本不存在"
+    service.diff_releases.assert_awaited_once_with(9, 12, None)
+
+
 def test_model_release_routes_are_registered():
     paths = {route.path for route in app.routes}
 
@@ -53,3 +67,4 @@ def test_model_release_routes_are_registered():
     assert "/api/model-releases/domains/{domain_id}/releases/{release_id}/activate" in paths
     assert "/api/model-releases/domains/{domain_id}/releases/{release_id}/deactivate" in paths
     assert "/api/model-releases/domains/{domain_id}/releases/{release_id}/rollback" in paths
+    assert "/api/model-releases/domains/{domain_id}/releases/{release_id}/diff" in paths
