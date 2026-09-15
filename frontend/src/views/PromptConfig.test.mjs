@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 const source = readFileSync(new URL('./PromptConfig.vue', import.meta.url), 'utf8')
 
 assert.ok(
-  source.includes('Prompt 配置') && source.includes('fetchPromptTemplates'),
+  source.includes('提示词配置') && source.includes('fetchPromptTemplates'),
   'PromptConfig should expose a prompt template management page',
 )
 
@@ -35,7 +35,7 @@ assert.ok(
 )
 
 assert.ok(
-  source.includes('embedded-toolbar') && source.includes('还没有 Prompt 模板') && source.includes('新增模板'),
+  source.includes('embedded-toolbar') && source.includes('还没有提示词模板') && source.includes('新增模板'),
   'PromptConfig should remain usable when embedded in SystemParameterConfig',
 )
 

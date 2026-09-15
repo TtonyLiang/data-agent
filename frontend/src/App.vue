@@ -306,7 +306,7 @@ html, body, #app {
   background: var(--wq-surface);
   border-bottom: 1px solid var(--wq-border);
   display: grid;
-  grid-template-columns: minmax(190px, 220px) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(252px, 300px) minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   flex-shrink: 0;
@@ -351,15 +351,16 @@ html, body, #app {
 }
 
 .brand span {
-  display: block;
-  max-width: 168px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  max-width: 228px;
   margin-top: 1px;
   overflow: hidden;
   color: var(--wq-muted);
   font-size: 12px;
-  line-height: 1.2;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  line-height: 1.25;
+  white-space: normal;
 }
 
 .top-nav {
@@ -556,7 +557,7 @@ html, body, #app {
 
 @media (max-width: 1560px) {
   .app-header {
-    grid-template-columns: 204px minmax(0, 1fr) auto;
+    grid-template-columns: minmax(252px, 280px) minmax(0, 1fr) auto;
     padding-inline: 16px;
   }
 

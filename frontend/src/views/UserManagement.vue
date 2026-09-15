@@ -16,7 +16,7 @@
       scrollbar-always-on
       v-loading="loading"
     >
-      <el-table-column prop="id" label="ID" width="64" sortable />
+      <el-table-column prop="id" label="编号" width="64" sortable />
       <el-table-column
         prop="username"
         label="用户名"

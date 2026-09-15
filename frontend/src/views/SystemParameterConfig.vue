@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h2>系统参数</h2>
-        <p>统一维护运行参数、Prompt 模板和系统用户权限。这里的配置优先于后端默认值。</p>
+        <p>统一维护运行参数、提示词模板和系统用户权限。这里的配置优先于后端默认值。</p>
       </div>
       <div class="head-actions">
         <el-button v-if="activeTab === 'runtime'" :icon="Refresh" @click="loadParameters">刷新</el-button>
@@ -60,12 +60,12 @@
             <h3>筛选示例</h3>
             <p>
               如果最高分是 2162，必须召回阈值 0.35，则强相关线是 756.7；可召回阈值 0.15，则补充线是 324.3。
-              分数低于补充线的表会被剔除，不再机械进入 TopN。
+              分数低于补充线的表会被剔除，不再机械进入前 N 项。
             </p>
           </div>
         </div>
       </el-tab-pane>
-      <el-tab-pane label="Prompt 模板" name="prompt">
+      <el-tab-pane label="提示词模板" name="prompt">
         <PromptConfig embedded />
       </el-tab-pane>
       <el-tab-pane label="用户管理" name="users">
@@ -209,10 +209,14 @@ onMounted(loadParameters)
   grid-template-columns: minmax(0, 1fr) 220px;
   gap: 20px;
   align-items: center;
-  padding: 14px;
-  border: 1px solid var(--wq-border);
-  border-radius: 8px;
-  background: #fbfcff;
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--wq-border);
+  border-radius: 0;
+  background: transparent;
+}
+.param-row:last-child {
+  border-bottom: 0;
 }
 
 .param-meta h3,

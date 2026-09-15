@@ -187,7 +187,7 @@ assert.ok(
     source.includes("numberField(row, 'current_version') || null") &&
     source.includes('fetchRiskReportVersions(domainId.value, reportId(row))') &&
     source.includes('快照摘要') &&
-    source.includes('Ontology release') &&
+    source.includes('本体版本') &&
     source.includes('快照哈希'),
   'report workflow should create versions, finalize reports, and display snapshot provenance',
 )
@@ -217,10 +217,10 @@ assert.ok(
 assert.ok(
   source.includes('class="technical-trace-collapse"') &&
     source.includes('技术追溯（原始 JSON、哈希与版本字段）') &&
-    source.includes('Ontology release') &&
+    source.includes('本体版本') &&
     source.includes('创建人') &&
     source.includes('快照哈希') &&
-    source.includes('原始 snapshot JSON') &&
+    source.includes('原始快照 JSON') &&
     source.includes('原始 Markdown') &&
     source.includes('技术字段') &&
     source.includes('function formatTechnicalFields(version'),
@@ -378,8 +378,8 @@ assert.ok(
 )
 
 assert.ok(
-  source.includes('垂直验证场景') &&
-    source.includes('贷款/财税垂直验证场景') &&
+  source.includes('连接风险事项、证据、复核、报告与审计') &&
+    source.includes('placeholder="选择业务领域"') &&
     source.includes('暂无可访问业务领域，请联系技术人员完成领域配置'),
-  'risk delivery should present itself as a vertical validation scenario with role-appropriate empty guidance',
+  'risk delivery should present the current business domain without internal scenario jargon',
 )

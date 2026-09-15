@@ -3,14 +3,14 @@
     <header class="page-toolbar">
       <div class="title-group">
         <h2>风险与报告交付</h2>
-        <p v-if="currentDomain">垂直验证场景 · {{ currentDomain.name }} · {{ currentDomain.domain_key || `domain-${currentDomain.id}` }}</p>
-        <p v-else>贷款/财税垂直验证场景，连接风险事项、证据、复核、报告与审计</p>
+        <p v-if="currentDomain">{{ currentDomain.name }}</p>
+        <p v-else>连接风险事项、证据、复核、报告与审计</p>
       </div>
       <div class="toolbar-actions">
         <el-select
           v-model="domainId"
           class="domain-select"
-          placeholder="选择领域"
+          placeholder="选择业务领域"
           aria-label="选择风险交付业务领域"
           :loading="domainLoading"
           :disabled="domainLoading || domains.length === 0"
@@ -874,7 +874,7 @@
               <el-collapse-item name="technical" title="技术追溯（原始 JSON、哈希与版本字段）">
                 <template v-if="isTechnicalTraceExpanded(version)">
                   <dl class="version-meta">
-                    <div><dt>Ontology release</dt><dd>{{ releaseLabel(version) }}</dd></div>
+                    <div><dt>本体版本</dt><dd>{{ releaseLabel(version) }}</dd></div>
                     <div><dt>创建人</dt><dd>{{ textFieldOr(version, '-', 'creator_name', 'created_by_name', 'created_by') }}</dd></div>
                     <div><dt>快照哈希</dt><dd><code>{{ shortHash(field(version, 'snapshot_hash', 'content_hash'), 24) }}</code></dd></div>
                   </dl>
@@ -883,7 +883,7 @@
                     <p>{{ snapshotSummary(version) }}</p>
                   </section>
                   <section class="version-section technical-section">
-                    <h4>原始 snapshot JSON</h4>
+                    <h4>原始快照 JSON</h4>
                     <pre>{{ formatSnapshot(field(version, 'snapshot_json', 'snapshot')) }}</pre>
                   </section>
                   <section class="version-section technical-section">
@@ -1536,7 +1536,7 @@ function snapshotSummaryValue(version: unknown) {
 }
 
 function snapshotSummary(version: unknown) {
-  return snapshotSummaryValue(version) || '当前版本已绑定风险事项、证据与 Ontology release 快照'
+  return snapshotSummaryValue(version) || '当前版本已绑定风险事项、证据与本体版本快照'
 }
 
 type VersionMarkdownBlock =

@@ -253,14 +253,14 @@ assert.ok(
     capabilitySource.includes('if (!domainId.value) loading.value = false') &&
     capabilitySource.includes('fetchOntologyQueryCapabilities') &&
     capabilitySource.includes('fetchOntologyAgentContext') &&
-    capabilitySource.includes('外部只读 Query 能力') &&
+    capabilitySource.includes('外部只读查询能力') &&
     capabilitySource.includes('内部受控动作验证') &&
-    capabilitySource.includes('内部 Agent 验证工具') &&
+    capabilitySource.includes('内部验证工具') &&
     capabilitySource.includes('外部 Agent') &&
-    capabilitySource.includes('Action 尚未作为外部能力发布') &&
+    capabilitySource.includes('对象查询和动作尚未作为外部能力发布') &&
     capabilitySource.includes('权限与结果脱敏生效') &&
     capabilitySource.includes('第三方调用方') &&
-    capabilitySource.includes('Client Secret 只展示本次') &&
+    capabilitySource.includes('调用密钥只展示本次') &&
     capabilitySource.includes('能力调用审计') &&
     capabilitySource.includes('fetchCapabilityInvocationAudits') &&
     capabilitySource.includes('activeModelRelease') &&
@@ -273,7 +273,7 @@ assert.ok(
     capabilitySource.includes('业务领域权限') &&
     capabilitySource.includes('旧权限兼容适配') &&
     capabilitySource.includes('数据源、表和字段权限由平台按业务领域自动适配') &&
-    capabilitySource.includes('无需选择或创建内部验证 Agent') &&
+    capabilitySource.includes('无需选择或创建内部验证智能体') &&
     capabilitySource.includes('授权约定') &&
     capabilitySource.includes('grant-summary-text') &&
     capabilitySource.includes('activeGrantPreview') &&
@@ -287,7 +287,7 @@ assert.ok(
 )
 
 assert.ok(
-  capabilitySource.includes(':aria-label="`查看 Query 能力约定：${row.name}`"') &&
+  capabilitySource.includes(':aria-label="`查看查询能力约定：${row.name}`"') &&
     capabilitySource.includes(':aria-label="`查看内部动作约定：${row.name}`"') &&
     capabilitySource.includes(':aria-label="`管理调用方授权：${row.name}`"') &&
     capabilitySource.includes(':aria-label="`撤销能力授权：${row.capability_key}`"') &&

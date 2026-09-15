@@ -22,7 +22,7 @@
         table-layout="fixed"
         scrollbar-always-on
       >
-        <el-table-column prop="id" label="ID" width="64" />
+        <el-table-column prop="id" label="编号" width="64" />
         <el-table-column prop="name" label="名称" min-width="130" show-overflow-tooltip />
         <el-table-column label="类型" width="112">
           <template #default="{ row }">
@@ -33,9 +33,9 @@
         </el-table-column>
         <el-table-column prop="provider" label="提供商" min-width="110" show-overflow-tooltip />
         <el-table-column prop="model_name" label="模型" min-width="145" show-overflow-tooltip />
-        <el-table-column prop="base_url" label="Base URL" min-width="190" show-overflow-tooltip />
+        <el-table-column prop="base_url" label="接口地址" min-width="190" show-overflow-tooltip />
         <el-table-column
-          label="API Key"
+          label="密钥"
           width="118"
           align="center"
           header-align="center"
@@ -48,7 +48,13 @@
           </template>
         </el-table-column>
         <el-table-column prop="embedding_dimension" label="维度" width="76" />
-        <el-table-column prop="status" label="状态" width="82" />
+        <el-table-column label="状态" width="82">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small" round>
+              {{ row.status === 'active' ? '启用' : '停用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column
           label="操作"
           width="196"
@@ -74,13 +80,16 @@
         <dt>名称</dt><dd>{{ detailConfig.name }}</dd>
         <dt>类型</dt><dd>{{ detailConfig.model_type === 'chat' ? '大语言模型' : '向量模型' }}</dd>
         <dt>提供商</dt><dd>{{ detailConfig.provider }}</dd>
-        <dt>Base URL</dt><dd>{{ detailConfig.base_url }}</dd>
+        <dt>接口地址</dt><dd>{{ detailConfig.base_url }}</dd>
         <dt>模型</dt><dd>{{ detailConfig.model_name }}</dd>
-        <dt>API Key</dt><dd>{{ apiKeyTagText(detailConfig) }}</dd>
+        <dt>密钥</dt><dd>{{ apiKeyTagText(detailConfig) }}</dd>
         <dt>Key 过期时间</dt><dd>{{ formatDateTime(detailConfig.api_key_expires_at) }}</dd>
         <dt>向量维度</dt><dd>{{ detailConfig.embedding_dimension || '-' }}</dd>
-        <dt>状态</dt><dd>{{ detailConfig.status }}</dd>
+        <dt>状态</dt><dd>{{ detailConfig.status === "active" ? "启用" : "停用" }}</dd>
       </dl>
+      <template #footer>
+        <el-button @click="showDetail = false">关闭</el-button>
+      </template>
     </el-drawer>
 
     <el-dialog v-model="showDialog" :title="editingId ? '编辑模型配置' : '新增模型配置'" width="620">
@@ -94,7 +103,7 @@
         <el-form-item label="提供商">
           <el-input v-model="form.provider" placeholder="ollama / deepseek / openai-compatible" />
         </el-form-item>
-        <el-form-item label="Base URL">
+        <el-form-item label="接口地址">
           <el-input v-model="form.base_url" placeholder="http://127.0.0.1:11434/v1" />
         </el-form-item>
         <el-form-item label="模型名称">
@@ -106,7 +115,7 @@
         <el-form-item label="启用 Key">
           <el-switch v-model="form.api_key_enabled" />
         </el-form-item>
-        <el-form-item label="API Key">
+        <el-form-item label="密钥">
           <el-input
             v-model="form.api_key"
             type="password"
@@ -130,8 +139,8 @@
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="form.status">
-            <el-option label="active" value="active" />
-            <el-option label="disabled" value="disabled" />
+            <el-option label="启用" value="active" />
+            <el-option label="停用" value="disabled" />
           </el-select>
         </el-form-item>
       </el-form>

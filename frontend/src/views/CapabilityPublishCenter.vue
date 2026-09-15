@@ -3,21 +3,21 @@
     <header class="page-header">
       <div>
         <h2>能力发布中心</h2>
-        <p>正式出口是第三方调用已发布 Query 约定。本项目验证智能体只用来核对同一约定能否复现同样的业务结果。</p>
+        <p>第三方调用已发布的查询约定；验证智能体只用于核对同一结果。</p>
       </div>
       <div class="header-actions">
-        <el-select v-model="domainId" class="domain-select" placeholder="选择业务领域" aria-label="选择业务领域">
-          <el-option
-            v-for="domain in domains"
-            :key="domain.id"
-            :label="`${domain.name} · ${domain.domain_key}`"
-            :value="domain.id"
-          />
-        </el-select>
-        <el-button :disabled="!domainId" @click="loadCapabilities">
-          <el-icon><Refresh /></el-icon>
-          刷新
-        </el-button>
+        <label class="header-domain-field">
+          <span>业务领域</span>
+          <el-select v-model="domainId" class="domain-select" placeholder="选择业务领域" aria-label="选择业务领域">
+            <el-option
+              v-for="domain in domains"
+              :key="domain.id"
+              :label="`${domain.name} · ${domain.domain_key}`"
+              :value="domain.id"
+            />
+          </el-select>
+        </label>
+        <el-button text :disabled="!domainId" @click="loadCapabilities">刷新</el-button>
         <el-button v-if="canManage" @click="openModelRelease">模型发布</el-button>
         <el-button v-if="canManage" type="primary" @click="openCreateClient">
           <el-icon><Plus /></el-icon>
@@ -30,11 +30,12 @@
       class="consumer-note"
       type="info"
       :closable="false"
-      title="外部 Agent 当前通过独立凭据调用 Query Capability；对象查询和 Action 尚未作为外部能力发布。"
+      title="外部 Agent 当前通过独立凭据调用查询能力；对象查询和动作尚未作为外部能力发布。"
     />
 
     <el-empty
       v-if="!loading && domains.length === 0"
+      :image-size="72"
       :description="canManage ? '暂无业务领域，请先在企业模型中创建并发布' : '暂无可访问业务领域，请联系技术人员配置业务领域或验证客户端权限'"
     />
 
@@ -49,7 +50,7 @@
         <i aria-hidden="true">→</i>
         <div>
           <span>能力约定</span>
-          <strong>外部 Query / 内部验证工具</strong>
+          <strong>外部查询 / 内部验证工具</strong>
         </div>
         <i aria-hidden="true">→</i>
         <div>
@@ -66,7 +67,7 @@
           <small>{{ releaseName }}</small>
         </div>
         <div>
-          <span>外部 Query 能力</span>
+          <span>外部查询能力</span>
           <strong>{{ queryCapabilities.length }}</strong>
           <small>确定性编译与受控执行</small>
         </div>
@@ -92,10 +93,10 @@
 
       <section class="capability-surface">
         <el-tabs v-model="activeTab">
-          <el-tab-pane :label="`外部 Query ${queryCapabilities.length}`" name="queries">
+          <el-tab-pane :label="`外部查询 ${queryCapabilities.length}`" name="queries">
             <div class="tab-heading">
               <div>
-                <h3>外部只读 Query 能力</h3>
+                <h3>外部只读查询能力</h3>
                 <p>通过独立调用凭据开放，由本体对象与明确绑定的语义指标生成。</p>
               </div>
             </div>
@@ -128,11 +129,11 @@
               </el-table-column>
               <el-table-column label="操作" width="110" fixed="right" align="center">
                 <template #default="{ row }">
-                  <el-button link type="primary" :aria-label="`查看 Query 能力约定：${row.name}`" @click="showQueryContract(row)">查看约定</el-button>
+                  <el-button link type="primary" :aria-label="`查看查询能力约定：${row.name}`" @click="showQueryContract(row)">查看约定</el-button>
                 </template>
               </el-table-column>
             </el-table>
-            <el-empty v-else description="暂无查询能力：请先为本体对象绑定语义指标和维度" />
+            <el-empty v-else :image-size="72" description="暂无查询能力：请先为本体对象绑定语义指标和维度" />
           </el-tab-pane>
 
           <el-tab-pane :label="`内部动作验证 ${actions.length}`" name="actions">
@@ -177,13 +178,13 @@
                 </template>
               </el-table-column>
             </el-table>
-            <el-empty v-else description="当前角色没有可用于内部验证的生效动作" />
+            <el-empty v-else :image-size="72" description="当前角色没有可用于内部验证的生效动作" />
           </el-tab-pane>
 
           <el-tab-pane :label="`内部工具 ${tools.length}`" name="tools">
             <div class="tab-heading">
               <div>
-                <h3>内部 Agent 验证工具</h3>
+                <h3>内部验证工具</h3>
                 <p>用于验证对象查询、业务查询和动作效果，不代表这些工具均已对外发布。</p>
               </div>
             </div>
@@ -226,7 +227,7 @@
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="Client Key" min-width="240">
+              <el-table-column label="调用方标识" min-width="240">
                 <template #default="{ row }"><code>{{ row.client_key }}</code></template>
               </el-table-column>
               <el-table-column label="授权" min-width="260">
@@ -270,7 +271,7 @@
                 </template>
               </el-table-column>
             </el-table>
-            <el-empty v-else-if="!clientsLoading" description="暂无第三方调用方" />
+            <el-empty v-else-if="!clientsLoading" :image-size="72" description="暂无第三方调用方" />
           </el-tab-pane>
 
           <el-tab-pane v-if="canManage" :label="`调用审计 ${audits.length}`" name="audits">
@@ -279,7 +280,7 @@
                 <h3>能力调用审计</h3>
                 <p>记录调用身份、能力、状态、耗时和结果摘要，不保存查询结果全文。</p>
               </div>
-              <el-button :loading="auditsLoading" @click="loadAudits">刷新审计</el-button>
+              <el-button text :loading="auditsLoading" @click="loadAudits">刷新审计</el-button>
             </div>
             <el-table
               v-if="audits.length"
@@ -318,14 +319,14 @@
               <el-table-column label="结果" width="150">
                 <template #default="{ row }">{{ row.row_count }} 行 · {{ row.latency_ms }} ms</template>
               </el-table-column>
-              <el-table-column label="Trace" min-width="170">
+              <el-table-column label="追踪编号" min-width="170">
                 <template #default="{ row }"><code>{{ row.trace_id }}</code></template>
               </el-table-column>
               <el-table-column label="错误" min-width="220" show-overflow-tooltip>
                 <template #default="{ row }">{{ row.error_message || '-' }}</template>
               </el-table-column>
             </el-table>
-            <el-empty v-else-if="!auditsLoading" description="当前领域暂无调用记录" />
+            <el-empty v-else-if="!auditsLoading" :image-size="72" description="当前领域暂无调用记录" />
           </el-tab-pane>
         </el-tabs>
       </section>
@@ -348,7 +349,7 @@
         <p v-if="selectedContract.description" class="contract-description">{{ selectedContract.description }}</p>
         <section v-if="selectedContract.glossary" class="glossary-section">
           <h4>业务词典</h4>
-          <p class="endpoint-note">第三方 Agent 用这些指标、维度和别名构造 LogicForm；不必复制内置验证智能体的提示词。</p>
+          <p class="endpoint-note">第三方 Agent 用这些指标、维度和别名构造语义表达式；不必复制内置验证智能体的提示词。</p>
           <div v-if="selectedContract.glossary.metrics?.length" class="glossary-group">
             <h5>指标</h5>
             <ul class="glossary-list">
@@ -385,7 +386,7 @@
             </ul>
           </div>
           <div v-if="selectedContract.glossary.examples?.length" class="glossary-group">
-            <h5>示例 LogicForm</h5>
+            <h5>示例语义表达式</h5>
             <div v-for="(item, index) in selectedContract.glossary.examples" :key="`example-${index}`" class="glossary-example">
               <span>{{ item.title || `示例 ${index + 1}` }}</span>
               <pre>{{ JSON.stringify(item.logic_form || item, null, 2) }}</pre>
@@ -406,6 +407,9 @@
           <pre>{{ JSON.stringify(selectedContract.raw, null, 2) }}</pre>
         </details>
       </div>
+      <template #footer>
+        <el-button @click="contractVisible = false">关闭</el-button>
+      </template>
     </el-drawer>
 
     <el-drawer
@@ -417,7 +421,7 @@
       <div v-if="selectedClient" class="grant-management">
         <div class="grant-toolbar">
           <div>
-            <span>Client Key</span>
+            <span>调用方标识</span>
             <code>{{ selectedClient.client_key }}</code>
           </div>
           <el-button type="primary" :disabled="!domainId" @click="openGrantDialog">
@@ -450,7 +454,7 @@
             <template #default="{ row }">
               <div class="primary-cell">
                 <strong>{{ row.model_release_id ? `模型 #${row.model_release_id}` : '历史授权' }}</strong>
-                <span class="cell-note">{{ row.contract_hash ? `约定 ${row.contract_hash.slice(0, 8)}…` : '首次调用时兼容绑定' }}</span>
+                <span class="cell-note" :title="row.contract_hash || ''">{{ row.contract_hash ? `约定 ${row.contract_hash.slice(0, 8)}…` : '首次调用时兼容绑定' }}</span>
               </div>
             </template>
           </el-table-column>
@@ -498,11 +502,11 @@
       <el-alert
         type="warning"
         :closable="false"
-        title="Client Secret 只展示本次。关闭前请交付给调用方并妥善保存。"
+        title="调用密钥只展示本次。关闭前请交付给调用方并妥善保存。"
       />
       <dl v-if="createdCredential" class="credential-detail">
-        <dt>Client Key</dt><dd><code>{{ createdCredential.client_key }}</code></dd>
-        <dt>Client Secret</dt><dd><code>{{ createdCredential.client_secret }}</code></dd>
+        <dt>调用方标识</dt><dd><code>{{ createdCredential.client_key }}</code></dd>
+        <dt>调用密钥</dt><dd><code>{{ createdCredential.client_secret }}</code></dd>
       </dl>
       <template #footer>
         <el-button ref="copyCredentialButton" @click="copyCredential">复制凭据</el-button>
@@ -516,7 +520,7 @@
           class="grant-boundary-note"
           type="info"
           :closable="false"
-          title="这里只授权调用方可以使用哪些业务能力。数据源、表和字段权限由平台按业务领域自动适配，无需选择或创建内部验证 Agent。"
+          title="这里只授权调用方可以使用哪些业务能力。数据源、表和字段权限由平台按业务领域自动适配，无需选择或创建内部验证智能体。"
         />
         <el-form-item label="业务领域" required>
           <el-select v-model="grantForm.domain_id" disabled class="form-control">
@@ -528,7 +532,7 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="Query 能力" required>
+        <el-form-item label="查询能力" required>
           <el-select ref="grantCapabilitySelect" v-model="grantForm.capability_key" class="form-control" placeholder="选择能力">
             <el-option
               v-for="capability in queryCapabilities"
@@ -778,7 +782,7 @@ function openGrantDrawer(client: CapabilityClient) {
 function openGrantDialog() {
   if (!domainId.value) return
   if (!queryCapabilities.value.length) {
-    ElMessage.warning('当前领域暂无可授权的 Query Capability')
+    ElMessage.warning('当前领域暂无可授权的查询能力')
     return
   }
   grantForm.domain_id = domainId.value
@@ -912,7 +916,7 @@ function showActionContract(action: Record<string, unknown>) {
     description: String(action.description || ''),
     tool: 'ontology_execute_action',
     endpoint: `POST /api/ontology/domains/${domainId.value}/agent-tools/ontology_execute_action`,
-    endpointNote: '仅供本项目内调试；外部 Action 能力尚未发布。',
+    endpointNote: '仅供本项目内调试；外部动作能力尚未发布。',
     example: {
       arguments: {
         action_key: actionKey,
@@ -934,7 +938,7 @@ function showToolContract(tool: OntologyAgentToolDefinition) {
     description: tool.description,
     tool: tool.name,
     endpoint: `POST /api/ontology/domains/${domainId.value}/agent-tools/${tool.name}`,
-    endpointNote: '项目内调试入口；外部 Agent 当前通过已授权的 Query Capability API 调用。',
+    endpointNote: '项目内调试入口；外部 Agent 当前通过已授权的查询能力接口调用。',
     example: { arguments: {} },
     raw: tool as unknown as Record<string, unknown>,
   }
@@ -997,6 +1001,15 @@ function errorMessage(error: unknown) {
   gap: 10px;
 }
 
+.header-domain-field {
+  display: grid;
+  gap: 4px;
+}
+.header-domain-field > span {
+  color: var(--wq-muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
 .domain-select {
   width: 280px;
 }

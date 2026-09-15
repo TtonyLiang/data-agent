@@ -2,7 +2,7 @@
   <div class="page-shell" :class="{ embedded }">
     <div v-if="!embedded" class="page-header">
       <div>
-        <h2>Prompt 配置</h2>
+        <h2>提示词配置</h2>
         <p>按节点、业务领域和模型维护企业模型提示词；验证智能体范围仅用于兼容覆盖。</p>
       </div>
       <div class="header-actions">
@@ -17,7 +17,7 @@
 
     <div v-else class="embedded-toolbar">
       <div>
-        <h3>Prompt 模板</h3>
+        <h3>提示词模板</h3>
         <p>可配置全局模板，也可按业务领域和模型细化；验证智能体范围仅用于兼容覆盖。</p>
       </div>
       <div class="header-actions">
@@ -32,7 +32,7 @@
 
     <div class="table-surface">
       <el-table v-loading="loading" :data="templates" border stripe>
-        <el-table-column prop="id" label="ID" width="80" />
+        <el-table-column prop="id" label="编号" width="80" />
         <el-table-column prop="name" label="名称" min-width="160" />
         <el-table-column label="节点" min-width="170">
           <template #default="{ row }">{{ promptKeyLabel(row.prompt_key) }}</template>
@@ -51,19 +51,19 @@
         <el-table-column prop="description" label="说明" min-width="220" show-overflow-tooltip />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small" round>{{ row.status }}</el-tag>
+            <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small" round>{{ row.status === 'active' ? '启用' : '停用' }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="210" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" @click="openDetail(row)">详情</el-button>
-            <el-button size="small" @click="openEdit(row)">编辑</el-button>
-            <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button link type="primary" size="small" @click="openDetail(row)">详情</el-button>
+            <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
         <template #empty>
           <div class="empty-state">
-            <p>还没有 Prompt 模板</p>
+            <p>还没有提示词模板</p>
             <span>可以新增全局模板，或按业务领域和模型配置专用模板。</span>
             <el-button type="primary" size="small" @click="openCreate">新增模板</el-button>
           </div>
@@ -71,7 +71,7 @@
       </el-table>
     </div>
 
-    <el-drawer v-model="showDetail" title="Prompt 模板详情" size="680px" append-to-body>
+    <el-drawer v-model="showDetail" title="提示词模板详情" size="680px" append-to-body>
       <div v-if="detailTemplate" class="detail-panel">
         <dl class="detail-grid">
           <dt>名称</dt><dd>{{ detailTemplate.name }}</dd>
@@ -80,18 +80,21 @@
           <dd>{{ promptAgentScopeText(detailTemplate) }}</dd>
           <dt>模型</dt><dd>{{ detailTemplate.model_config_id ? modelName(detailTemplate.model_config_id) : '不限定' }}</dd>
           <dt>业务领域</dt><dd>{{ detailTemplate.semantic_domain_id ? domainName(detailTemplate.semantic_domain_id) : '不限定' }}</dd>
-          <dt>状态</dt><dd>{{ detailTemplate.status }}</dd>
+          <dt>状态</dt><dd>{{ detailTemplate.status === "active" ? "启用" : "停用" }}</dd>
           <dt>说明</dt><dd>{{ detailTemplate.description || '-' }}</dd>
         </dl>
         <h4>模板内容</h4>
         <pre class="template-preview">{{ detailTemplate.template_text }}</pre>
       </div>
+      <template #footer>
+        <el-button @click="showDetail = false">关闭</el-button>
+      </template>
     </el-drawer>
 
-    <el-dialog v-model="showDialog" :title="editingId ? '编辑 Prompt 模板' : '新增 Prompt 模板'" width="760">
+    <el-dialog v-model="showDialog" :title="editingId ? '编辑提示词模板' : '新增提示词模板'" width="760">
       <el-form :model="form" label-width="110px">
         <el-form-item label="模板名称">
-          <el-input v-model="form.name" placeholder="例如：信贷指标 LogicForm 生成模板" />
+          <el-input v-model="form.name" placeholder="例如：信贷指标语义表达式生成模板" />
         </el-form-item>
         <el-form-item label="节点">
           <el-select v-model="form.prompt_key" placeholder="选择生效节点" @change="handlePromptKeyChange">
@@ -138,8 +141,8 @@
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="form.status">
-            <el-option label="active" value="active" />
-            <el-option label="disabled" value="disabled" />
+            <el-option label="启用" value="active" />
+            <el-option label="停用" value="disabled" />
           </el-select>
         </el-form-item>
         <el-form-item label="模板内容">
@@ -186,7 +189,7 @@ withDefaults(defineProps<{ embedded?: boolean }>(), {
 const fallbackPromptKeyOptions = [
   { label: '意图识别系统提示词', value: 'intent_recognition.system' },
   { label: '语义增强系统提示词', value: 'semantic_enhance.system' },
-  { label: 'LogicForm 生成系统提示词', value: 'nl2lf_generate.system' },
+  { label: '语义表达式生成系统提示词', value: 'nl2lf_generate.system' },
   { label: 'NL2SQL 兜底系统提示词', value: 'nl2sql_fallback.system' },
   { label: 'Python 分析脚本生成系统提示词', value: 'phase3_python_generate.system' },
   { label: 'Python 分析脚本生成用户提示词', value: 'phase3_python_generate.user' },
@@ -239,7 +242,7 @@ function defaultForm(promptKey = 'nl2lf_generate.system'): PromptTemplateRequest
   const preset = catalogMap.value.get(promptKey)
   return {
     prompt_key: promptKey,
-    name: preset?.name || fallbackPromptKeyOptions.find(item => item.value === promptKey)?.label || 'Prompt 模板',
+    name: preset?.name || fallbackPromptKeyOptions.find(item => item.value === promptKey)?.label || '提示词模板',
     description: preset?.description || '',
     agent_id: null,
     model_config_id: null,
@@ -262,7 +265,7 @@ async function loadTemplates() {
   try {
     templates.value = await fetchPromptTemplates(activePromptKey.value || undefined)
   } catch {
-    ElMessage.error('Prompt 模板加载失败')
+    ElMessage.error('提示词模板加载失败')
     templates.value = []
   } finally {
     loading.value = false
@@ -376,7 +379,7 @@ function promptAgentScopeText(template: PromptTemplateItem) {
 
 async function handleDelete(template: PromptTemplateItem) {
   try {
-    await ElMessageBox.confirm(`确定删除 Prompt 模板「${template.name}」？`, '删除 Prompt 模板', { type: 'warning' })
+    await ElMessageBox.confirm(`确定删除提示词模板「${template.name}」？`, '删除提示词模板', { type: 'warning' })
     await deletePromptTemplate(template.id)
     ElMessage.success('删除成功')
     await loadTemplates()
@@ -434,10 +437,10 @@ async function handleDelete(template: PromptTemplateItem) {
   align-items: flex-start;
   gap: 18px;
   margin-bottom: 14px;
-  padding: 16px;
-  border: 1px solid var(--wq-border);
-  border-radius: 8px;
-  background: #fbfcff;
+  padding: 0 0 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .embedded-toolbar h3 {

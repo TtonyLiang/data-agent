@@ -87,8 +87,7 @@
           <el-select
             v-model="domainId"
             :placeholder="domains.length ? '选择业务领域' : '暂无可用领域'"
-            style="width: 220px"
-            size="small"
+            class="chat-domain-select"
             :disabled="loading || domains.length === 0"
             aria-label="选择企业业务领域"
           >
@@ -96,15 +95,14 @@
             <el-option
               v-for="domain in domains"
               :key="domain.id"
-              :label="domain.name"
+              :label="`${domain.name} · ${domain.domain_key}`"
               :value="domain.id"
             />
           </el-select>
           <el-select
             v-model="agentId"
             :placeholder="agents.length ? '选择验证智能体' : '暂无可用验证智能体'"
-            style="width: 220px"
-            size="small"
+            class="chat-agent-select"
             :disabled="loading || agents.length === 0"
             aria-label="选择验证智能体"
           >
@@ -159,7 +157,7 @@
 
         <template v-for="(msg, idx) in messages" :key="idx">
           <div :class="['message', msg.role]">
-            <div class="message-avatar">{{ msg.role === 'user' ? '我' : 'AI' }}</div>
+            <div class="message-avatar">{{ msg.role === 'user' ? '我' : '证' }}</div>
             <div class="message-content">
               <div v-if="msg.role === 'assistant'" class="meta">
                 <el-tag v-if="isAssistantStreaming(msg)" size="small">生成中</el-tag>
@@ -624,7 +622,7 @@
       v-model="insightOpen"
       class="insight-drawer"
       title="分析与结果"
-      size="420px"
+      size="640px"
       append-to-body
     >
     <div class="insight-panel">
@@ -645,7 +643,7 @@
               </div>
             </div>
           </div>
-          <div v-else class="panel-empty">发起查询后，这里会展示理解问题、语义增强、知识召回、生成 LogicForm、编译 SQL 和执行查询的过程。</div>
+          <div v-else class="panel-empty">发起查询后，这里会展示理解问题、语义增强、知识召回、生成语义表达式、编译查询语句和执行查询的过程。</div>
         </el-tab-pane>
 
         <el-tab-pane label="SQL 细节" name="sql">
@@ -838,7 +836,7 @@
           <el-form-item label="风险分类" prop="category">
             <el-input v-model="riskForm.category" readonly />
           </el-form-item>
-          <el-form-item label="关联 Ontology 对象" prop="subject_object_id">
+          <el-form-item label="关联业务对象" prop="subject_object_id">
             <el-select
               v-model="riskForm.subject_object_id"
               style="width: 100%"
@@ -1137,7 +1135,7 @@ const turnModeLabels: Record<ChatTurnMode, string> = {
 const artifactLabels: Record<string, string> = {
   semantic_runtime: '语义知识',
   schema: '数据结构',
-  logic_form: 'LogicForm',
+  logic_form: '语义表达式',
   compiled_sql: 'SQL',
   sql_result: '查询结果',
   analysis: '分析结果',
@@ -1793,7 +1791,7 @@ async function loadRiskObjects(domainId: number) {
   } catch (error) {
     if (showRiskIssueDialog.value && riskSourceDomainId.value === domainId) {
       riskObjects.value = []
-      ElMessage.warning(`Ontology 对象加载失败：${riskIssueErrorMessage(error)}`)
+      ElMessage.warning(`业务对象加载失败：${riskIssueErrorMessage(error)}`)
     }
   } finally {
     if (riskSourceDomainId.value === domainId) riskObjectLoading.value = false
@@ -1991,7 +1989,7 @@ function stepLeadLine(step: ChatReasoningStep) {
     return errors.length ? `校验未通过：${errors.join('；')}` : step.summary
   }
   if (step.node === 'lf_to_sql_compile') {
-    if (getOutputString(output, 'compiled_sql')) return '已根据 LogicForm 编译受控 SQL'
+    if (getOutputString(output, 'compiled_sql')) return '已根据语义表达式编译受控查询'
     if (getOutputString(output, 'error')) return `SQL 编译失败：${getOutputString(output, 'error')}`
     return step.summary
   }
@@ -2102,7 +2100,7 @@ function schemaJoinLines(step: ChatReasoningStep) {
 function logicFormText(step: ChatReasoningStep) {
   const logicForm = getOutputObject(step.output || {}, 'logic_form')
   if (logicForm) return formatJson(logicForm)
-  return step.streamText || '{\n  "status": "正在生成 LogicForm..."\n}'
+  return step.streamText || '{\n  "status": "正在生成语义表达式..."\n}'
 }
 
 function validationDetailLines(step: ChatReasoningStep) {
@@ -3194,7 +3192,7 @@ function errorStageText(message: ChatMessage) {
   if (node === 'semantic_enhance') return '语义增强'
   if (node === 'semantic_runtime_recall') return '知识召回'
   if (node === 'schema_recall') return '数据定位'
-  if (node === 'nl2lf_generate') return 'LogicForm 生成'
+  if (node === 'nl2lf_generate') return '语义表达式生成'
   if (node === 'lf_validate' || /语义校验|校验失败/.test(message.error?.message || '')) return '语义校验'
   if (node === 'lf_to_sql_compile') return 'SQL 编译'
   if (node === 'sql_execute') return 'SQL 执行'
@@ -3206,7 +3204,7 @@ function friendlyErrorSummary(message: ChatMessage) {
   if (!raw) return '本次请求未能完成，请稍后重试。'
   if (/不支持维度/.test(raw)) return '当前指标不支持按这个维度展开。'
   if (/时间字段|time_field|时间口径/.test(raw)) return '当前查询缺少可用的时间字段或时间口径。'
-  if (/SQL为空/.test(raw)) return '没有生成可执行 SQL，请先检查语义配置和 LogicForm。'
+  if (/SQL为空/.test(raw)) return '没有生成可执行查询语句，请先检查语义配置和语义表达式。'
   if (/sql/i.test(raw) && /执行|失败|error|异常/.test(raw)) return 'SQL 执行失败，查询未成功返回结果。'
   if (/未返回匹配数据|没有返回匹配数据|0 条结果/.test(raw)) return '查询成功执行，但没有匹配到结果数据。'
   return message.error?.message || raw
@@ -3216,7 +3214,7 @@ function friendlyErrorSuggestion(message: ChatMessage) {
   const raw = `${message.error?.message || ''} ${message.error?.detail || ''}`.trim()
   if (/不支持维度/.test(raw)) return '建议更换一个支持的维度，或到企业模型的“语义与数据”中补充可切维度配置。'
   if (/时间字段|time_field|时间口径/.test(raw)) return '建议检查指标默认时间字段、映射层时间字段，以及问题里引用的时间口径是否一致。'
-  if (/SQL为空/.test(raw)) return '建议先查看分析链路里的 LogicForm 与校验结果，确认指标、维度和规则是否能成功编译。'
+  if (/SQL为空/.test(raw)) return '建议先查看分析链路里的语义表达式与校验结果，确认指标、维度和规则是否能成功编译。'
   if (/sql/i.test(raw) && /执行|失败|error|异常/.test(raw)) return '建议优先检查生成 SQL、表字段映射和数据源表结构是否一致。'
   return '可以先查看下方技术明细和右侧分析链路，定位具体出错节点。'
 }
@@ -6327,6 +6325,10 @@ onUnmounted(() => {
   min-height: 0;
 }
 
+.chat-domain-select,
+.chat-agent-select {
+  width: 260px;
+}
 .insight-toggle {
   min-width: 108px;
 }
@@ -6352,16 +6354,20 @@ onUnmounted(() => {
 @media (max-width: 860px) {
   .chat-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(168px, 30vh) minmax(0, 1fr);
     height: calc(100dvh - var(--wq-header-height));
   }
 
   .session-sidebar {
-    display: none;
+    display: flex;
+    border-right: 0;
+    border-bottom: 1px solid var(--wq-border);
   }
 
   .chat-container {
     grid-column: 1;
-    grid-row: 1;
+    grid-row: 2;
+    min-height: 0;
   }
 
   .workspace-toolbar {

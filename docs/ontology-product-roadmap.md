@@ -197,6 +197,7 @@ GitHub 调研结论是保留现有 FastAPI/MySQL 运营运行时，按边界引�
 
 | 日期 | 迭代 | 状态 | 验证依据 |
 |---|---|---|---|
+| 2026-09-15 | 开发封板判定：按内部 1.0 边界（企业模型、数据绑定、校验发布含版本差异/影响分析、手动孪生运行、外部只读 Query、内置验证智能体）完成技术收口；真实业务 UAT、目标机 Docker 构建、增量/状态历史、外部 Decision/Action、SDK/限流仍按计划后置 | 开发封板（内部 1.0 candidate） | 后端全量 `636 passed`；前端测试、Ruff、`vue-tsc`、生产构建通过；`verify_ontology_e2e` / `verify_loan_ontology_demo` / `verify_loan_risk_delivery_demo` / `verify_full_platform_flow` 通过；本地 `loan_risk` 版本 diff 抽查通过 |
 | 2026-09-15 | 企业模型版本差异与影响分析：统一版本可对比上一激活版本，展示对象/指标/查询能力影响范围 | 代码与自动化回归已完成；真实领域验收仍未完成 | 后端全量 `636 passed`；发布生命周期定向测试通过；前端测试、Ruff、`vue-tsc`、生产构建通过；Ontology/贷款本体/贷款风险/完整平台回放通过；本地 `loan_risk` 激活版本 diff 接口抽查通过 |
 | 2026-09-15 | 配置与认证收口：修复 `.env.example` 的 CORS 列表加载、稳定开发模式 JWT 回退密钥、移除未生效的应用层 `ADMIN_API_KEY` 语义、为登出增加 JWT 依赖并同步文档；登录限流按计划暂缓 | 代码与文档已同步；真实业务 UAT、目标服务器 Docker 构建和现场验收仍未完成 | 后端全量 `632 passed`；认证/配置定向测试通过；Ruff、前端测试、`vue-tsc`、生产构建、依赖检查和 `git diff --check` 通过；Ontology/贷款风险/完整平台回放通过 |
 | 2026-09-14 | Query 合同补业务词典：第三方凭据可列出已授权能力的指标/维度/别名/示例 LogicForm，不必复制验证智能体提示词；旧授权仅词典增量时自动补齐 | 代码与核心文档已同步；真实业务 UAT 仍安排在开发封板后 | 后端全量 `627 passed`；Ruff、前端测试和 `vue-tsc` 通过；合同抽屉契约覆盖业务词典 |

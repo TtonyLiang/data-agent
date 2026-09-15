@@ -19,7 +19,6 @@
         row-key="id"
         border
         stripe
-        height="100%"
         @expand-change="handleExpandChange"
       >
         <el-table-column type="expand" width="48">
@@ -226,10 +225,13 @@
         <dt>端口</dt><dd>{{ selectedDatasourceDetail.port }}</dd>
         <dt>数据库</dt><dd>{{ selectedDatasourceDetail.database_name }}</dd>
         <dt>用户名</dt><dd>{{ selectedDatasourceDetail.username || '-' }}</dd>
-        <dt>状态</dt><dd>{{ selectedDatasourceDetail.status || 'active' }}</dd>
+        <dt>状态</dt><dd>{{ selectedDatasourceDetail.status === 'disabled' ? '已停用' : '已启用' }}</dd>
         <dt>已采集表</dt><dd>{{ schemaStatsByDatasource[selectedDatasourceDetail.id]?.table_count || 0 }}</dd>
         <dt>已采集字段</dt><dd>{{ schemaStatsByDatasource[selectedDatasourceDetail.id]?.column_count || 0 }}</dd>
       </dl>
+      <template #footer>
+        <el-button @click="showDatasourceDetail = false">关闭</el-button>
+      </template>
     </el-drawer>
 
     <el-drawer
@@ -1157,8 +1159,8 @@ async function handleDelete(ds: DatasourceItem) {
 }
 
 .schema-workbench {
-  padding: 16px 18px 20px;
-  background: #f8fafc;
+  padding: 12px 8px 16px;
+  background: transparent;
 }
 
 .schema-workbench__head {

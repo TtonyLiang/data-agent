@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h2>调试与验证智能体</h2>
-        <p>只用于验收平台能力是否达标。标准是同一企业模型版本和 Query 约定下，第三方 Agent 应得到同样的业务结果。</p>
+        <p>只用于验收平台能力是否达标。同一企业模型版本和查询约定下，第三方 Agent 应得到同样的业务结果。</p>
       </div>
       <div class="header-actions">
         <el-tag effect="plain">共 {{ agents.length }} 个验证智能体</el-tag>
@@ -14,8 +14,8 @@
     </div>
 
     <div class="table-surface">
-      <el-table :data="agents" border stripe height="100%">
-        <el-table-column prop="id" label="ID" width="80" />
+      <el-table :data="agents" border stripe>
+        <el-table-column prop="id" label="编号" width="80" />
         <el-table-column prop="name" label="名称" min-width="150" />
         <el-table-column prop="description" label="描述" min-width="220" show-overflow-tooltip />
         <el-table-column prop="chat_model_config_name" label="大语言模型" min-width="160" />
@@ -41,9 +41,9 @@
         </el-table-column>
         <el-table-column label="操作" width="210" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" @click="openDetail(row)">详情</el-button>
-            <el-button size="small" @click="openEdit(row)">编辑</el-button>
-            <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button link type="primary" size="small" @click="openDetail(row)">详情</el-button>
+            <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -525,8 +525,9 @@ async function handleDelete(agent: AgentItem) {
 }
 
 .table-surface {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
+  max-height: 100%;
   display: flex;
   flex-direction: column;
   background: #fff;
@@ -537,7 +538,7 @@ async function handleDelete(agent: AgentItem) {
 }
 
 .table-surface :deep(.el-table) {
-  flex: 1;
+  flex: 0 1 auto;
 }
 
 .inline-code {

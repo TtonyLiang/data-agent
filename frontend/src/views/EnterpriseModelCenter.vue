@@ -77,7 +77,7 @@
           :aria-current="activeSection === 'semantic' ? 'step' : undefined"
           @click="selectSection('semantic')"
         >
-          <span><b>数据绑定</b><small>对象来源、字段、JOIN 与计算</small></span>
+          <span><b>数据绑定</b><small>对象来源、字段、表连接与计算</small></span>
         </button>
         <button
           v-if="canManage"
@@ -209,7 +209,7 @@
       <el-alert
         type="info"
         :closable="false"
-        title="业务领域是企业模型资产的边界，不属于某一个 Agent。"
+        title="业务领域是企业模型资产的边界，不属于某一个智能体。"
       />
       <template #footer>
         <el-button @click="showDomainDialog = false">取消</el-button>
@@ -526,7 +526,7 @@ function errorMessage(error: unknown, fallback: string) {
 .model-center-bar { width: 100%; max-width: var(--wq-page-max-width); min-height: 54px; margin: 0 auto; padding: 5px var(--wq-page-gutter); display: grid; grid-template-columns: minmax(170px, .48fr) minmax(0, 2.52fr); align-items: center; gap: 16px; border-bottom: 1px solid var(--wq-border); }
 .model-center-title { min-width: 0; display: grid; gap: 3px; }
 .model-center-title strong { color: var(--wq-text); font-size: 16px; line-height: 1.3; }
-.model-center-title span, .domain-meta > span, .domain-field-label { color: var(--wq-muted); font-size: 10px; }
+.model-center-title span, .domain-meta > span, .domain-field-label { color: var(--wq-muted); font-size: 12px; }
 .domain-context { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 .domain-field { min-width: 0; display: flex; align-items: center; gap: 9px; }
 .domain-field-label { flex: 0 0 auto; font-weight: 650; }
@@ -543,7 +543,7 @@ function errorMessage(error: unknown, fallback: string) {
 .model-sections button:disabled { cursor: not-allowed; opacity: .55; }
 .model-sections button > span:last-child { min-width: 0; display: grid; gap: 1px; }
 .model-sections b, .model-sections small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.model-sections b { font-size: 12px; line-height: 1.15; }.model-sections small { color: var(--wq-subtle); font-size: 10px; line-height: 1.15; }
+.model-sections b { font-size: 13px; line-height: 1.15; }.model-sections small { color: var(--wq-subtle); font-size: 12px; line-height: 1.15; }
 .model-sections button.active small { color: var(--wq-primary-strong); }
 .model-center-workspace { min-height: 0; flex: 1; overflow: hidden; }
 .model-center-workspace > .page-shell,
@@ -561,11 +561,11 @@ function errorMessage(error: unknown, fallback: string) {
 .business-model-switch button:active { transform: scale(.99); }
 .business-model-switch button:focus-visible { outline: 2px solid var(--wq-primary); outline-offset: 2px; }
 .business-model-switch button.active { color: var(--wq-primary-strong); background: #eaf2ff; border-color: var(--wq-primary); box-shadow: inset 3px 0 0 var(--wq-primary), 0 2px 6px rgba(37, 99, 235, .08); }
-.business-model-tab-index { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; color: var(--wq-muted); background: #f2f4f7; border: 1px solid #d0d5dd; border-radius: 5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; }
+.business-model-tab-index { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; color: var(--wq-muted); background: #f2f4f7; border: 1px solid #d0d5dd; border-radius: 5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
 .business-model-switch button.active .business-model-tab-index { color: #fff; background: var(--wq-primary); border-color: var(--wq-primary); }
 .business-model-tab-copy { display: grid; gap: 3px; min-width: 0; }
 .business-model-tab-copy b, .business-model-tab-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.business-model-tab-copy b { font-size: 12px; line-height: 1.2; }.business-model-tab-copy small { display: none; color: var(--wq-muted); font-size: 10px; line-height: 1.2; }
+.business-model-tab-copy b { font-size: 13px; line-height: 1.2; }.business-model-tab-copy small { display: none; color: var(--wq-muted); font-size: 12px; line-height: 1.2; }
 .business-model-switch button.active .business-model-tab-copy small { color: #175cd3; }
 .business-model-tab-indicator { display: none; width: 8px; height: 8px; justify-self: end; border-radius: 50%; background: #cbd5e1; }
 .business-model-switch button.active .business-model-tab-indicator { background: var(--wq-primary); box-shadow: 0 0 0 4px rgba(37, 99, 235, .14); }

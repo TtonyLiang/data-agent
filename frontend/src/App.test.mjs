@@ -47,7 +47,7 @@ function assertContrast(label, foreground, background, minimum) {
 
 assert.ok(
   source.includes(':ellipsis="true"') &&
-    source.includes('grid-template-columns: minmax(190px, 220px) minmax(0, 1fr) auto;'),
+    source.includes('grid-template-columns: minmax(252px, 300px) minmax(0, 1fr) auto;'),
   'header navigation should use bounded grid tracks and Element Plus overflow handling',
 )
 

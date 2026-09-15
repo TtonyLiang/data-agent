@@ -3,9 +3,7 @@
     <div class="auth-shell">
       <aside class="brand-panel" aria-label="问渠 WenQu 企业本体数字孪生与智能决策平台">
         <div class="brand-lockup">
-          <div class="brand-mark" aria-hidden="true">
-            <el-icon :size="20"><DataAnalysis /></el-icon>
-          </div>
+          <div class="brand-mark" aria-hidden="true">WQ</div>
           <div class="brand-text">
             <strong>问渠 WenQu</strong>
             <span>企业本体数字孪生与智能决策平台</span>
@@ -25,9 +23,7 @@
 
       <section class="auth-panel" aria-labelledby="register-title">
         <div class="mobile-brand">
-          <div class="brand-mark" aria-hidden="true">
-            <el-icon :size="19"><DataAnalysis /></el-icon>
-          </div>
+          <div class="brand-mark" aria-hidden="true">WQ</div>
           <div class="brand-text">
             <strong>问渠 WenQu</strong>
             <span>企业本体数字孪生与智能决策平台</span>
@@ -97,7 +93,7 @@
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowRight, DataAnalysis, Lock, User, UserFilled } from '@element-plus/icons-vue'
+import { ArrowRight, Lock, User, UserFilled } from '@element-plus/icons-vue'
 import { register } from '../stores/auth'
 
 const router = useRouter()
@@ -179,6 +175,9 @@ async function handleRegister() {
   border-radius: 8px;
   color: #ffffff;
   background: var(--auth-accent);
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0;
 }
 
 .brand-text {
